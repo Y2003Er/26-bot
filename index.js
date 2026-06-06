@@ -21,13 +21,11 @@ const logger = pino({ level: 'silent' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const DATABASE_URL = process.env.DATABASE_URL;
 
-// ✅ PostgreSQL connection
 const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
 });
 
-// ✅ Unda table kama haipo
 async function initDB() {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -38,7 +36,6 @@ async function initDB() {
     console.log('✅ Database iko tayari');
 }
 
-// ✅ Custom auth state inayotumia PostgreSQL
 async function usePostgreSQLAuthState() {
     await initDB();
 
@@ -116,6 +113,7 @@ let isConnecting = false;
 let pairingRequested = false;
 let bootLock = false;
 let openTimer = null;
+let retryDelay = 7000; // ✅ Retry delay inayoongezeka
 
 function clearOpenTimer() {
     if (openTimer) {
@@ -134,6 +132,7 @@ function displayPairingCode(code) {
     console.log('👆 WhatsApp → Linked Devices → Link a Device');
     console.log('👆 Link with phone number → Weka namba yako');
     console.log('👆 Popup itatokea yenyewe — bonyeza CONFIRM\n');
+    console.log('⏳ Una dakika 1 kuweka code kabla haijaisha!\n');
 }
 
 async function startBot() {
@@ -170,11 +169,14 @@ async function startBot() {
 
         sock.ev.on('creds.update', saveCreds);
 
+        sock.ev.on('messages.upsert', (data) => handleMessages(sock, data));
+
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
 
             console.log('🔄 State:', connection ?? 'connecting...');
 
+            // ✅ Omba pairing code MARA MOJA tu — usizungushe
             if (!pairingRequested && !state.creds.registered && connection !== 'close') {
                 setTimeout(async () => {
                     if (pairingRequested) return;
@@ -185,13 +187,14 @@ async function startBot() {
                         displayPairingCode(code);
                     } catch (err) {
                         console.error('❌ Pairing code imeshindwa:', err.message);
-                        pairingRequested = false;
+                        // ✅ Usifute pairingRequested — subiri restart
                     }
                 }, 3000);
             }
 
             if (connection === 'open') {
                 clearOpenTimer();
+                retryDelay = 7000; // Reset delay
                 console.log('🟢 BOT ONLINE SUCCESSFULLY!');
                 isConnecting = false;
                 bootLock = false;
@@ -210,51 +213,25 @@ async function startBot() {
                 isConnecting = false;
                 bootLock = false;
 
-                if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-                    console.log('❌ Session invalid. Inafuta na kuanza upya...');
+                // ✅ FUTA DATABASE tu kama loggedOut (515) — SI kwa 401
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log('❌ Logged out. Inafuta session...');
                     await pool.query('DELETE FROM auth_sessions');
+                    retryDelay = 7000;
+                } else if (statusCode === 401) {
+                    // ✅ 401 wakati wa pairing = code haikuwekwa kwa wakati
+                    // Subiri muda mrefu zaidi kabla ya kuomba upya
+                    console.log('⚠️ 401 - Inasubiri sekunde 15 kabla ya kuomba code mpya...');
+                    retryDelay = 15000;
                 }
 
-                setTimeout(startBot, 7000);
+                setTimeout(startBot, retryDelay);
             }
         });
 
-        // ✅ MESSAGE HANDLER
-        sock.ev.on('messages.upsert', async ({ messages, type }) => {
-            if (type !== 'notify') return;
-
-            const msg = messages[0];
-            if (!msg.message) return;
-            if (msg.key.fromMe) return;
-
-            const from = msg.key.remoteJid;
-            const text = msg.message?.conversation ||
-                         msg.message?.extendedTextMessage?.text || '';
-
-            console.log(`📩 Ujumbe kutoka ${from}: ${text}`);
-
-            if (text.toLowerCase() === 'ping') {
-                await sock.sendMessage(from, { text: '🏓 Pong! Bot iko active!' });
-
-            } else if (text.toLowerCase() === 'hello' || text.toLowerCase() === 'hujambo') {
-                await sock.sendMessage(from, {
-                    text: '👋 Habari! Mimi ni *26 Tech Solution* 🤖\nPowered by *Yuzzo*\nNikusaidie nini?'
-                });
-
-            } else if (text.toLowerCase() === '!help') {
-                await sock.sendMessage(from, {
-                    text: `🤖 *26 TECH SOLUTION BOT*\n` +
-                          `Powered by *Yuzzo*\n\n` +
-                          `📋 *COMMANDS ZINAZOPATIKANA:*\n\n` +
-                          `• ping — Test bot\n` +
-                          `• hello / hujambo — Salamu\n` +
-                          `• !help — Orodha ya commands`
-                });
-            }
-        });
-
+        // ✅ Timeout ya kufunga kama haikufunguka ndani ya sekunde 120
         openTimer = setTimeout(() => {
-            console.log('⏰ Haikufunguka kwa sekunde 90. Restarting...');
+            console.log('⏰ Haikufunguka kwa sekunde 120. Restarting...');
             isConnecting = false;
             bootLock = false;
 
@@ -265,8 +242,8 @@ async function startBot() {
                 } catch {}
             }
 
-            setTimeout(startBot, 7000);
-        }, 90000);
+            setTimeout(startBot, retryDelay);
+        }, 120000);
 
         if (state.creds.registered) {
             console.log('✅ Session ipo kwenye database. Inaunganisha...');
@@ -279,7 +256,41 @@ async function startBot() {
         isConnecting = false;
         bootLock = false;
         clearOpenTimer();
-        setTimeout(startBot, 7000);
+        setTimeout(startBot, retryDelay);
+    }
+}
+
+// ✅ MESSAGE HANDLER — nje ya startBot ili isije ikajirudia
+async function handleMessages(sock, { messages, type }) {
+    if (type !== 'notify') return;
+
+    const msg = messages[0];
+    if (!msg.message) return;
+    if (msg.key.fromMe) return;
+
+    const from = msg.key.remoteJid;
+    const text = msg.message?.conversation ||
+                 msg.message?.extendedTextMessage?.text || '';
+
+    console.log(`📩 Ujumbe kutoka ${from}: ${text}`);
+
+    if (text.toLowerCase() === 'ping') {
+        await sock.sendMessage(from, { text: '🏓 Pong! Bot iko active!' });
+
+    } else if (text.toLowerCase() === 'hello' || text.toLowerCase() === 'hujambo') {
+        await sock.sendMessage(from, {
+            text: '👋 Habari! Mimi ni *26 Tech Solution* 🤖\nPowered by *Yuzzo*\nNikusaidie nini?'
+        });
+
+    } else if (text.toLowerCase() === '!help') {
+        await sock.sendMessage(from, {
+            text: `🤖 *26 TECH SOLUTION BOT*\n` +
+                  `Powered by *Yuzzo*\n\n` +
+                  `📋 *COMMANDS ZINAZOPATIKANA:*\n\n` +
+                  `• ping — Test bot\n` +
+                  `• hello / hujambo — Salamu\n` +
+                  `• !help — Orodha ya commands`
+        });
     }
 }
 
