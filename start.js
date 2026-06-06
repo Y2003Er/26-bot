@@ -33,7 +33,15 @@ if (!PHONE_NUMBER) {
 
 let sock = null;
 let isConnecting = false;
-let pairingRequested = false; // kuzuia pairing code kuombwa mara mbili
+let pairingRequested = false;
+let openTimer = null; // kwa kuweka timeout ya jumla
+
+function clearOpenTimer() {
+    if (openTimer) {
+        clearTimeout(openTimer);
+        openTimer = null;
+    }
+}
 
 function displayPairingCode(code) {
     console.log('\n╔══════════════════════════╗');
@@ -50,13 +58,14 @@ function displayPairingCode(code) {
 async function startBot() {
     if (isConnecting) return;
     isConnecting = true;
-    pairingRequested = false; // reset kwa kila jaribio jipya
+    pairingRequested = false;
+    clearOpenTimer();
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR, logger);
         const { version } = await fetchLatestBaileysVersion();
 
-        // Funga socket ya zamani ikiwa ipo
+        // Funga ya zamani
         if (sock) {
             sock.ev.removeAllListeners();
             sock.ws?.close();
@@ -71,31 +80,42 @@ async function startBot() {
             },
             printQRInTerminal: false,
             browser: ['Ubuntu', 'Chrome', '120.0.0'],
+            connectTimeoutMs: 60000,      // subiri sekunde 60 kabla ya kukata
+            keepAliveIntervalMs: 30000,   // piga keepalive kila sekunde 30
         });
 
-        // Hifadhi credentials zikibadilika
+        // Hifadhi credentials
         sock.ev.on('creds.update', saveCreds);
 
-        // Weka listener ya kudumu mara moja — hii inabaki kila wakati
+        // ---- Timer ya jumla: kama haijafunguka ndani ya sekunde 90, restart ----
+        openTimer = setTimeout(() => {
+            console.log('⏰ Haikufunguka baada ya sekunde 90. Inaanzisha upya...');
+            isConnecting = false;
+            if (sock) {
+                sock.ev.removeAllListeners();
+                sock.ws?.close();
+                sock = null;
+            }
+            setTimeout(startBot, 7000);
+        }, 90000);
+
+        // ---- SKIRIA KUU YA CONNECTION ----
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
             console.log('🔄 State:', connection);
 
             if (connection === 'open') {
+                clearOpenTimer();
                 console.log('🟢 BOT ONLINE SUCCESSFULLY!');
                 isConnecting = false;
 
-                // Ikiwa bado haijasajiliwa, omba pairing code
+                // Ikiwa haijasajiliwa, omba pairing code
                 if (!state.creds.registered && !pairingRequested) {
                     pairingRequested = true;
                     console.log('⚡ Inaomba pairing code...');
                     try {
-                        // Hakikisha WebSocket iko OPEN
-                        if (sock.ws?.readyState === 1) {
-                            const code = await sock.requestPairingCode(PHONE_NUMBER);
-                            displayPairingCode(code);
-                        } else {
-                            // Subiri kidogo hadi iwe tayari
+                        // Hakikisha WebSocket iko OPEN (readyState 1)
+                        if (sock.ws?.readyState !== 1) {
                             await new Promise(resolve => {
                                 const check = setInterval(() => {
                                     if (sock.ws?.readyState === 1) {
@@ -108,12 +128,11 @@ async function startBot() {
                                     resolve();
                                 }, 5000);
                             });
-                            const code = await sock.requestPairingCode(PHONE_NUMBER);
-                            displayPairingCode(code);
                         }
+                        const code = await sock.requestPairingCode(PHONE_NUMBER);
+                        displayPairingCode(code);
                     } catch (e) {
                         console.log('❌ Pairing error:', e.message);
-                        // Jaribu tena baada ya sekunde 7
                         isConnecting = false;
                         setTimeout(startBot, 7000);
                         return;
@@ -122,7 +141,9 @@ async function startBot() {
             }
 
             if (connection === 'close') {
+                clearOpenTimer();
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
+
                 console.log('\n════ DISCONNECT INFO ════');
                 console.log('Code:', statusCode);
                 console.log(JSON.stringify(lastDisconnect, null, 2));
@@ -136,20 +157,19 @@ async function startBot() {
                     fs.mkdirSync(SESSION_DIR, { recursive: true });
                 }
 
-                // Anza upya baada ya sekunde 7
                 setTimeout(startBot, 7000);
             }
         });
 
-        // Kama tayari imesajiliwa, hakuna cha ziada — listener itashughulikia
         if (state.creds.registered) {
             console.log('✅ Session ipo. Inaunganisha...');
         } else {
-            console.log('⏳ Inasubiri muunganisho wa kwanza... (usingoje pairing code)');
+            console.log('⏳ Inasubiri muunganisho wa kwanza (itachukua hadi sekunde 90)...');
         }
 
     } catch (err) {
         console.error('BOT ERROR:', err);
+        clearOpenTimer();
         isConnecting = false;
         setTimeout(startBot, 7000);
     }
