@@ -4,19 +4,19 @@ const { Pool } = require('pg');
 const { default: makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const chalk = require('chalk');
 
-// ---------------------------- KONFIGURATION ----------------------------
-const PHONE_NUMBER = process.env.PHONE_NUMBER ? process.env.PHONE_NUMBER.trim() : null;
+const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
-    console.error(chalk.red('❌ DATABASE_URL haipo! Hakikisha umeunganisha Postgres.'));
+    console.error(chalk.red('❌ DATABASE_URL haipo! Hakikisha Postgres imeunganishwa.'));
     process.exit(1);
 }
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 
-// ---------------------------- CUSTOM AUTH STATE (POSTGRES) ----------------------------
-// Hii inafanya kazi sawa na useSingleFileAuthState lakini kwenye DB
+// ------------------------------------------------------------
+// Custom auth state kwa PostgreSQL (badala ya faili)
+// ------------------------------------------------------------
 async function usePostgresAuthState(pool, tableName = 'baileys_auth') {
     // Hakikisha meza ipo
     await pool.query(`
@@ -52,7 +52,9 @@ async function usePostgresAuthState(pool, tableName = 'baileys_auth') {
     return { state, saveCreds };
 }
 
-// ---------------------------- BOT ----------------------------
+// ------------------------------------------------------------
+// Bot
+// ------------------------------------------------------------
 let sock;
 let isPairing = false;
 
