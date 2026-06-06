@@ -1,68 +1,31 @@
 'use strict';
 require('dotenv').config();
-const { Pool } = require('pg');
-const { default: makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+const fs = require('fs');
+const path = require('path');
 const chalk = require('chalk');
+const { default: makeWASocket, DisconnectReason, Browsers, useSingleFileAuthState } = require('@whiskeysockets/baileys');
 
-const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
-const DATABASE_URL = process.env.DATABASE_URL;
+// ---------------------------- KONFIGURATION ----------------------------
+const SESSION_DIR = '/app/sessions';
+const SESSION_FILE = path.join(SESSION_DIR, 'session.json');
+const PHONE_NUMBER = process.env.PHONE_NUMBER ? process.env.PHONE_NUMBER.trim() : null;
 
-if (!DATABASE_URL) {
-    console.error(chalk.red('❌ DATABASE_URL haipo! Hakikisha Postgres imeunganishwa.'));
-    process.exit(1);
-}
+// Hakikisha folder ya volume ipo
+if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+console.log(chalk.green('=============================='));
+console.log(chalk.green('  QUEEN_ANITA-V5 STARTING  '));
+console.log(chalk.green('=============================='));
 
-// ------------------------------------------------------------
-// Custom auth state kwa PostgreSQL (badala ya faili)
-// ------------------------------------------------------------
-async function usePostgresAuthState(pool, tableName = 'baileys_auth') {
-    // Hakikisha meza ipo
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${tableName} (
-            key TEXT PRIMARY KEY,
-            value JSONB NOT NULL
-        )
-    `);
+// ---------------------------- STATE ----------------------------
+const { state, saveCreds } = useSingleFileAuthState(SESSION_FILE);
 
-    async function get(key) {
-        const res = await pool.query(`SELECT value FROM ${tableName} WHERE key = $1`, [key]);
-        return res.rows[0]?.value || null;
-    }
-
-    async function set(key, value) {
-        await pool.query(
-            `INSERT INTO ${tableName} (key, value) VALUES ($1, $2)
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-            [key, value]
-        );
-    }
-
-    const creds = (await get('creds')) || {};
-    const keys = (await get('keys')) || {};
-
-    const state = { creds, keys };
-    const saveCreds = async () => {
-        await set('creds', state.creds);
-        await set('keys', state.keys);
-        console.log(chalk.green('💾 Session imehifadhiwa kwenye PostgreSQL'));
-    };
-
-    return { state, saveCreds };
-}
-
-// ------------------------------------------------------------
-// Bot
-// ------------------------------------------------------------
+// ---------------------------- BOT ----------------------------
 let sock;
 let isPairing = false;
 
 async function startBot() {
     try {
-        console.log(chalk.blue('⏳ Inaunganisha database na kusoma session...'));
-        const { state, saveCreds } = await usePostgresAuthState(pool, 'baileys_auth');
-
         sock = makeWASocket({
             auth: state,
             printQRInTerminal: false,
@@ -83,39 +46,57 @@ async function startBot() {
                 const code = lastDisconnect?.error?.output?.statusCode;
                 console.log(chalk.red(`🔴 CONNECTION CLOSED (${code})`));
                 if (code !== DisconnectReason.loggedOut) {
-                    console.log(chalk.yellow('🔄 Itaunganisha tena baada ya sekunde 5...'));
+                    console.log(chalk.yellow('🔄 Reconnecting in 5 seconds...'));
                     setTimeout(startBot, 5000);
                 } else {
-                    console.log(chalk.red('❌ Ume-logout. Futa safu kwenye database na uanze upya.'));
+                    console.log(chalk.red('❌ Logged out. Delete session.json and restart.'));
                 }
             }
         });
 
-        // Omba pairing code ikiwa hakuna creds zilizosajiliwa
+        // Subiri socket iwe tayari (kwa usalama)
+        await new Promise(r => setTimeout(r, 4000));
+
+        // Ikiwa haijasajiliwa, omba pairing code
         if (!state.creds.registered && !isPairing && PHONE_NUMBER) {
             isPairing = true;
-            console.log(chalk.blue('⏳ Subiri sekunde 3 kwa socket kujiandaa...'));
-            await new Promise(r => setTimeout(r, 3000));
+            console.log(chalk.blue('⏳ Requesting pairing code...'));
             try {
                 const code = await sock.requestPairingCode(PHONE_NUMBER);
                 console.log(chalk.green(`🔑 PAIRING CODE: ${code}`));
-                console.log(chalk.cyan('💡 Ingiza code hii kwenye WhatsApp (Mipangilio > Vifaa Vilivyounganishwa)'));
+                console.log(chalk.cyan('Enter this code in WhatsApp > Linked Devices'));
             } catch (err) {
-                console.error(chalk.red('❌ Kosa la pairing:'), err.message);
+                console.error(chalk.red('❌ Pairing error:'), err.message);
                 isPairing = false;
-                setTimeout(startBot, 10000);
+                // Jaribu tena baada ya sekunde 10
+                setTimeout(() => { startBot(); }, 10000);
             }
         } else if (!state.creds.registered) {
-            console.log(chalk.red('❌ Hakuna PHONE_NUMBER kwenye .env. Weka PHONE_NUMBER.'));
+            console.log(chalk.red('❌ PHONE_NUMBER not set in .env'));
             process.exit(1);
         } else {
-            console.log(chalk.green('✅ Session halisi ipo kwenye database. Hakuna pairing inayohitajika.'));
+            console.log(chalk.green('✅ Valid session exists. No pairing needed.'));
         }
 
         console.log(chalk.yellow('[✓] Bot initializing...'));
     } catch (err) {
         console.error(chalk.red('BOT ERROR:'), err);
         setTimeout(startBot, 5000);
+    }
+}
+
+// ---------------------------- START ----------------------------
+// Futa session batili ikiwa ipo (kwa sababu ya makosa ya validation)
+if (fs.existsSync(SESSION_FILE)) {
+    try {
+        const test = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+        if (!test.creds || !test.creds.registered) {
+            console.log(chalk.yellow('⚠️ Invalid session detected. Deleting...'));
+            fs.unlinkSync(SESSION_FILE);
+        }
+    } catch(e) {
+        console.log(chalk.yellow('⚠️ Corrupt session file. Deleting...'));
+        fs.unlinkSync(SESSION_FILE);
     }
 }
 
