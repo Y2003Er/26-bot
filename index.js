@@ -17,7 +17,9 @@ const logger = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID = process.env.SESSION_ID || 'queen_anita_v5';
 
-// Clean start if CLEAN_SESSIONS=true
+// ========== MUDA WA KUSUBIRI KABLA YA KUOMBA PAIRING CODE (milliseconds) ==========
+const PAIRING_DELAY = 5000;   // sekunde 5 – ongeza ikiwa unahitaji (mfano 8000)
+
 const CLEAN_SESSIONS = process.env.CLEAN_SESSIONS === 'true';
 
 const log = {
@@ -80,7 +82,7 @@ async function startBot() {
     clearOpenTimer();
 
     try {
-        await loadCommands();       // make sure loadCommands is async (already is)
+        await loadCommands();
         log.success('Commands zimepakiwa.');
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
@@ -116,9 +118,11 @@ async function startBot() {
             const { connection, lastDisconnect } = update;
             if (connection) log.state(`Connection  →  ${connection}`);
 
-            const isRegistered = !!state.creds?.account;
+            // Angalia kama tayari imeshaingia (v7 inaweza kuwa na 'me' au 'account')
+            const isRegistered = !!(state.creds?.me || state.creds?.account);
             if (!pairingRequested && !isRegistered && connection === 'connecting') {
                 pairingRequested = true;
+                log.info(`Subiri sekunde ${PAIRING_DELAY/1000} kabla ya kuomba pairing code...`);
                 setTimeout(async () => {
                     try {
                         console.log(`📱 Inaomba pairing code kwa: ${PHONE_NUMBER}`);
@@ -128,7 +132,7 @@ async function startBot() {
                         console.error('❌ Pairing code imeshindwa:', err.message);
                         pairingRequested = false;
                     }
-                }, 1000);
+                }, PAIRING_DELAY);
             }
 
             if (connection === 'open') {
@@ -181,7 +185,7 @@ async function startBot() {
             setTimeout(startBot, 7000);
         }, 180000);
 
-        if (state.creds?.account) {
+        if (state.creds?.me || state.creds?.account) {
             log.success('Session ipo PostgreSQL — Inaunganika...');
         } else {
             log.info('Session mpya — inasubiri pairing...');
@@ -200,7 +204,6 @@ async function startBot() {
         log.info('Inaunganika na PostgreSQL...');
         await initializeDatabase();
 
-        // 🧹 Clean start: delete all sessions if requested
         if (CLEAN_SESSIONS) {
             log.warn('🧹 CLEAN_SESSIONS=true – Inafuta session zote kwenye database...');
             await deleteAllSessions();
