@@ -89,6 +89,19 @@ export async function deleteSession(sessionId) {
     }
 }
 
+// 🧹 NEW: Delete all sessions
+export async function deleteAllSessions() {
+    const client = await getPool().connect();
+    try {
+        const result = await client.query(`DELETE FROM wa_sessions`);
+        console.log(`[session-db] Deleted ${result.rowCount} session(s) from database.`);
+    } catch (err) {
+        console.error('[session-db] Delete all error:', err.message);
+    } finally {
+        client.release();
+    }
+}
+
 // Main auth state for Baileys v7 (with cacheable key store)
 export async function usePostgresAuthState(sessionId) {
     const saved = await loadSession(sessionId);
