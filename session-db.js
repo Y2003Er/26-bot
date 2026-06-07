@@ -1,6 +1,9 @@
 // session-db.js – inahifadhi state nzima kwenye safu ya 'state' (JSONB)
 import { Pool } from 'pg';
+import pino from 'pino';
 import { initAuthCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
+
+const logger = pino({ level: 'silent' }); // silent – haioneshi noise ya ziada
 
 let pool = null;
 
@@ -21,7 +24,6 @@ function getPool() {
 export async function initializeDatabase() {
     const client = await getPool().connect();
     try {
-        // Hakikisha table ina safu 'state' (JSONB)
         await client.query(`
             CREATE TABLE IF NOT EXISTS wa_sessions (
                 session_id TEXT PRIMARY KEY,
@@ -42,9 +44,12 @@ export async function initializeDatabase() {
 async function loadState(sessionId) {
     const client = await getPool().connect();
     try {
-        const res = await client.query(`SELECT state FROM wa_sessions WHERE session_id = $1`, [sessionId]);
+        const res = await client.query(
+            `SELECT state FROM wa_sessions WHERE session_id = $1`,
+            [sessionId]
+        );
         if (res.rows.length === 0) return null;
-        return res.rows[0].state; // state ni object { creds, keys }
+        return res.rows[0].state; // { creds, keys }
     } catch (err) {
         console.error('[session-db] Load error:', err.message);
         return null;
@@ -53,7 +58,7 @@ async function loadState(sessionId) {
     }
 }
 
-async function saveState(sessionId, state) {
+async function saveState(sessionId, stateData) {
     const client = await getPool().connect();
     try {
         await client.query(
@@ -61,9 +66,8 @@ async function saveState(sessionId, state) {
              VALUES ($1, $2, NOW())
              ON CONFLICT (session_id) DO UPDATE
              SET state = EXCLUDED.state, updated_at = NOW()`,
-            [sessionId, state]
+            [sessionId, stateData]
         );
-        console.log('[session-db] State saved.');
     } catch (err) {
         console.error('[session-db] Save error:', err.message);
     } finally {
@@ -95,18 +99,19 @@ export async function deleteAllSessions() {
     }
 }
 
-// Main auth state for Baileys v7
+// ✅ Main auth state kwa Baileys v7
 export async function usePostgresAuthState(sessionId) {
-    let fullState = await loadState(sessionId);
-    let creds = fullState?.creds || initAuthCreds();
+    const fullState = await loadState(sessionId);
+
+    // ✅ creds ni live object – inabadilika moja kwa moja
+    const creds = fullState?.creds || initAuthCreds();
     let keysStore = fullState?.keys || {};
 
     const keyStore = {
         get: async (type, ids) => {
             const result = {};
             for (const id of ids) {
-                const key = `${type}--${id}`;
-                const val = keysStore[key];
+                const val = keysStore[`${type}--${id}`];
                 if (val !== undefined) result[id] = val;
             }
             return result;
@@ -117,7 +122,7 @@ export async function usePostgresAuthState(sessionId) {
                 if (!entries) continue;
                 for (const [id, value] of Object.entries(entries)) {
                     const key = `${type}--${id}`;
-                    if (value === null || value === undefined) {
+                    if (value == null) {
                         if (keysStore[key] !== undefined) {
                             delete keysStore[key];
                             changed = true;
@@ -131,18 +136,19 @@ export async function usePostgresAuthState(sessionId) {
             if (changed) {
                 await saveState(sessionId, { creds, keys: keysStore });
             }
-        }
+        },
     };
 
-    const keys = makeCacheableSignalKeyStore(keyStore, null);
+    // ✅ Logger halisi badala ya null
+    const keys = makeCacheableSignalKeyStore(keyStore, logger);
 
     const saveCreds = async () => {
         await saveState(sessionId, { creds, keys: keysStore });
-        console.log('[session-db] Creds updated');
+        console.log('[session-db] Creds updated & saved.');
     };
 
-    return {
-        state: { creds, keys },
-        saveCreds
-    };
+    // ✅ state.creds ni live reference – inabadilika bila kusoma upya
+    const state = { creds, keys };
+
+    return { state, saveCreds };
 }
