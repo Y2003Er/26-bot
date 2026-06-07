@@ -118,7 +118,6 @@ async function startBot() {
         }
 
         sock = makeWASocket({
-            // v7 no longer needs version – uses latest internal
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -129,7 +128,7 @@ async function startBot() {
             browser: Browsers.ubuntu('Chrome'),  // v7 style
             connectTimeoutMs: 120000,
             keepAliveIntervalMs: 30000,
-            shouldSyncHistoryMessage: () => false,
+            // ✅ REMOVED: shouldSyncHistoryMessage: () => false,   (caused LID mapping failure)
             defaultQueryTimeoutMs: undefined,
             generateHighQualityLinkPreview: false,
             patchMessageBeforeSending: (msg) => msg,
@@ -192,7 +191,7 @@ async function startBot() {
             }
         });
 
-        // messages.upsert – no changes needed
+        // messages.upsert – no changes needed (works with LIDs automatically)
         sock.ev.on('messages.upsert', async ({ messages, type }) => {
             if (type !== 'notify') return;
             const msg = messages[0];
