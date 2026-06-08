@@ -1,37 +1,61 @@
 // commands/help.js
-export const name = 'help';
+// ════════════════════════════════════════════════════════════════
+//   FIXES:
+//   [1] Duplicate commands zimeondolewa — dedup kwa cmd.name
+//   [2] Commands zinaonyeshwa kwa category sahihi
+//   [3] Alias zinaonyeshwa vizuri
+// ════════════════════════════════════════════════════════════════
+
+export const name        = 'help';
 export const description = 'Orodha ya commands zote';
-export const category = 'general';
+export const category    = 'general';
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
-    const pfx = global.prefix || '.';
+    const pfx  = global.prefix || '.';
 
-    // ✅ Soma commands ZOTE kutoka global.allCommands
-    // (inajaza automatically na loadCommands() kwenye handler.js)
     const allCmds = global.allCommands || new Map();
 
-    // Gawanya kwa category
+    // FIX #1 — Dedup kwa cmd.name ili kuondoa duplicates
+    // (loadCommands inaweza kuhifadhi command mara mbili — execute + plugin)
+    const seen    = new Set();
     const grouped = {};
-    for (const [key, cmd] of allCmds.entries()) {
-        // Ruka 'help' yenyewe — itaonekana manually chini
-        if (cmd.name === 'help') continue;
+
+    for (const [, cmd] of allCmds.entries()) {
+        // Ruka 'help' yenyewe
+        if (!cmd.name || cmd.name === 'help') continue;
+        // Ruka kama tumeshaweka command hii
+        if (seen.has(cmd.name)) continue;
+        seen.add(cmd.name);
+
         const cat = (cmd.type || 'general').toLowerCase();
         if (!grouped[cat]) grouped[cat] = [];
         grouped[cat].push(cmd);
     }
 
-    // ============================
-    // Jenga help message
-    // ============================
-    let text = `╔═══════════════════════╗\n`;
-    text += `║  🤖 *26-𝐓𝐄𝐂𝐇*   ║\n`;
-    text += `║    📋 *HELP MENU*       ║\n`;
-    text += `╚═══════════════════════╝\n\n`;
+    // ── Panga categories kwa mpangilio unaofaa ──
+    const categoryOrder = ['general', 'ai', 'group', 'whatsapp', 'admin', 'owner', 'media', 'fun', 'utility'];
+    const sortedEntries = Object.entries(grouped).sort(([a], [b]) => {
+        const ai = categoryOrder.indexOf(a);
+        const bi = categoryOrder.indexOf(b);
+        if (ai === -1 && bi === -1) return a.localeCompare(b);
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
 
-    // Commands zilizogroupiwa kwa category
-    for (const [category, cmds] of Object.entries(grouped)) {
-        if (cmds.length === 0) continue;
+    // ── Jenga help message ──
+    let text  = `╔═══════════════════════╗\n`;
+    text     += `║  🤖 *26-𝐓𝐄𝐂𝐇*         ║\n`;
+    text     += `║    📋 *HELP MENU*      ║\n`;
+    text     += `╚═══════════════════════╝\n\n`;
+
+    let totalCmds = 0;
+
+    for (const [category, cmds] of sortedEntries) {
+        if (!cmds.length) continue;
+        totalCmds += cmds.length;
+
         const emoji = getCategoryEmoji(category);
         text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `${emoji} *${category.toUpperCase()}*\n`;
@@ -40,9 +64,9 @@ export async function execute(sock, msg, args) {
         for (const cmd of cmds) {
             const usage = cmd.use ? ` _${cmd.use}_` : '';
             text += `▸ *${pfx}${cmd.name}*${usage}\n`;
-            text += `  └ ${cmd.info}\n`;
-            if (cmd.alias && cmd.alias.length > 0) {
-                text += `  └ 🔀 Alias: ${cmd.alias.map(a => pfx + a).join(', ')}\n`;
+            text += `  └ ${cmd.info || 'Hakuna maelezo'}\n`;
+            if (cmd.alias?.length) {
+                text += `  └ 🔀 ${cmd.alias.map(a => pfx + a).join(', ')}\n`;
             }
             text += `\n`;
         }
@@ -54,7 +78,7 @@ export async function execute(sock, msg, args) {
     text += `  └ Onesha menu hii\n\n`;
 
     text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `_📊 Commands: *${allCmds.size}* | Prefix: *${pfx}*_\n`;
+    text += `_📊 Commands: *${totalCmds + 1}* | Prefix: *${pfx}*_\n`;
     text += `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
 
     await sock.sendMessage(from, { text }, { quoted: msg });
@@ -62,15 +86,15 @@ export async function execute(sock, msg, args) {
 
 function getCategoryEmoji(category) {
     const map = {
-        group: '👥',
-        whatsapp: '💬',
-        general: '⚙️',
-        media: '🎬',
-        fun: '🎉',
-        admin: '🛡️',
-        owner: '👑',
-        utility: '🔧',
-        ai: '🤖'
+        group:     '👥',
+        whatsapp:  '💬',
+        general:   '⚙️',
+        media:     '🎬',
+        fun:       '🎉',
+        admin:     '🛡️',
+        owner:     '👑',
+        utility:   '🔧',
+        ai:        '🤖'
     };
     return map[category] || '📌';
 }
