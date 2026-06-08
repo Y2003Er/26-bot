@@ -11,7 +11,7 @@ import {
 } from '@whiskeysockets/baileys';
 
 import './config.js';
-import { loadCommands, handleMessage, setupContactListener } from './lib/handler.js';
+import { loadCommands, handleMessage, setupContactListener, setupAntiDelete, setupAntiViewOnce, setupAutoStatusViewer } from './lib/handler.js';
 import { initializeDatabase, usePostgresAuthState, deleteSession, deleteAllSessions } from './session-db.js';
 
 const logger = pino({ level: 'silent' });
@@ -245,6 +245,11 @@ async function startBot() {
                     updateBanner('groups', Object.keys(groups).length);
                 } catch {}
 
+                // ── FIX: Washa anti-features baada ya bot kuunganika ──
+                setupAntiDelete(sock);
+                setupAntiViewOnce(sock);
+                setupAutoStatusViewer(sock);
+
                 log.div();
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL (JSONB)');
@@ -288,11 +293,14 @@ async function startBot() {
             }
         });
 
+        // ── FIX: Usiblock fromMe hapa — handler.js ndiyo itaamua ──
         sock.ev.on('messages.upsert', async ({ messages, type }) => {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
-            if (msg.key.fromMe) return;
+            // REMOVED: if (msg.key.fromMe) return;
+            // Sababu: owner anatuma commands kwenye group (fromMe=true)
+            // na handler.js ndiyo inashughulikia DM fromMe (inaireject pale)
 
             bannerState.messages++;
             const text =
