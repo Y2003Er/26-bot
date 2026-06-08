@@ -225,27 +225,29 @@ export async function execute(sock, msg, args) {
         return await handlePhoto(sock, msg, from, fullText);
     }
 
-    // ✅ Reply detection — inashughulikia @lid na @s.whatsapp.net
+    // ✅ Reply detection
     const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
     const quotedParticipant = contextInfo?.participant || '';
-    const quotedSenderLid = contextInfo?.remoteJid || '';
+    const quotedStanzaId = contextInfo?.stanzaId || '';
 
     const botId = sock.user?.id || '';
     const botLid = sock.user?.lid || '';
     const botNumber = botId.replace(/:.*@/, '').replace(/@.*/, '');
     const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
 
-    const isReplyToBot = Boolean(
+    // DM: stanzaId inatosha — reply yoyote kwenye DM ni ya bot
+    const isDM = !from.endsWith('@g.us');
+    const isReplyInDM = isDM && !!quotedStanzaId;
+
+    // Group: angalia participant
+    const isReplyInGroup = Boolean(
         (botNumber && quotedParticipant.includes(botNumber)) ||
-        (botLidNumber && quotedParticipant.includes(botLidNumber)) ||
-        (botNumber && quotedSenderLid.includes(botNumber)) ||
-        (botLidNumber && quotedSenderLid.includes(botLidNumber))
+        (botLidNumber && quotedParticipant.includes(botLidNumber))
     );
 
-    // Debug logs
-    logger.info('[reply-debug] botId: %s | botLid: %s', botId, botLid);
-    logger.info('[reply-debug] quotedParticipant: %s | quotedSenderLid: %s', quotedParticipant, quotedSenderLid);
-    logger.info('[reply-debug] isReplyToBot: %s', isReplyToBot);
+    const isReplyToBot = isReplyInDM || isReplyInGroup;
+
+    logger.info('[reply-debug] isDM: %s | stanzaId: %s | isReplyToBot: %s', isDM, quotedStanzaId, isReplyToBot);
 
     // ✅ Prefix detection
     const hasPrefix = /^\.(ai|bot)\s*/i.test(fullText) || /^[aA] /i.test(fullText);
