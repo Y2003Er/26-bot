@@ -137,22 +137,22 @@ Una akili ya kweli — unaelewa context, hisia, na nia ya mtu bila kufafanuliwa.
 Jibu kama AI halisi, siyo roboti — kama mtu mwenye akili, mantiki, na uelewa wa hali halisi.
 Tambua muktadha na hisia za mtumiaji, jibu kwa kina pale inapohitajika bila mipaka ya muda.
 
-Jibu kinavyofaa kwa hali hiyo — fupi au kirefu, serious au poa:
-- Salamu → salamu fupi tu. "Mambo" → "Poa! Nikusaidie nini?"
-- Swali rahisi → jibu moja kwa moja, bila ziada
-- Swali gumu → jibu kwa kina, structured, na maelezo ya kutosha
-- Mtu anacheka → cheka nawe
-- Mtu ana wasiwasi → onyesha unaelewa kwanza, kisha jibu
+Kanuni za kujibu:
+- Salamu zijibiwe kwa salamu fupi tu
+- Swali rahisi lijibiwe moja kwa moja bila ziada
+- Swali gumu lijibiwe kwa kina na maelezo ya kutosha
+- Mtu akionyesha hisia, zielewe kwanza kabla ya kujibu
+- Jibu moja bora tu — usitoe chaguzi bila kuombwa
+- Uliza swali moja tu ukihitaji kufafanua, si maswali mengi
 
-MARUFUKU:
+MARUFUKU kabisa:
 - Orodha au mifano bila kuombwa
-- "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa", "Mimi ni asistenti"
+- Maneno: "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa", "Mimi ni asistenti"
 - Kujielezea bila kuulizwa
-- Maswali mengi — uliza moja tu ukihitaji kufafanua
-- Chaguzi nyingi bila kuulizwa — toa jibu moja bora
+- Kutoa chaguzi nyingi bila kuombwa
 
-"Wewe ni nani?" → "Mimi ni 26 Tech AI."
-"Unaweza kufanya nini?" → sentensi 1-2 tu, si orodha.
+Ukiulizwa utambulisho wako → jibu fupi tu: "Mimi ni 26 Tech AI."
+Ukiulizwa uwezo wako → eleza kwa sentensi 1-2 tu, si orodha.
 
 Jibu kwa lugha ile ile ya mtumiaji — Kiswahili, English, au mchanganyiko.
 Jibu fupi iwezekanavyo — ongeza tu pale inahitajika kweli kweli.`;
@@ -209,7 +209,7 @@ async function handlePhoto(sock, msg, from, commandText) {
 // 🚀 MAIN COMMAND
 // =====================
 export const name = 'ai';
-export const description = 'AI Assistant + Photo Editor (.ai, .bot, .photo, a, A)';
+export const description = 'AI Assistant + Photo Editor (.ai, .bot, .photo)';
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
@@ -235,30 +235,21 @@ export async function execute(sock, msg, args) {
     const botNumber = botId.replace(/:.*@/, '').replace(/@.*/, '');
     const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
 
-    // DM: stanzaId inatosha — reply yoyote kwenye DM ni ya bot
     const isDM = !from.endsWith('@g.us');
     const isReplyInDM = isDM && !!quotedStanzaId;
-
-    // Group: angalia participant
     const isReplyInGroup = Boolean(
         (botNumber && quotedParticipant.includes(botNumber)) ||
         (botLidNumber && quotedParticipant.includes(botLidNumber))
     );
-
     const isReplyToBot = isReplyInDM || isReplyInGroup;
 
-    logger.info('[reply-debug] isDM: %s | stanzaId: %s | isReplyToBot: %s', isDM, quotedStanzaId, isReplyToBot);
-
     // ✅ Prefix detection
-    const hasPrefix = /^\.(ai|bot)\s*/i.test(fullText) || /^[aA] /i.test(fullText);
+    const hasPrefix = /^\.(ai|bot)\s*/i.test(fullText);
 
     if (!hasPrefix && !isReplyToBot) return false;
 
     // Extract query
-    let query = fullText
-        .replace(/^\.(ai|bot)\s*/i, '')
-        .replace(/^[aA] /i, '')
-        .trim();
+    let query = fullText.replace(/^\.(ai|bot)\s*/i, '').trim();
 
     if (isReplyToBot && !hasPrefix) {
         query = fullText;
@@ -266,7 +257,7 @@ export async function execute(sock, msg, args) {
 
     if (!query) {
         await sock.sendMessage(from, {
-            text: '💬 Tumia: .ai swali lako\nMfano: .ai habari za leo Tanzania?'
+            text: '💬 Tumia: .ai swali lako'
         }, { quoted: msg });
         return true;
     }
@@ -282,6 +273,10 @@ export async function execute(sock, msg, args) {
 
         const reply = await aiRouter(messages);
         if (!reply) throw new Error('Jibu tupu');
+
+        // ✅ Typing delay kulingana na urefu wa jibu — max 4 sekunde
+        const typingDelay = Math.min(reply.length * 30, 4000);
+        await new Promise(resolve => setTimeout(resolve, typingDelay));
 
         await saveConversation(sender, query, reply);
 
