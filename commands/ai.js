@@ -1,19 +1,26 @@
+'use strict';
+
 import dotenv from 'dotenv';
 dotenv.config();
 import { Pool } from 'pg';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
+import pino from 'pino';
 
-const GROQ_API_KEY   = process.env.GROQ_API_KEY;
+// Singleton PostgreSQL Pool
+global.dbPool ||= new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
+const pool = global.dbPool;
+
+const MAX_HISTORY = 20;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const logger = pino({ level: 'info' });
 
 // =====================
 // 🧠 MEMORY — PostgreSQL
 // =====================
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-});
-
 async function initMemoryTable() {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_memory (
@@ -22,20 +29,25 @@ async function initMemoryTable() {
         )
     `);
 }
-initMemoryTable().catch(console.error);
+initMemoryTable().catch(err => logger.error('Memory table init error:', err));
 
 async function getHistory(userId) {
     const res = await pool.query('SELECT history FROM ai_memory WHERE user_id = $1', [userId]);
     return res.rows[0]?.history || [];
 }
 
-async function addHistory(userId, msg) {
+async function saveConversation(userId, userMsg, aiMsg) {
     const history = await getHistory(userId);
-    history.push(msg);
-    const trimmed = history.slice(-20);
+    history.push(
+        { role: 'user', content: userMsg },
+        { role: 'assistant', content: aiMsg }
+    );
+    const trimmed = history.slice(-MAX_HISTORY);
     await pool.query(`
-        INSERT INTO ai_memory (user_id, history) VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE SET history = $2
+        INSERT INTO ai_memory (user_id, history)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id) DO UPDATE
+        SET history = EXCLUDED.history
     `, [userId, JSON.stringify(trimmed)]);
 }
 
@@ -43,18 +55,22 @@ async function addHistory(userId, msg) {
 // ⚡ AI PROVIDERS
 // =====================
 async function callGroq(messages) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30000); // 30s timeout
+
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json'
         },
         body: JSON.stringify({
             model: 'llama-3.1-8b-instant',
             messages,
             temperature: 0.7,
-            max_tokens: 2048,
-        })
+            max_tokens: 2048
+        }),
+        signal: controller.signal
     });
     if (!res.ok) throw new Error(`Groq failed: ${res.status}`);
     const data = await res.json();
@@ -62,6 +78,9 @@ async function callGroq(messages) {
 }
 
 async function callGemini(messages) {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30000); // 30s timeout
+
     const systemMsg = messages.find(m => m.role === 'system')?.content || '';
     const turns = messages.filter(m => m.role !== 'system');
 
@@ -80,9 +99,10 @@ async function callGemini(messages) {
                 contents,
                 generationConfig: {
                     temperature: 0.7,
-                    maxOutputTokens: 2048,
+                    maxOutputTokens: 2048
                 }
-            })
+            }),
+            signal: controller.signal
         }
     );
 
@@ -90,15 +110,16 @@ async function callGemini(messages) {
         const err = await res.json();
         throw new Error(`Gemini failed: ${res.status} — ${err.error?.message || ''}`);
     }
-
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text;
 }
 
 async function aiRouter(messages) {
     if (GROQ_API_KEY) {
-        try { return await callGroq(messages); } catch (e) {
-            console.warn('Groq failed, trying Gemini:', e.message);
+        try {
+            return await callGroq(messages);
+        } catch (e) {
+            logger.warn('Groq failed, trying Gemini:', e.message);
         }
     }
     if (GEMINI_API_KEY) {
@@ -110,40 +131,49 @@ async function aiRouter(messages) {
 // =====================
 // 🤖 SYSTEM PROMPT
 // =====================
-const SYSTEM = `Wewe ni 26 Tech AI, assistant wa 26 Tech Solution (Yuzzo).
 
-Una akili ya asili — unaelewa context, hisia, na nia ya mtu anayezungumza nawe.
-Unajibu kama binadamu mwenye akili — si kama roboti inayofuata maagizo.
+const SYSTEM = `Wewe ni 26 Tech AI, iliyoundwa na 26 Tech Solution (Yuzzo).
 
-Kanuni moja tu: Jibu kinavyofaa kwa hali hiyo.
+Una akili ya kweli — unaelewa context, hisia, na nia ya mtu bila kufafanuliwa.
+Jibu kama AI halisi, siyo roboti. Tambua muktadha, hisia, na nia ya mtumiaji bila mipaka ya muda.
+Jibu kwa kina pale inapohitajika, weka maelezo ya kutosha, na usijibu kama msaidizi wa kawaida —
+jibu kama mtu mwenye akili, ukizingatia mantiki na uelewa wa hali halisi.
 
-Salamu → salamu fupi tu. "Mambo" = "Poa! Nikusaidie nini?"
-Swali rahisi → jibu fupi, moja kwa moja.
-Swali gumu → jibu la kina, structured.
+Kanuni moja: Jibu kinavyofaa kwa hali hiyo — fupi au kirefu, serious au poa.
+
+Salamu → jibu salamu tu, fupi. "Mambo" → "Poa! Nikusaidie nini?"
+Swali rahisi → jibu moja kwa moja, bila maelezo ya ziada.
+Swali gumu → jibu kwa kina, structured vizuri.
 Mtu anacheka → cheka nawe.
-Mtu ana wasiwasi → onyesha unaelewa kwanza.
+Mtu ana wasiwasi → onyesha unaelewa kwanza kabla ya kutoa jibu.
 
-Mifano ni marufuku isipokuwa mtumiaji ameomba mfano wazi.
-Orodha ni marufuku isipokuwa swali linahitaji orodha.
-Maneno haya ni marufuku kabisa: "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa".
+MARUFUKU kabisa:
+- Kutoa orodha au mifano bila kuombwa
+- Kuanza na "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa", "Mimi ni asistenti"
+- Kujielezea wewe ni nani bila kuulizwa
+- Kuuliza maswali mengi — uliza moja tu kama unahitaji kufafanua
+- Kutoa chaguzi nyingi bila kuulizwa — jibu moja bora tu
 
-Jibu kwa lugha ile ile mtumiaji aliyotumia.
-Jibu fupi iwezekanavyo — ongeza tu pale inahitajika.`;
+Ukiulizwa "wewe ni nani" → jibu fupi: "Mimi ni 26 Tech AI."
+Ukiulizwa "unaweza kufanya nini" → jibu kwa sentensi 1-2 tu, si orodha.
+
+Jibu kwa lugha ile ile mtumiaji aliyotumia — Kiswahili, English, au mchanganyiko.
+Jibu fupi iwezekanavyo — ongeza tu pale inahitajika kweli kweli.`;
+
 // =====================
 // 🖼️ PHOTO EDITOR
 // =====================
 async function handlePhoto(sock, msg, from, commandText) {
     let sharp;
     try {
-        sharp = await import('sharp');
-        sharp = sharp.default;
+        sharp = (await import('sharp')).default;
     } catch {
         await sock.sendMessage(from, { text: '❌ sharp haipo — run: npm install sharp' }, { quoted: msg });
         return true;
     }
 
     const imageMsg = msg.message?.imageMessage ||
-                     msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+        msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
 
     if (!imageMsg) {
         await sock.sendMessage(from, {
@@ -160,10 +190,10 @@ async function handlePhoto(sock, msg, from, commandText) {
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
         let processed;
-        if (type === 'blur')        processed = await sharp(buffer).blur(10).toBuffer();
-        else if (type === 'gray')   processed = await sharp(buffer).grayscale().toBuffer();
+        if (type === 'blur') processed = await sharp(buffer).blur(10).toBuffer();
+        else if (type === 'gray') processed = await sharp(buffer).grayscale().toBuffer();
         else if (type === 'rotate') processed = await sharp(buffer).rotate(90).toBuffer();
-        else                        processed = await sharp(buffer).resize(900).sharpen().toBuffer();
+        else processed = await sharp(buffer).resize(900).sharpen().toBuffer();
 
         await sock.sendMessage(from, {
             image: processed,
@@ -171,7 +201,7 @@ async function handlePhoto(sock, msg, from, commandText) {
         }, { quoted: msg });
 
     } catch (e) {
-        console.error('Photo edit error:', e.message);
+        logger.error('Photo edit error:', e.message);
         await sock.sendMessage(from, { text: '❌ Photo edit imeshindwa' }, { quoted: msg });
     }
 
@@ -182,15 +212,15 @@ async function handlePhoto(sock, msg, from, commandText) {
 // 🚀 MAIN COMMAND
 // =====================
 export const name = 'ai';
-export const description = 'AI Assistant + Photo Editor (.ai, .bot, .photo)';
+export const description = 'AI Assistant + Photo Editor (.ai, .bot, .photo, a, A)';
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
-    console.log('[ai] GROQ:', !!process.env.GROQ_API_KEY, '| GEMINI:', !!process.env.GEMINI_API_KEY);
+    logger.info('[ai] GROQ:', !!GROQ_API_KEY, '| GEMINI:', !!GEMINI_API_KEY);
     const sender = msg.key.participant || from;
     const fullText = (msg.message?.conversation ||
-                      msg.message?.extendedTextMessage?.text ||
-                      '').trim();
+        msg.message?.extendedTextMessage?.text ||
+        '').trim();
 
     if (!fullText) return false;
 
@@ -199,10 +229,27 @@ export async function execute(sock, msg, args) {
         return await handlePhoto(sock, msg, from, fullText);
     }
 
-    // 🤖 AI command
-    if (!fullText.startsWith('.ai') && !fullText.startsWith('.bot')) return false;
+    // ✅ Reply detection
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+    const quotedParticipant = contextInfo?.participant || '';
+    const botNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || '';
+    const isReplyToBot = botNumber && quotedParticipant.includes(botNumber);
 
-    const query = fullText.replace(/^\.(ai|bot)\s*/i, '').trim();
+    // ✅ Prefix detection
+    const hasPrefix = /^\.(ai|bot)\s*/i.test(fullText) || /^[aA] /i.test(fullText);
+
+    if (!hasPrefix && !isReplyToBot) return false;
+
+    // Extract query
+    let query = fullText
+        .replace(/^\.(ai|bot)\s*/i, '')
+        .replace(/^[aA] /i, '')
+        .trim();
+
+    // Reply bila prefix — tumia fullText yote
+    if (isReplyToBot && !hasPrefix) {
+        query = fullText;
+    }
 
     if (!query) {
         await sock.sendMessage(from, {
@@ -211,33 +258,32 @@ export async function execute(sock, msg, args) {
         return true;
     }
 
-    await sock.sendPresenceUpdate('composing', from).catch(() => {});
-
-    let history = [];
-    try { history = await getHistory(sender); } catch (e) {}
-
-    const messages = [
-        { role: 'system', content: SYSTEM },
-        ...history,
-        { role: 'user', content: query }
-    ];
-
     try {
+        await sock.sendPresenceUpdate('composing', from);
+        let history = await getHistory(sender).catch(e => []);
+        const messages = [
+            { role: 'system', content: SYSTEM },
+            ...history,
+            { role: 'user', content: query }
+        ];
+
         const reply = await aiRouter(messages);
         if (!reply) throw new Error('Jibu tupu');
 
-        addHistory(sender, { role: 'user', content: query }).catch(console.error);
-        addHistory(sender, { role: 'assistant', content: reply }).catch(console.error);
+        await saveConversation(sender, query, reply);
 
         await sock.sendMessage(from, {
             text: `🤖 *26 Tech AI*\n\n${reply}`
         }, { quoted: msg });
 
     } catch (err) {
-        console.error('AI error:', err.message);
+        logger.error('AI error:', err.message);
         await sock.sendMessage(from, {
             text: `❌ AI imeshindwa: ${err.message}`
         }, { quoted: msg });
+
+    } finally {
+        await sock.sendPresenceUpdate('paused', from).catch(() => {});
     }
 
     return true;
