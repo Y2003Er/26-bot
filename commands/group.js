@@ -1,12 +1,7 @@
-// ================================================
-// 26-𝚃𝙴𝙲𝙷 - GROUP COMMANDS (ESM Version)
-// Compatible with your Baileys v7 + PostgreSQL project
-// ================================================
-
 import {
    updateProfilePicture,
    parsedJid
-} from "../lib/index.js";
+} from "../lib";
 
 import {
    sck,
@@ -17,7 +12,7 @@ import {
    sleep,
    getAdmin,
    prefix
-} from "../lib/index.js";
+} from "../lib";
 
 import astro_patch from "../lib/plugins.js";
 const { cmd } = astro_patch;
@@ -121,9 +116,9 @@ smd({
 
       if (_0x5f4890) {
          const _0x40ced5 = new Date(_0x5f4890.creation * 1000);
-         const _0x236a49 = _0x40ced5.toISOString().split('T')[0];
+         var _0x236a49 = _0x40ced5.toISOString().split('T')[0];
 
-         const _0x56eaaf = {
+         var _0x56eaaf = {
             externalAdReply: {
                title: "26-𝚃𝙴𝙲𝙷",
                body: _0x5f4890.subject,
@@ -149,108 +144,241 @@ smd({
    }
 });
 
-// ====================== REJECTALL, ACCEPTALL, LISTREQUEST, SETDESC, SETNAME, LEFT, GPP, FULLGPP, TAGALL, BROADCAST ======================
-// (All other commands follow the same ESM pattern - shortened here for space)
-
+// ====================== REJECTALL ======================
 smd({
    cmdname: "rejectall",
    alias: ["rejectjoin"],
+   info: "reject all request to join!",
    type: "group",
    filename: import.meta.url
-}, async (m) => { /* paste your original logic here */ });
+}, async (_0xb81e45) => {
+   try {
+      if (!_0xb81e45.isGroup) return _0xb81e45.reply(tlang().group);
+      if (!_0xb81e45.isBotAdmin || !_0xb81e45.isAdmin) return _0xb81e45.reply(!_0xb81e45.isBotAdmin ? "*_I'm Not Admin In This Group_*" : tlang().admin);
 
+      const _0x4ea369 = await _0xb81e45.bot.groupRequestParticipantsList(_0xb81e45.chat);
+      if (!_0x4ea369 || !_0x4ea369[0]) return await _0xb81e45.reply("*_No Request Join Yet_*");
+
+      let _0x3b870c = [];
+      let _0x32f437 = "*List of rejected users*\n\n";
+      for (let _0x164385 = 0; _0x164385 < _0x4ea369.length; _0x164385++) {
+         try {
+            await _0xb81e45.bot.groupRequestParticipantsUpdate(_0xb81e45.chat, [_0x4ea369[_0x164385].jid], "reject");
+            _0x32f437 += "@" + _0x4ea369[_0x164385].jid.split("@")[0] + "\n";
+            _0x3b870c.push(_0x4ea369[_0x164385].jid);
+         } catch {}
+      }
+      await _0xb81e45.send(_0x32f437, { mentions: _0x3b870c });
+   } catch (e) {
+      await _0xb81e45.error(e + "\n\ncommand: rejectall", e);
+   }
+});
+
+// ====================== ACCEPTALL ======================
 smd({
    cmdname: "acceptall",
    alias: ["acceptjoin"],
+   info: "accept all request to join!",
    type: "group",
    filename: import.meta.url
-}, async (m) => { /* original logic */ });
+}, async (_0x90a6de) => {
+   try {
+      if (!_0x90a6de.isGroup) return _0x90a6de.reply(tlang().group);
+      if (!_0x90a6de.isBotAdmin || !_0x90a6de.isAdmin) return _0x90a6de.reply(!_0x90a6de.isBotAdmin ? "*_I'm Not Admin In This Group_*" : tlang().admin);
 
+      const _0x3da7c6 = await _0x90a6de.bot.groupRequestParticipantsList(_0x90a6de.chat);
+      if (!_0x3da7c6 || !_0x3da7c6[0]) return await _0x90a6de.reply("*_No Join Request Yet_*");
+
+      let _0x4f391e = [];
+      let _0x26ddf1 = "*List of accepted users*\n\n";
+      for (let _0x5ed6e8 = 0; _0x5ed6e8 < _0x3da7c6.length; _0x5ed6e8++) {
+         try {
+            await _0x90a6de.bot.groupRequestParticipantsUpdate(_0x90a6de.chat, [_0x3da7c6[_0x5ed6e8].jid], "approve");
+            _0x26ddf1 += "@" + _0x3da7c6[_0x5ed6e8].jid.split("@")[0] + "\n";
+            _0x4f391e.push(_0x3da7c6[_0x5ed6e8].jid);
+         } catch {}
+      }
+      await _0x90a6de.send(_0x26ddf1, { mentions: _0x4f391e });
+   } catch (e) {
+      await _0x90a6de.error(e + "\n\ncommand: acceptall", e);
+   }
+});
+
+// ====================== LISTREQUEST ======================
 smd({
    cmdname: "listrequest",
+   alias: ["requestjoin"],
    type: "group",
    filename: import.meta.url
-}, async (m) => { /* original logic */ });
+}, async (_0x13cccd) => {
+   try {
+      if (!_0x13cccd.isGroup) return _0x13cccd.reply(tlang().group);
+      if (!_0x13cccd.isBotAdmin || !_0x13cccd.isAdmin) return _0x13cccd.reply(tlang().admin);
 
+      const _0x3115b1 = await _0x13cccd.bot.groupRequestParticipantsList(_0x13cccd.chat);
+      if (!_0x3115b1 || !_0x3115b1[0]) return await _0x13cccd.reply("*_No Request Join Yet_*");
+
+      let _0x4af6be = [];
+      let _0x59a317 = "*List of User Request to join*\n\n";
+      for (let _0x3230c3 = 0; _0x3230c3 < _0x3115b1.length; _0x3230c3++) {
+         _0x59a317 += "@" + _0x3115b1[_0x3230c3].jid.split("@")[0] + "\n";
+         _0x4af6be.push(_0x3115b1[_0x3230c3].jid);
+      }
+      return await _0x13cccd.send(_0x59a317, { mentions: _0x4af6be });
+   } catch (e) {
+      await _0x13cccd.error(e + "\n\ncommand: listrequest", e);
+   }
+});
+
+// ====================== SETDESC ======================
 smd({
    cmdname: "setdesc",
    alias: ["setgdesc", "gdesc"],
    type: "group",
-   filename: import.meta.url
-}, async (m, text) => {
-   if (!m.isGroup || !text) return m.reply("*Provide description*");
-   if (!m.isBotAdmin || !m.isAdmin) return m.reply(tlang().admin);
-   await m.bot.groupUpdateDescription(m.chat, text + "\n\n" + Config.caption);
-   m.reply("*_✅ Description Updated_*");
+   filename: import.meta.url,
+   use: "<enter Description Text>"
+}, async (_0x160b96, _0x4ef0da) => {
+   try {
+      if (!_0x160b96.isGroup) return _0x160b96.reply(tlang().group);
+      if (!_0x4ef0da) return _0x160b96.reply("*Provide Description text*");
+      if (!_0x160b96.isBotAdmin || !_0x160b96.isAdmin) return _0x160b96.reply(tlang().admin);
+
+      await _0x160b96.bot.groupUpdateDescription(_0x160b96.chat, _0x4ef0da + "\n\n\t" + Config.caption);
+      _0x160b96.reply("*_✅Group description Updated Successfuly!_*");
+   } catch (e) {
+      await _0x160b96.error(e + "\n\ncommand: setdesc", e);
+   }
 });
 
+// ====================== SETNAME ======================
 smd({
    cmdname: "setname",
    alias: ["setgname", "gname"],
    type: "group",
-   filename: import.meta.url
-}, async (m, text) => {
-   if (!m.isGroup || !text) return m.reply("*Give new name*");
-   if (!m.isBotAdmin || !m.isAdmin) return m.reply(tlang().admin);
-   await m.bot.groupUpdateSubject(m.chat, text);
-   m.reply("*_✅ Name Updated_*");
+   filename: import.meta.url,
+   use: "<enter Name>"
+}, async (_0x25d56b, _0x332d77) => {
+   try {
+      if (!_0x25d56b.isGroup) return _0x25d56b.reply(tlang().group);
+      if (!_0x332d77) return _0x25d56b.reply("*Give text to Update This Group Name*");
+      if (!_0x25d56b.isBotAdmin || !_0x25d56b.isAdmin) return _0x25d56b.reply(tlang().admin);
+
+      await _0x25d56b.bot.groupUpdateSubject(_0x25d56b.chat, _0x332d77);
+      _0x25d56b.reply("*_✅Group Name Updated Successfuly.!_*");
+   } catch (e) {
+      await _0x25d56b.error(e + "\n\ncommand: setname", e);
+   }
 });
 
+// ====================== LEFT ======================
 smd({
    cmdname: "left",
+   info: "left from a group.",
    fromMe: true,
    type: "group",
    filename: import.meta.url
-}, async (m, text) => {
-   if (["sure","yes","ok"].includes(text?.toLowerCase())) {
-      await m.bot.groupParticipantsUpdate(m.chat, [m.user], "remove");
-      m.send("*Group Left!!*");
-   } else m.send(`*_Use: ${prefix}left sure/yes/ok_*`);
+}, async (_0x37841c, _0x260aed) => {
+   try {
+      if (!_0x37841c.isGroup) return _0x37841c.reply(tlang().group);
+      if (_0x260aed.toLowerCase().match(/^(sure|yes|ok)$/)) {
+         await _0x37841c.bot.groupParticipantsUpdate(_0x37841c.chat, [_0x37841c.user], "remove");
+         _0x37841c.send("*Group Left!!*");
+      } else {
+         _0x37841c.send(`*_Use: ${prefix}left sure/yes/ok_*`);
+      }
+   } catch (e) {
+      await _0x37841c.error(e + "\n\ncommand: left", e);
+   }
 });
 
+// ====================== GPP ======================
 let mtypes = ["imageMessage"];
 
-smd({ pattern: "gpp", filename: import.meta.url }, async (m) => {
-   const media = m.reply_message?.imageMessage ? m.reply_message : m;
-   if (media?.imageMessage) await updateProfilePicture(m, m.chat, media, "gpp");
-   else m.reply("*Reply to image*");
-});
-
-smd({ pattern: "fullgpp", filename: import.meta.url }, async (m) => {
-   const media = m.reply_message?.imageMessage ? m.reply_message : m;
-   if (media?.imageMessage) await updateProfilePicture(m, m.chat, media, "fullgpp");
-   else m.reply("*Reply to image*");
-});
-
-cmd({
-   pattern: "tagall",
+smd({
+   pattern: "gpp",
+   desc: "Set Group profile picture",
    category: "group",
    filename: import.meta.url
-}, async (m, text) => {
-   if (!m.isGroup) return m.reply(tlang().group);
-   if (!m.isAdmin && !m.isCreator) return m.reply(tlang().admin);
-   const participants = m.metadata.participants || [];
-   let msg = `══✪〘 *Tag All* 〙✪══\n\n\( {text || "Hello Everyone"}\n \){Config.caption}\n\n`;
-   await m.bot.sendMessage(m.chat, { text: msg, mentions: participants.map(p => p.id) }, { quoted: m });
+}, async (_0x5ac912) => {
+   try {
+      if (!_0x5ac912.isGroup) return _0x5ac912.reply(tlang().group);
+      if (!_0x5ac912.isBotAdmin || !_0x5ac912.isAdmin) return _0x5ac912.reply(tlang().admin);
+      let _0xc0618e = mtypes.includes(_0x5ac912.mtype) ? _0x5ac912 : _0x5ac912.reply_message;
+      if (!_0xc0618e?.imageMessage) return _0x5ac912.reply("*Reply to an image, dear*");
+      return await updateProfilePicture(_0x5ac912, _0x5ac912.chat, _0xc0618e, "gpp");
+   } catch (e) {
+      await _0x5ac912.error(e + "\n\ncommand : gpp", e);
+   }
 });
 
+smd({
+   pattern: "fullgpp",
+   desc: "Set full screen group profile picture",
+   category: "group",
+   filename: import.meta.url
+}, async (_0x31201a) => {
+   try {
+      if (!_0x31201a.isGroup) return _0x31201a.reply(tlang().group);
+      if (!_0x31201a.isBotAdmin || !_0x31201a.isAdmin) return _0x31201a.reply(tlang().admin);
+      let _0x3fba56 = mtypes.includes(_0x31201a.mtype) ? _0x31201a : _0x31201a.reply_message;
+      if (!_0x3fba56?.imageMessage) return _0x31201a.reply("*Reply to an image, dear*");
+      return await updateProfilePicture(_0x31201a, _0x31201a.chat, _0x3fba56, "fullgpp");
+   } catch (e) {
+      await _0x31201a.error(e + "\n\ncommand : fullgpp", e);
+   }
+});
+
+// ====================== TAGALL ======================
+cmd({
+   pattern: "tagall",
+   desc: "Tags every person of group.",
+   category: "group",
+   filename: import.meta.url
+}, async (_0x1ed055, _0x929954) => {
+   try {
+      if (!_0x1ed055.isGroup) return _0x1ed055.reply(tlang().group);
+      if (!_0x1ed055.isAdmin && !_0x1ed055.isCreator) return _0x1ed055.reply(tlang().admin);
+
+      const participants = _0x1ed055.metadata.participants || [];
+      let _0x392a2d = `\n══✪〘   *Tag All*   〙✪══\n\n➲ *Message :* ${_0x929954 || "blank Message"} \n ${Config.caption} \n\n➲ *Author:* ${_0x1ed055.pushName} 🔖\n`;
+
+      for (let mem of participants) {
+         if (!mem.id.startsWith("2348039607375")) {
+            _0x392a2d += ` 📍 @${mem.id.split("@")[0]}\n`;
+         }
+      }
+      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text: _0x392a2d, mentions: participants.map(p => p.id) }, { quoted: _0x1ed055 });
+   } catch (e) {
+      await _0x1ed055.error(e + "\n\ncommand: tagall", e);
+   }
+});
+
+// ====================== BROADCAST ======================
 cmd({
    pattern: "broadcast",
+   desc: "Bot makes a broadcast in all groups",
    fromMe: true,
    category: "group",
    filename: import.meta.url
-}, async (m, text) => {
-   if (!text) return m.reply("*Provide text*");
-   const groups = await m.bot.groupFetchAllParticipating();
-   const ids = Object.keys(groups);
-   m.reply(`*_Broadcasting to ${ids.length} groups..._*`);
-   for (let id of ids) {
-      try {
-         await sleep(1500);
-         await send(m, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n${text}`, {}, "", "", id);
-      } catch {}
+}, async (_0x553d05, _0x5d14a3) => {
+   try {
+      if (!_0x5d14a3) return _0x553d05.reply("*_Uhh Dear, Provide text to broadcast in all groups_*");
+
+      let groups = await _0x553d05.bot.groupFetchAllParticipating();
+      let ids = Object.keys(groups);
+
+      await _0x553d05.send(`*_Sending Broadcast To ${ids.length} Groups..._*`);
+
+      for (let id of ids) {
+         try {
+            await sleep(1500);
+            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", id);
+         } catch {}
+      }
+      return _0x553d05.reply(`*_Broadcast sent to ${ids.length} groups_*`);
+   } catch (e) {
+      await _0x553d05.error(e + "\n\ncommand: broadcast", e);
    }
-   m.reply(`*_Broadcast done to ${ids.length} groups_*`);
 });
 
 export default {};
