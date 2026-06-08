@@ -14,7 +14,7 @@ import './config.js';
 import { loadCommands, handleMessage, setupContactListener, setupAntiDelete, setupAntiViewOnce, setupAutoStatusViewer } from './lib/handler.js';
 import { initializeDatabase, usePostgresAuthState, deleteSession, deleteAllSessions } from './session-db.js';
 
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
