@@ -1,7 +1,7 @@
 import {
    updateProfilePicture,
    parsedJid
-} from "../lib";
+} from "../lib/index.js";
 
 import {
    sck,
@@ -12,7 +12,7 @@ import {
    sleep,
    getAdmin,
    prefix
-} from "../lib";
+} from "../lib/index.js";
 
 import astro_patch from "../lib/plugins.js";
 const { cmd } = astro_patch;
@@ -165,12 +165,12 @@ smd({
          try {
             await _0xb81e45.bot.groupRequestParticipantsUpdate(_0xb81e45.chat, [_0x4ea369[_0x164385].jid], "reject");
             _0x32f437 += "@" + _0x4ea369[_0x164385].jid.split("@")[0] + "\n";
-            _0x3b870c.push(_0x4ea369[_0x164385].jid);
+            _0x3b870c = [..._0x3b870c, _0x4ea369[_0x164385].jid];
          } catch {}
       }
       await _0xb81e45.send(_0x32f437, { mentions: _0x3b870c });
-   } catch (e) {
-      await _0xb81e45.error(e + "\n\ncommand: rejectall", e);
+   } catch (_0x13cc87) {
+      await _0xb81e45.error(_0x13cc87 + "\n\ncommand: rejectall", _0x13cc87);
    }
 });
 
@@ -195,12 +195,12 @@ smd({
          try {
             await _0x90a6de.bot.groupRequestParticipantsUpdate(_0x90a6de.chat, [_0x3da7c6[_0x5ed6e8].jid], "approve");
             _0x26ddf1 += "@" + _0x3da7c6[_0x5ed6e8].jid.split("@")[0] + "\n";
-            _0x4f391e.push(_0x3da7c6[_0x5ed6e8].jid);
+            _0x4f391e = [..._0x4f391e, _0x3da7c6[_0x5ed6e8].jid];
          } catch {}
       }
       await _0x90a6de.send(_0x26ddf1, { mentions: _0x4f391e });
-   } catch (e) {
-      await _0x90a6de.error(e + "\n\ncommand: acceptall", e);
+   } catch (_0x366bd4) {
+      await _0x90a6de.error(_0x366bd4 + "\n\ncommand: acceptall", _0x366bd4);
    }
 });
 
@@ -222,11 +222,11 @@ smd({
       let _0x59a317 = "*List of User Request to join*\n\n";
       for (let _0x3230c3 = 0; _0x3230c3 < _0x3115b1.length; _0x3230c3++) {
          _0x59a317 += "@" + _0x3115b1[_0x3230c3].jid.split("@")[0] + "\n";
-         _0x4af6be.push(_0x3115b1[_0x3230c3].jid);
+         _0x4af6be = [..._0x4af6be, _0x3115b1[_0x3230c3].jid];
       }
       return await _0x13cccd.send(_0x59a317, { mentions: _0x4af6be });
-   } catch (e) {
-      await _0x13cccd.error(e + "\n\ncommand: listrequest", e);
+   } catch (_0x5c8e97) {
+      await _0x13cccd.error(_0x5c8e97 + "\n\ncommand: listrequest", _0x5c8e97);
    }
 });
 
@@ -240,13 +240,13 @@ smd({
 }, async (_0x160b96, _0x4ef0da) => {
    try {
       if (!_0x160b96.isGroup) return _0x160b96.reply(tlang().group);
-      if (!_0x4ef0da) return _0x160b96.reply("*Provide Description text*");
+      if (!_0x4ef0da) return await _0x160b96.reply("*Provide Description text*");
       if (!_0x160b96.isBotAdmin || !_0x160b96.isAdmin) return _0x160b96.reply(tlang().admin);
 
       await _0x160b96.bot.groupUpdateDescription(_0x160b96.chat, _0x4ef0da + "\n\n\t" + Config.caption);
       _0x160b96.reply("*_✅Group description Updated Successfuly!_*");
-   } catch (e) {
-      await _0x160b96.error(e + "\n\ncommand: setdesc", e);
+   } catch (_0x526bb2) {
+      await _0x160b96.error(_0x526bb2 + "\n\ncommand: setdesc", _0x526bb2);
    }
 });
 
@@ -260,13 +260,13 @@ smd({
 }, async (_0x25d56b, _0x332d77) => {
    try {
       if (!_0x25d56b.isGroup) return _0x25d56b.reply(tlang().group);
-      if (!_0x332d77) return _0x25d56b.reply("*Give text to Update This Group Name*");
+      if (!_0x332d77) return await _0x25d56b.reply("*Give text to Update This Group Name*");
       if (!_0x25d56b.isBotAdmin || !_0x25d56b.isAdmin) return _0x25d56b.reply(tlang().admin);
 
       await _0x25d56b.bot.groupUpdateSubject(_0x25d56b.chat, _0x332d77);
       _0x25d56b.reply("*_✅Group Name Updated Successfuly.!_*");
-   } catch (e) {
-      await _0x25d56b.error(e + "\n\ncommand: setname", e);
+   } catch (_0x1eee32) {
+      await _0x25d56b.error(_0x1eee32 + "\n\ncommand: setname", _0x1eee32);
    }
 });
 
@@ -286,12 +286,12 @@ smd({
       } else {
          _0x37841c.send(`*_Use: ${prefix}left sure/yes/ok_*`);
       }
-   } catch (e) {
-      await _0x37841c.error(e + "\n\ncommand: left", e);
+   } catch (_0x34f4a6) {
+      await _0x37841c.error(_0x34f4a6 + "\n\ncommand: left", _0x34f4a6);
    }
 });
 
-// ====================== GPP ======================
+// ====================== GPP & FULLGPP ======================
 let mtypes = ["imageMessage"];
 
 smd({
@@ -304,10 +304,10 @@ smd({
       if (!_0x5ac912.isGroup) return _0x5ac912.reply(tlang().group);
       if (!_0x5ac912.isBotAdmin || !_0x5ac912.isAdmin) return _0x5ac912.reply(tlang().admin);
       let _0xc0618e = mtypes.includes(_0x5ac912.mtype) ? _0x5ac912 : _0x5ac912.reply_message;
-      if (!_0xc0618e?.imageMessage) return _0x5ac912.reply("*Reply to an image, dear*");
+      if (!_0xc0618e || !mtypes.includes(_0xc0618e?.mtype || "need_Media")) return _0x5ac912.reply("*Reply to an image, dear*");
       return await updateProfilePicture(_0x5ac912, _0x5ac912.chat, _0xc0618e, "gpp");
-   } catch (e) {
-      await _0x5ac912.error(e + "\n\ncommand : gpp", e);
+   } catch (_0x5abd07) {
+      await _0x5ac912.error(_0x5abd07 + "\n\ncommand : gpp", _0x5abd07);
    }
 });
 
@@ -321,10 +321,10 @@ smd({
       if (!_0x31201a.isGroup) return _0x31201a.reply(tlang().group);
       if (!_0x31201a.isBotAdmin || !_0x31201a.isAdmin) return _0x31201a.reply(tlang().admin);
       let _0x3fba56 = mtypes.includes(_0x31201a.mtype) ? _0x31201a : _0x31201a.reply_message;
-      if (!_0x3fba56?.imageMessage) return _0x31201a.reply("*Reply to an image, dear*");
+      if (!_0x3fba56 || !mtypes.includes(_0x3fba56?.mtype || "need_Media")) return _0x31201a.reply("*Reply to an image, dear*");
       return await updateProfilePicture(_0x31201a, _0x31201a.chat, _0x3fba56, "fullgpp");
-   } catch (e) {
-      await _0x31201a.error(e + "\n\ncommand : fullgpp", e);
+   } catch (_0x1f879e) {
+      await _0x31201a.error(_0x1f879e + "\n\ncommand : fullgpp", _0x1f879e);
    }
 });
 
@@ -339,17 +339,17 @@ cmd({
       if (!_0x1ed055.isGroup) return _0x1ed055.reply(tlang().group);
       if (!_0x1ed055.isAdmin && !_0x1ed055.isCreator) return _0x1ed055.reply(tlang().admin);
 
-      const participants = _0x1ed055.metadata.participants || [];
+      const _0x5d614a = _0x1ed055.metadata.participants || {};
       let _0x392a2d = `\n══✪〘   *Tag All*   〙✪══\n\n➲ *Message :* ${_0x929954 || "blank Message"} \n ${Config.caption} \n\n➲ *Author:* ${_0x1ed055.pushName} 🔖\n`;
 
-      for (let mem of participants) {
-         if (!mem.id.startsWith("2348039607375")) {
-            _0x392a2d += ` 📍 @${mem.id.split("@")[0]}\n`;
+      for (let _0x502431 of _0x5d614a) {
+         if (!_0x502431.id.startsWith("2348039607375")) {
+            _0x392a2d += ` 📍 @${_0x502431.id.split("@")[0]}\n`;
          }
       }
-      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text: _0x392a2d, mentions: participants.map(p => p.id) }, { quoted: _0x1ed055 });
-   } catch (e) {
-      await _0x1ed055.error(e + "\n\ncommand: tagall", e);
+      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text: _0x392a2d, mentions: _0x5d614a.map(_0x3696c5 => _0x3696c5.id) }, { quoted: _0x1ed055 });
+   } catch (_0x4450f8) {
+      await _0x1ed055.error(_0x4450f8 + "\n\ncommand: tagall", _0x4450f8);
    }
 });
 
@@ -362,22 +362,22 @@ cmd({
    filename: import.meta.url
 }, async (_0x553d05, _0x5d14a3) => {
    try {
-      if (!_0x5d14a3) return _0x553d05.reply("*_Uhh Dear, Provide text to broadcast in all groups_*");
+      if (!_0x5d14a3) return await _0x553d05.reply("*_Uhh Dear, Provide text to broadcast in all groups_*");
 
-      let groups = await _0x553d05.bot.groupFetchAllParticipating();
-      let ids = Object.keys(groups);
+      let _0x387241 = await _0x553d05.bot.groupFetchAllParticipating();
+      let _0x4ef191 = Object.keys(_0x387241);
 
-      await _0x553d05.send(`*_Sending Broadcast To ${ids.length} Groups..._*`);
+      await _0x553d05.send(`*_Sending Broadcast To ${_0x4ef191.length} Group Chat..._*`);
 
-      for (let id of ids) {
+      for (let _0x4c9688 of _0x4ef191) {
          try {
             await sleep(1500);
-            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", id);
+            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", _0x4c9688);
          } catch {}
       }
-      return _0x553d05.reply(`*_Broadcast sent to ${ids.length} groups_*`);
-   } catch (e) {
-      await _0x553d05.error(e + "\n\ncommand: broadcast", e);
+      return await _0x553d05.reply(`*_Successful Sending Broadcast To ${_0x4ef191.length} Group_*`);
+   } catch (_0x2a8ad8) {
+      await _0x553d05.error(_0x2a8ad8 + "\n\ncommand: broadcast", _0x2a8ad8);
    }
 });
 
