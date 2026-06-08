@@ -174,54 +174,67 @@ function printBanner() {
 }
 
 // ── Update mstari mmoja ndani ya banner bila kugusa logs ──
+// value=null inaruhusu refresh tu bila kubadilisha state (uptime, ram)
 function updateBanner(key, value) {
-    if (key in bannerState) bannerState[key] = value;
+    // Hifadhi value mpya kwenye state — isipokuwa null (refresh tu)
+    if (value !== null && value !== undefined && key in bannerState) {
+        bannerState[key] = value;
+    }
 
     const row = BANNER_ROW[key];
-    if (row === undefined) return; // key haina row — skip
+    if (row === undefined) return; // key haina row katika banner — skip
 
     const newLine = buildBannerLine(key);
+    if (!newLine) return;
 
-    // Hesabu mistari ya kurudi juu:
-    // Tuko mstari wa (logLineCount) chini ya banner.
-    // Mstari tunaouhitaji = banner_row kutoka juu ya banner.
-    // Kwa hiyo sogea juu: logLineCount + (BANNER_TOTAL_LINES - 1 - row)
+    // Mistari ya kurudi juu:
+    //   - logLineCount = mistari ya logs chini ya banner
+    //   - (BANNER_TOTAL_LINES - 1 - row) = umbali wa mstari husika kutoka chini ya banner
     const linesUp = logLineCount + (BANNER_TOTAL_LINES - 1 - row);
+    if (linesUp < 1) return; // usalama — usirudi chini ya banner
 
     process.stdout.write(
-        ESC.saveCursor +
-        ESC.moveUp(linesUp) +
-        ESC.col1 +
-        ESC.clearLine +
-        newLine +
-        ESC.restoreCursor
+        ESC.saveCursor          +   // hifadhi cursor ya sasa
+        ESC.moveUp(linesUp)     +   // rudi juu hadi mstari husika
+        ESC.col1                +   // nenda mwanzo wa mstari
+        ESC.clearLine           +   // futa mstari wote
+        newLine                 +   // chapisha mstari mpya wa banner
+        ESC.restoreCursor           // rudisha cursor mahali ilikuwa
     );
 }
 
 // ── Intercept console.log/warn/error ili kuhesabu mistari ya logs ──
-// Hii inaturuhusu kujua tuko wapi chini ya banner
+// Hifadhi originals KABLA ya kubadilisha
 const _origLog   = console.log.bind(console);
 const _origWarn  = console.warn.bind(console);
 const _origError = console.error.bind(console);
 
-function countNewlines(args) {
-    // Hesabu \n katika output — kila \n = mstari mpya
-    const text = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ');
-    // Kila call ina angalau mstari 1 (newline ya mwisho ya console.log)
-    const extra = (text.match(/\n/g) || []).length;
-    return 1 + extra;
+// Tunafuta ANSI codes kwanza ili kupata urefu wa kweli wa mstari
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+const TERM_COLS = process.stdout.columns || 120;
+
+function countOutputLines(args) {
+    const raw = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ');
+    const clean = raw.replace(ANSI_RE, ''); // futa escape codes
+    const parts = clean.split('\n');
+    let total = 0;
+    for (const part of parts) {
+        // Hesabu word-wrap: mstari mrefu unaweza kuchukua mistari >1
+        total += Math.max(1, Math.ceil(part.length / TERM_COLS));
+    }
+    return total;
 }
 
 console.log = (...args) => {
-    logLineCount += countNewlines(args);
+    logLineCount += countOutputLines(args);
     _origLog(...args);
 };
 console.warn = (...args) => {
-    logLineCount += countNewlines(args);
+    logLineCount += countOutputLines(args);
     _origWarn(...args);
 };
 console.error = (...args) => {
-    logLineCount += countNewlines(args);
+    logLineCount += countOutputLines(args);
     _origError(...args);
 };
 
