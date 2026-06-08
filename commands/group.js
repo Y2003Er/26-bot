@@ -1,7 +1,7 @@
 import {
    updateProfilePicture,
    parsedJid
-} from "../lib/index.js";
+} from "../lib/handler.js";
 
 import {
    sck,
@@ -12,7 +12,7 @@ import {
    sleep,
    getAdmin,
    prefix
-} from "../lib/index.js";
+} from "../lib/handler.js";
 
 import astro_patch from "../lib/plugins.js";
 const { cmd } = astro_patch;
@@ -91,8 +91,9 @@ smd({
             }
          };
          return await send(_0x1d2f1f, (`*_Hurray, New group created!!!_*\n${link}`).trim(), { contextInfo: _0x539d8f }, "", _0x2c6495);
+      } else {
+         await _0x1d2f1f.send("*_Can't create new group, Sorry!!_*");
       }
-      await _0x1d2f1f.send("*_Can't create new group, Sorry!!_*");
    } catch (_0x33d6f3) {
       await _0x1d2f1f.error(_0x33d6f3 + "\n\ncommand: " + _0x49994a, _0x33d6f3, "*_Can't create new group, Sorry!!_*");
    }
@@ -137,8 +138,9 @@ smd({
          msg += `\n${Config.caption}`;
 
          return await send(_0x4f7c88, msg.trim(), { mentions: [_0x5f4890.owner], contextInfo: _0x56eaaf });
+      } else {
+         await _0x4f7c88.send("*_Group Id not found, Sorry!!_*");
       }
-      await _0x4f7c88.send("*_Group Id not found, Sorry!!_*");
    } catch (_0x36c345) {
       await _0x4f7c88.error(_0x36c345 + "\n\ncommand: ginfo", _0x36c345, "*_Group Id not found, Sorry!!_*");
    }
@@ -260,7 +262,7 @@ smd({
 }, async (_0x25d56b, _0x332d77) => {
    try {
       if (!_0x25d56b.isGroup) return _0x25d56b.reply(tlang().group);
-      if (!_0x332d77) return await _0x25d56b.reply("*Give text to Update This Group Name*");
+      if (!_0x332d77) return await _0x25d56b.reply("*Uhh Dear, Give text to Update This Group Name*");
       if (!_0x25d56b.isBotAdmin || !_0x25d56b.isAdmin) return _0x25d56b.reply(tlang().admin);
 
       await _0x25d56b.bot.groupUpdateSubject(_0x25d56b.chat, _0x332d77);
@@ -280,11 +282,12 @@ smd({
 }, async (_0x37841c, _0x260aed) => {
    try {
       if (!_0x37841c.isGroup) return _0x37841c.reply(tlang().group);
-      if (_0x260aed.toLowerCase().match(/^(sure|yes|ok)$/)) {
+      let _0x6118c5 = _0x260aed.toLowerCase().trim();
+      if (_0x6118c5.match(/^(sure|yes|ok)$/)) {
          await _0x37841c.bot.groupParticipantsUpdate(_0x37841c.chat, [_0x37841c.user], "remove");
          _0x37841c.send("*Group Left!!*");
       } else {
-         _0x37841c.send(`*_Use: ${prefix}left sure/yes/ok_*`);
+         return await _0x37841c.send(`*_Use: ${prefix}left sure/yes/ok_*`);
       }
    } catch (_0x34f4a6) {
       await _0x37841c.error(_0x34f4a6 + "\n\ncommand: left", _0x34f4a6);
@@ -304,7 +307,7 @@ smd({
       if (!_0x5ac912.isGroup) return _0x5ac912.reply(tlang().group);
       if (!_0x5ac912.isBotAdmin || !_0x5ac912.isAdmin) return _0x5ac912.reply(tlang().admin);
       let _0xc0618e = mtypes.includes(_0x5ac912.mtype) ? _0x5ac912 : _0x5ac912.reply_message;
-      if (!_0xc0618e || !mtypes.includes(_0xc0618e?.mtype || "need_Media")) return _0x5ac912.reply("*Reply to an image, dear*");
+      if (!_0xc0618e || !mtypes.includes(_0xc0618e?.mtype)) return _0x5ac912.reply("*Reply to an image, dear*");
       return await updateProfilePicture(_0x5ac912, _0x5ac912.chat, _0xc0618e, "gpp");
    } catch (_0x5abd07) {
       await _0x5ac912.error(_0x5abd07 + "\n\ncommand : gpp", _0x5abd07);
@@ -321,7 +324,7 @@ smd({
       if (!_0x31201a.isGroup) return _0x31201a.reply(tlang().group);
       if (!_0x31201a.isBotAdmin || !_0x31201a.isAdmin) return _0x31201a.reply(tlang().admin);
       let _0x3fba56 = mtypes.includes(_0x31201a.mtype) ? _0x31201a : _0x31201a.reply_message;
-      if (!_0x3fba56 || !mtypes.includes(_0x3fba56?.mtype || "need_Media")) return _0x31201a.reply("*Reply to an image, dear*");
+      if (!_0x3fba56 || !mtypes.includes(_0x3fba56?.mtype)) return _0x31201a.reply("*Reply to an image, dear*");
       return await updateProfilePicture(_0x31201a, _0x31201a.chat, _0x3fba56, "fullgpp");
    } catch (_0x1f879e) {
       await _0x31201a.error(_0x1f879e + "\n\ncommand : fullgpp", _0x1f879e);
@@ -339,17 +342,17 @@ cmd({
       if (!_0x1ed055.isGroup) return _0x1ed055.reply(tlang().group);
       if (!_0x1ed055.isAdmin && !_0x1ed055.isCreator) return _0x1ed055.reply(tlang().admin);
 
-      const _0x5d614a = _0x1ed055.metadata.participants || {};
-      let _0x392a2d = `\n══✪〘   *Tag All*   〙✪══\n\n➲ *Message :* ${_0x929954 || "blank Message"} \n ${Config.caption} \n\n➲ *Author:* ${_0x1ed055.pushName} 🔖\n`;
+      const participants = _0x1ed055.metadata.participants || [];
+      let text = `\n══✪〘   *Tag All*   〙✪══\n\n➲ *Message :* ${_0x929954 || "blank Message"} \n ${Config.caption} \n\n➲ *Author:* ${_0x1ed055.pushName} 🔖\n`;
 
-      for (let _0x502431 of _0x5d614a) {
-         if (!_0x502431.id.startsWith("2348039607375")) {
-            _0x392a2d += ` 📍 @${_0x502431.id.split("@")[0]}\n`;
+      for (let mem of participants) {
+         if (!mem.id.startsWith("2348039607375")) {
+            text += ` 📍 @${mem.id.split("@")[0]}\n`;
          }
       }
-      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text: _0x392a2d, mentions: _0x5d614a.map(_0x3696c5 => _0x3696c5.id) }, { quoted: _0x1ed055 });
-   } catch (_0x4450f8) {
-      await _0x1ed055.error(_0x4450f8 + "\n\ncommand: tagall", _0x4450f8);
+      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text, mentions: participants.map(p => p.id) }, { quoted: _0x1ed055 });
+   } catch (e) {
+      await _0x1ed055.error(e + "\n\ncommand: tagall", e);
    }
 });
 
@@ -362,22 +365,22 @@ cmd({
    filename: import.meta.url
 }, async (_0x553d05, _0x5d14a3) => {
    try {
-      if (!_0x5d14a3) return await _0x553d05.reply("*_Uhh Dear, Provide text to broadcast in all groups_*");
+      if (!_0x5d14a3) return await _0x553d05.reply("*_Provide text for broadcast_*");
 
-      let _0x387241 = await _0x553d05.bot.groupFetchAllParticipating();
-      let _0x4ef191 = Object.keys(_0x387241);
+      let groups = await _0x553d05.bot.groupFetchAllParticipating();
+      let ids = Object.keys(groups);
 
-      await _0x553d05.send(`*_Sending Broadcast To ${_0x4ef191.length} Group Chat..._*`);
+      await _0x553d05.send(`*_Sending Broadcast To ${ids.length} Groups..._*`);
 
-      for (let _0x4c9688 of _0x4ef191) {
+      for (let id of ids) {
          try {
             await sleep(1500);
-            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", _0x4c9688);
+            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", id);
          } catch {}
       }
-      return await _0x553d05.reply(`*_Successful Sending Broadcast To ${_0x4ef191.length} Group_*`);
-   } catch (_0x2a8ad8) {
-      await _0x553d05.error(_0x2a8ad8 + "\n\ncommand: broadcast", _0x2a8ad8);
+      return _0x553d05.reply(`*_Broadcast sent to ${ids.length} groups_*`);
+   } catch (e) {
+      await _0x553d05.error(e + "\n\ncommand: broadcast", e);
    }
 });
 
