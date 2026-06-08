@@ -20,13 +20,11 @@ const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
 const CLEAN_SESSIONS = process.env.CLEAN_SESSIONS === 'true';
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                     BANNER SYSTEM                            ║
-// ║  updateBanner() → hifadhi state tu, HAKUNA cursor/ANSI      ║
-// ║  printBanner()  → chapisha banner kamili (inaitwa 2x):       ║
-// ║    1. Mwanzoni   (values za default)                         ║
-// ║    2. Baada ya bot kuunganika (values zote zimesasishwa)     ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ╔══════════════════════════════════════════════════════════╗
+// ║              LIVE BANNER — ANSI CURSOR SYSTEM            ║
+// ║  Banner inabaki juu, updates zinabadilisha mstari husika  ║
+// ║  Logs zinaendelea chini bila kuvunja banner              ║
+// ╚══════════════════════════════════════════════════════════╝
 
 const C = {
     reset:   '\x1b[0m',
@@ -41,6 +39,16 @@ const C = {
     magenta: '\x1b[35m',
 };
 
+// ANSI cursor helpers
+const ESC = {
+    saveCursor:    '\x1b[s',
+    restoreCursor: '\x1b[u',
+    clearLine:     '\x1b[2K',
+    moveUp:    (n) => `\x1b[${n}A`,
+    moveDown:  (n) => `\x1b[${n}B`,
+    col1:          '\x1b[1G',       // rudi mwanzo wa mstari
+};
+
 const bannerState = {
     connection: '⏳ Starting...',
     database:   '⏳ Connecting...',
@@ -50,6 +58,40 @@ const bannerState = {
     lastMsg:    '—',
     ai:         process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime:  Date.now(),
+};
+
+// Hesabu mistari ya logs iliyochapishwa tangu banner
+let logLineCount = 0;
+
+// ── Banner row positions (0-based, kuanzia mstari wa kwanza wa banner) ──
+// Mstari 0: ┌──────┐
+// Mstari 1: │ ⚡ 26-TECH ... uptime
+// Mstari 2: ├──────┤
+// Mstari 3: │ ◈ Connection
+// Mstari 4: │ 🗄️  Database
+// Mstari 5: │ ⚡ Commands
+// Mstari 6: │ 📨 Messages
+// Mstari 7: │ 👥 Groups
+// Mstari 8: │ 🤖 AI
+// Mstari 9: │ 💾 RAM
+// Mstari 10: ├──────┤
+// Mstari 11: │ Last: ...
+// Mstari 12: └──────┘
+// Mstari 13: (blank)
+// BANNER_TOTAL_LINES = 14
+
+const BANNER_TOTAL_LINES = 14;
+
+const BANNER_ROW = {
+    uptime:     1,
+    connection: 3,
+    database:   4,
+    commands:   5,
+    messages:   6,
+    groups:     7,
+    ai:         8,
+    ram:        9,
+    lastMsg:    11,
 };
 
 function getUptime() {
@@ -68,49 +110,127 @@ function getRAM() {
     return `${used}/${total} MB`;
 }
 
-// ── Chapisha banner kamili — mistari moja moja (kila mstari = log entry yake) ──
-function printBanner() {
-    const s = bannerState;
-
-    const connVal = s.connection === 'ONLINE'     ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
-                  : s.connection === 'connecting' ? `${C.yellow}⏳ Connecting...${C.reset}`
-                  : s.connection === 'OFFLINE'    ? `${C.red}🔴 OFFLINE${C.reset}`
-                  :                                 `${C.yellow}${s.connection}${C.reset}`;
-
-    const dbVal   = s.database.includes('✅') ? `${C.green}✅ Connected${C.reset}`
-                  : s.database.includes('❌') ? `${C.red}❌ Error${C.reset}`
-                  :                             `${C.yellow}${s.database}${C.reset}`;
-
-    const lines = [
-        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}◈ Connection${C.reset}  →  ${connVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database${C.reset}   →  ${dbVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands${C.reset}   →  ${C.green}${s.commands}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}📨 Messages${C.reset}   →  ${C.white}${s.messages}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}👥 Groups${C.reset}     →  ${C.white}${s.groups}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🤖 AI${C.reset}         →  ${C.magenta}${s.ai}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}💾 RAM${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
-        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
-    ];
-
-    // Chapisha kila mstari kwa console.log — Railway itaona kila mstari vizuri
-    lines.forEach(line => console.log(line));
-    console.log('');
+function getConnectionContent() {
+    const s = bannerState.connection;
+    if (s === 'ONLINE')     return `${C.green}${C.bold}🟢 ONLINE${C.reset}`;
+    if (s === 'connecting') return `${C.yellow}⏳ Connecting...${C.reset}`;
+    if (s === 'OFFLINE')    return `${C.red}🔴 OFFLINE${C.reset}`;
+    return `${C.yellow}${s}${C.reset}`;
 }
 
-// ── updateBanner: hifadhi state tu — HAKUNA output yoyote ──
-// Banner inachapishwa tena na printBanner() peke yake
-function updateBanner(key, value) {
-    if (value !== null && value !== undefined && key in bannerState) {
-        bannerState[key] = value;
+function getDatabaseContent() {
+    const s = bannerState.database;
+    if (s.includes('✅')) return `${C.green}✅ Connected${C.reset}`;
+    if (s.includes('❌')) return `${C.red}❌ Error${C.reset}`;
+    return `${C.yellow}${s}${C.reset}`;
+}
+
+// ── Jenga maudhui ya mstari husika (bila border ya kushoto) ──
+function buildBannerLine(key) {
+    switch (key) {
+        case 'uptime':
+            return `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`;
+        case 'connection':
+            return `${C.cyan}│${C.reset}  ${C.bold}◈ Connection${C.reset}  →  ${getConnectionContent()}`;
+        case 'database':
+            return `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database${C.reset}   →  ${getDatabaseContent()}`;
+        case 'commands':
+            return `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands${C.reset}   →  ${C.green}${bannerState.commands}${C.reset}`;
+        case 'messages':
+            return `${C.cyan}│${C.reset}  ${C.bold}📨 Messages${C.reset}   →  ${C.white}${bannerState.messages}${C.reset}`;
+        case 'groups':
+            return `${C.cyan}│${C.reset}  ${C.bold}👥 Groups${C.reset}     →  ${C.white}${bannerState.groups}${C.reset}`;
+        case 'ai':
+            return `${C.cyan}│${C.reset}  ${C.bold}🤖 AI${C.reset}         →  ${C.magenta}${bannerState.ai}${C.reset}`;
+        case 'ram':
+            return `${C.cyan}│${C.reset}  ${C.bold}💾 RAM${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`;
+        case 'lastMsg':
+            return `${C.cyan}│${C.reset}  ${C.gray}Last: ${bannerState.lastMsg}${C.reset}`;
+        default:
+            return '';
     }
 }
 
-// ── Chapisha banner mwanzoni (values za default) ──
+// ── Chapisha banner kamili mara moja mwanzoni ──
+function printBanner() {
+    const lines = [
+        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
+        buildBannerLine('uptime'),
+        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
+        buildBannerLine('connection'),
+        buildBannerLine('database'),
+        buildBannerLine('commands'),
+        buildBannerLine('messages'),
+        buildBannerLine('groups'),
+        buildBannerLine('ai'),
+        buildBannerLine('ram'),
+        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
+        buildBannerLine('lastMsg'),
+        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
+        '',
+    ];
+    process.stdout.write(lines.join('\n') + '\n');
+    logLineCount = 0; // reset counter baada ya kuchapisha banner
+}
+
+// ── Update mstari mmoja ndani ya banner bila kugusa logs ──
+function updateBanner(key, value) {
+    if (key in bannerState) bannerState[key] = value;
+
+    const row = BANNER_ROW[key];
+    if (row === undefined) return; // key haina row — skip
+
+    const newLine = buildBannerLine(key);
+
+    // Hesabu mistari ya kurudi juu:
+    // Tuko mstari wa (logLineCount) chini ya banner.
+    // Mstari tunaouhitaji = banner_row kutoka juu ya banner.
+    // Kwa hiyo sogea juu: logLineCount + (BANNER_TOTAL_LINES - 1 - row)
+    const linesUp = logLineCount + (BANNER_TOTAL_LINES - 1 - row);
+
+    process.stdout.write(
+        ESC.saveCursor +
+        ESC.moveUp(linesUp) +
+        ESC.col1 +
+        ESC.clearLine +
+        newLine +
+        ESC.restoreCursor
+    );
+}
+
+// ── Intercept console.log/warn/error ili kuhesabu mistari ya logs ──
+// Hii inaturuhusu kujua tuko wapi chini ya banner
+const _origLog   = console.log.bind(console);
+const _origWarn  = console.warn.bind(console);
+const _origError = console.error.bind(console);
+
+function countNewlines(args) {
+    // Hesabu \n katika output — kila \n = mstari mpya
+    const text = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ');
+    // Kila call ina angalau mstari 1 (newline ya mwisho ya console.log)
+    const extra = (text.match(/\n/g) || []).length;
+    return 1 + extra;
+}
+
+console.log = (...args) => {
+    logLineCount += countNewlines(args);
+    _origLog(...args);
+};
+console.warn = (...args) => {
+    logLineCount += countNewlines(args);
+    _origWarn(...args);
+};
+console.error = (...args) => {
+    logLineCount += countNewlines(args);
+    _origError(...args);
+};
+
+// ── Uptime update kila dakika 1 ──
+setInterval(() => updateBanner('uptime', null), 60000);
+// ── RAM update kila sekunde 30 ──
+setInterval(() => updateBanner('ram', null), 30000);
+
+// ── Chapisha banner mara moja sasa ──
 printBanner();
 
 // ════════════════════════════════════════════════
@@ -251,8 +371,6 @@ async function startBot() {
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL (JSONB)');
                 log.div();
-                // ── Chapisha banner tena na values zote zilizosasishwa ──
-                printBanner();
                 isConnecting = false;
                 bootLock = false;
             }
