@@ -14,17 +14,30 @@ import './config.js';
 import { loadCommands, handleMessage, setupContactListener } from './lib/handler.js';
 import { initializeDatabase, usePostgresAuthState, deleteSession, deleteAllSessions } from './session-db.js';
 
-const logger = pino({ level: 'silent' }); // silent ili isivuruge banner
+const logger = pino({ level: 'silent' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
 const CLEAN_SESSIONS = process.env.CLEAN_SESSIONS === 'true';
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║                  LIVE BANNER SYSTEM                      ║
-// ║  Inashughulikia state yote ya bot na kuionyesha          ║
-// ║  real-time kwenye terminal bila kuvunja logs             ║
+// ║                  STATIC BANNER SYSTEM                    ║
+// ║  Banner inakaa juu — logs zinaendelea chini kawaida      ║
 // ╚══════════════════════════════════════════════════════════╝
+
+const C = {
+    reset:   '\x1b[0m',
+    bold:    '\x1b[1m',
+    cyan:    '\x1b[36m',
+    green:   '\x1b[32m',
+    yellow:  '\x1b[33m',
+    red:     '\x1b[31m',
+    gray:    '\x1b[90m',
+    white:   '\x1b[97m',
+    blue:    '\x1b[34m',
+    magenta: '\x1b[35m',
+};
+
 const bannerState = {
     connection: '⏳ Starting...',
     database:   '⏳ Connecting...',
@@ -52,33 +65,26 @@ function getRAM() {
     return `${used}/${total} MB`;
 }
 
-// Rows za banner — kila row ina urefu wa 43 chars ndani ya border
-function pad(str, len = 43) {
-    // Strip ANSI codes for length calculation
-    const clean = str.replace(/\x1b\[[0-9;]*m/g, '');
-    const spaces = len - clean.length;
-    return str + ' '.repeat(Math.max(0, spaces));
+function getConnectionColor() {
+    const s = bannerState.connection;
+    if (s === 'ONLINE')      return `${C.green}${C.bold}🟢 ONLINE${C.reset}`;
+    if (s === 'connecting')  return `${C.yellow}⏳ Connecting...${C.reset}`;
+    if (s === 'OFFLINE')     return `${C.red}🔴 OFFLINE${C.reset}`;
+    return `${C.yellow}${s}${C.reset}`;
 }
 
-const C = {
-    reset:  '\x1b[0m',
-    bold:   '\x1b[1m',
-    cyan:   '\x1b[36m',
-    green:  '\x1b[32m',
-    yellow: '\x1b[33m',
-    red:    '\x1b[31m',
-    gray:   '\x1b[90m',
-    white:  '\x1b[97m',
-    blue:   '\x1b[34m',
-    magenta:'\x1b[35m',
-};
+function getDatabaseColor() {
+    const s = bannerState.database;
+    if (s.includes('✅')) return `${C.green}✅ Connected${C.reset}`;
+    if (s.includes('❌')) return `${C.red}❌ Error${C.reset}`;
+    return `${C.yellow}${s}${C.reset}`;
+}
 
-let bannerLines = 0; // track jinsi ya kurudi juu
-
-function renderBanner() {
+// ── Chora banner mara moja tu — haibadiliki tena ──
+function printBanner() {
     const lines = [
         `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}          ${C.gray}uptime: ${getUptime()}${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
         `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
         `${C.cyan}│${C.reset}  ${C.bold}◈ Connection${C.reset}  →  ${getConnectionColor()}`,
         `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database${C.reset}   →  ${getDatabaseColor()}`,
@@ -90,71 +96,46 @@ function renderBanner() {
         `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
         `${C.cyan}│${C.reset}  ${C.gray}Last: ${bannerState.lastMsg}${C.reset}`,
         `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
+        '',
     ];
-    return lines;
+    console.log(lines.join('\n'));
 }
 
-function getConnectionColor() {
-    const s = bannerState.connection;
-    if (s.includes('ONLINE')) return `${C.green}${C.bold}🟢 ONLINE${C.reset}`;
-    if (s.includes('connecting')) return `${C.yellow}⏳ Connecting...${C.reset}`;
-    if (s.includes('close') || s.includes('OFFLINE')) return `${C.red}🔴 OFFLINE${C.reset}`;
-    return `${C.yellow}${s}${C.reset}`;
-}
-
-function getDatabaseColor() {
-    const s = bannerState.database;
-    if (s.includes('✅')) return `${C.green}✅ Connected${C.reset}`;
-    if (s.includes('❌')) return `${C.red}❌ Error${C.reset}`;
-    return `${C.yellow}${s}${C.reset}`;
-}
-
-// Andika banner — rudi juu na uandike tena (live update)
-function drawBanner() {
-    if (bannerLines > 0) {
-        // Rudi juu kwenye mstari wa kwanza wa banner
-        process.stdout.write(`\x1b[${bannerLines}A`);
-    }
-    const lines = renderBanner();
-    bannerLines = lines.length;
-    process.stdout.write(lines.join('\n') + '\n');
-}
-
-// Log chini ya banner (haivunji banner)
-const log = {
-    _write: (prefix, msg, color) => {
-        // Songa chini ya banner kwanza
-        process.stdout.write('\n');
-        console.log(`${color}  ${prefix}  ${msg}\x1b[0m`);
-        // Redraw banner baada ya log
-        setTimeout(drawBanner, 50);
-    },
-    info:    (msg) => log._write('✦', msg, C.white),
-    success: (msg) => log._write('✔', msg, C.green),
-    warn:    (msg) => log._write('⚠', msg, C.yellow),
-    error:   (msg) => log._write('✖', msg, C.red),
-    state:   (msg) => log._write('◈', msg, C.cyan),
-    div:     ()    => log._write('─'.repeat(46), '', C.gray),
-    blank:   ()    => { process.stdout.write('\n'); setTimeout(drawBanner, 50); },
-};
-
-// ╔══════════════════════════════════════════════╗
-// ║  Update banner state na redraw               ║
-// ╚══════════════════════════════════════════════╝
+// ── Update: chapisha mstari mmoja wa update chini ya logs ──
+// Badala ya kufuta terminal, tunaandika update line ndogo tu
 function updateBanner(key, value) {
     bannerState[key] = value;
-    drawBanner();
+    // Chapisha update kama log ya kawaida — haivunji chochote
+    const labels = {
+        connection: '◈ Connection',
+        database:   '🗄️  Database',
+        commands:   '⚡ Commands',
+        messages:   '📨 Messages',
+        groups:     '👥 Groups',
+        lastMsg:    '📩 Last msg',
+    };
+    const label = labels[key];
+    if (label) {
+        console.log(`${C.cyan}  [BANNER] ${label} → ${value}${C.reset}`);
+    }
 }
 
-// Draw banner mara moja mwanzoni
-drawBanner();
-
-// Refresh uptime kila sekunde
-setInterval(drawBanner, 1000);
+// ── Chapisha banner mara moja mwanzoni ──
+printBanner();
 
 // ════════════════════════════════════════════════
-//           ORIGINAL BOT CODE (unchanged)
+//        ORIGINAL BOT LOGS (unchanged style)
 // ════════════════════════════════════════════════
+
+const log = {
+    info:    (msg) => console.log(`  ✦  ${msg}`),
+    success: (msg) => console.log(`  ✔  ${msg}`),
+    warn:    (msg) => console.warn(`  ⚠  ${msg}`),
+    error:   (msg) => console.error(`  ✖  ${msg}`),
+    state:   (msg) => console.log(`  ◈  ${msg}`),
+    div:     ()    => console.log(`  ${'─'.repeat(46)}`),
+    blank:   ()    => console.log(''),
+};
 
 if (!process.env.DATABASE_URL) {
     log.error('DATABASE_URL haipo — Bot imesimama.');
@@ -178,7 +159,6 @@ function clearOpenTimer() {
 }
 
 function displayPairingCode(code) {
-    process.stdout.write('\n');
     console.log('\n╔══════════════════════════╗');
     console.log('║   🔑 PAIRING CODE        ║');
     console.log('╠══════════════════════════╣');
@@ -188,7 +168,6 @@ function displayPairingCode(code) {
     console.log('👆 WhatsApp → Linked Devices → Link a Device');
     console.log('👆 Link with phone number → Weka namba yako');
     console.log('👆 Popup itatokea yenyewe — bonyeza CONFIRM\n');
-    setTimeout(drawBanner, 100);
 }
 
 async function startBot() {
@@ -272,14 +251,15 @@ async function startBot() {
                 hasEverOpened = true;
                 updateBanner('connection', 'ONLINE');
 
-                // Pata groups count
                 try {
                     const groups = await sock.groupFetchAllParticipating();
                     updateBanner('groups', Object.keys(groups).length);
                 } catch {}
 
+                log.div();
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL (JSONB)');
+                log.div();
                 isConnecting = false;
                 bootLock = false;
             }
@@ -297,6 +277,7 @@ async function startBot() {
                     return;
                 }
 
+                log.div();
                 log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
                 if (code === 440) {
@@ -322,7 +303,6 @@ async function startBot() {
             if (!msg.message) return;
             if (msg.key.fromMe) return;
 
-            // Update banner stats
             bannerState.messages++;
             const text =
                 msg.message?.conversation ||
@@ -330,9 +310,10 @@ async function startBot() {
                 '[media]';
             const isGroup = msg.key.remoteJid?.endsWith('@g.us');
             const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            const source = isGroup ? `Group` : `DM`;
+            const source = isGroup ? 'Group' : 'DM';
             updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
 
+            console.log(`📩 Ujumbe kutoka ${msg.key.remoteJid}: ${text}`);
             await handleMessage(sock, msg);
         });
 
