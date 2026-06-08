@@ -4,18 +4,42 @@ import {
 } from "../lib/handler.js";
 
 import {
-   sck,
-   smd,
-   send,
-   Config,
-   tlang,
-   sleep,
-   getAdmin,
-   prefix
-} from "../lib/handler.js";
+   prefix,
+   bot_name as caption,
+   owner,
+   packname,
+   author
+} from "../config.js";
 
 import astro_patch from "../lib/plugins.js";
-const { cmd } = astro_patch;
+const { cmd, smd } = astro_patch;
+
+// ===== Helper: Build Config-like object from config.js exports =====
+const Config = {
+   caption: `*${packname || "26-TECH"}* | _${author || "Bot"}_`
+};
+
+// ===== Helper functions (since handler.js doesn't export these) =====
+const send = async (m, text, options = {}, _a = "", _b = "", jid = null) => {
+   const chatId = jid || m.chat;
+   return await m.bot.sendMessage(chatId, { text, ...options });
+};
+
+const tlang = () => ({
+   group: "*_This command is for groups only!_*",
+   admin: "*_You or I must be admin to use this!_*",
+   owner: "*_This command is for owner only!_*"
+});
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const getAdmin = (participants) => {
+   return participants
+      .filter(p => p.admin === "admin" || p.admin === "superadmin")
+      .map(p => p.id);
+};
+
+// =====================================================================
 
 const grouppattern = /https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]{22}/g;
 
@@ -84,7 +108,6 @@ smd({
                title: "26-𝚃𝙴𝙲𝙷",
                body: _0x37b490,
                renderLargerThumbnail: true,
-               thumbnail: log0,
                mediaType: 1,
                mediaUrl: link,
                sourceUrl: link
@@ -124,14 +147,13 @@ smd({
                title: "26-𝚃𝙴𝙲𝙷",
                body: _0x5f4890.subject,
                renderLargerThumbnail: true,
-               thumbnail: log0,
                mediaType: 1,
                mediaUrl: _0x3e5033[0],
                sourceUrl: _0x3e5033[0]
             }
          };
 
-         let msg = `\( {_0x5f4890.subject}\n\nCreator: wa.me/ \){_0x5f4890.owner?.split("@")[0]}\nGJid: \`\`\`${_0x5f4890.id}\`\`\`\n`;
+         let msg = `*${_0x5f4890.subject}*\n\nCreator: wa.me/${_0x5f4890.owner?.split("@")[0]}\nGJid: \`\`\`${_0x5f4890.id}\`\`\`\n`;
          msg += `*Muted:* ${_0x5f4890.announce ? "yes" : "no"}\n*Locked:* ${_0x5f4890.restrict ? "yes" : "no"}\n`;
          msg += `*createdAt:* ${_0x236a49}\n*participants:* ${_0x5f4890.size}\n`;
          if (_0x5f4890.desc) msg += `*description:* ${_0x5f4890.desc}\n`;
