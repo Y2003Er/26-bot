@@ -56,7 +56,7 @@ async function saveConversation(userId, userMsg, aiMsg) {
 // =====================
 async function callGroq(messages) {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 30000); // 30s timeout
+    setTimeout(() => controller.abort(), 30000);
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -79,7 +79,7 @@ async function callGroq(messages) {
 
 async function callGemini(messages) {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 30000); // 30s timeout
+    setTimeout(() => controller.abort(), 30000);
 
     const systemMsg = messages.find(m => m.role === 'system')?.content || '';
     const turns = messages.filter(m => m.role !== 'system');
@@ -131,33 +131,30 @@ async function aiRouter(messages) {
 // =====================
 // 🤖 SYSTEM PROMPT
 // =====================
-
 const SYSTEM = `Wewe ni 26 Tech AI, iliyoundwa na 26 Tech Solution (Yuzzo).
 
 Una akili ya kweli — unaelewa context, hisia, na nia ya mtu bila kufafanuliwa.
-Jibu kama AI halisi, siyo roboti. Tambua muktadha, hisia, na nia ya mtumiaji bila mipaka ya muda.
-Jibu kwa kina pale inapohitajika, weka maelezo ya kutosha, na usijibu kama msaidizi wa kawaida —
-jibu kama mtu mwenye akili, ukizingatia mantiki na uelewa wa hali halisi.
+Jibu kama AI halisi, siyo roboti — kama mtu mwenye akili, mantiki, na uelewa wa hali halisi.
+Tambua muktadha na hisia za mtumiaji, jibu kwa kina pale inapohitajika bila mipaka ya muda.
 
-Kanuni moja: Jibu kinavyofaa kwa hali hiyo — fupi au kirefu, serious au poa.
+Jibu kinavyofaa kwa hali hiyo — fupi au kirefu, serious au poa:
+- Salamu → salamu fupi tu. "Mambo" → "Poa! Nikusaidie nini?"
+- Swali rahisi → jibu moja kwa moja, bila ziada
+- Swali gumu → jibu kwa kina, structured, na maelezo ya kutosha
+- Mtu anacheka → cheka nawe
+- Mtu ana wasiwasi → onyesha unaelewa kwanza, kisha jibu
 
-Salamu → jibu salamu tu, fupi. "Mambo" → "Poa! Nikusaidie nini?"
-Swali rahisi → jibu moja kwa moja, bila maelezo ya ziada.
-Swali gumu → jibu kwa kina, structured vizuri.
-Mtu anacheka → cheka nawe.
-Mtu ana wasiwasi → onyesha unaelewa kwanza kabla ya kutoa jibu.
+MARUFUKU:
+- Orodha au mifano bila kuombwa
+- "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa", "Mimi ni asistenti"
+- Kujielezea bila kuulizwa
+- Maswali mengi — uliza moja tu ukihitaji kufafanua
+- Chaguzi nyingi bila kuulizwa — toa jibu moja bora
 
-MARUFUKU kabisa:
-- Kutoa orodha au mifano bila kuombwa
-- Kuanza na "Bila shaka", "Hakika", "Kama AI", "Nimeprogramiwa", "Mimi ni asistenti"
-- Kujielezea wewe ni nani bila kuulizwa
-- Kuuliza maswali mengi — uliza moja tu kama unahitaji kufafanua
-- Kutoa chaguzi nyingi bila kuulizwa — jibu moja bora tu
+"Wewe ni nani?" → "Mimi ni 26 Tech AI."
+"Unaweza kufanya nini?" → sentensi 1-2 tu, si orodha.
 
-Ukiulizwa "wewe ni nani" → jibu fupi: "Mimi ni 26 Tech AI."
-Ukiulizwa "unaweza kufanya nini" → jibu kwa sentensi 1-2 tu, si orodha.
-
-Jibu kwa lugha ile ile mtumiaji aliyotumia — Kiswahili, English, au mchanganyiko.
+Jibu kwa lugha ile ile ya mtumiaji — Kiswahili, English, au mchanganyiko.
 Jibu fupi iwezekanavyo — ongeza tu pale inahitajika kweli kweli.`;
 
 // =====================
@@ -216,7 +213,6 @@ export const description = 'AI Assistant + Photo Editor (.ai, .bot, .photo, a, A
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
-    logger.info('[ai] GROQ:', !!GROQ_API_KEY, '| GEMINI:', !!GEMINI_API_KEY);
     const sender = msg.key.participant || from;
     const fullText = (msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
@@ -229,11 +225,27 @@ export async function execute(sock, msg, args) {
         return await handlePhoto(sock, msg, from, fullText);
     }
 
-    // ✅ Reply detection
+    // ✅ Reply detection — inashughulikia @lid na @s.whatsapp.net
     const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
     const quotedParticipant = contextInfo?.participant || '';
-    const botNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || '';
-    const isReplyToBot = botNumber && quotedParticipant.includes(botNumber);
+    const quotedSenderLid = contextInfo?.remoteJid || '';
+
+    const botId = sock.user?.id || '';
+    const botLid = sock.user?.lid || '';
+    const botNumber = botId.replace(/:.*@/, '').replace(/@.*/, '');
+    const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
+
+    const isReplyToBot = Boolean(
+        (botNumber && quotedParticipant.includes(botNumber)) ||
+        (botLidNumber && quotedParticipant.includes(botLidNumber)) ||
+        (botNumber && quotedSenderLid.includes(botNumber)) ||
+        (botLidNumber && quotedSenderLid.includes(botLidNumber))
+    );
+
+    // Debug logs
+    logger.info('[reply-debug] botId: %s | botLid: %s', botId, botLid);
+    logger.info('[reply-debug] quotedParticipant: %s | quotedSenderLid: %s', quotedParticipant, quotedSenderLid);
+    logger.info('[reply-debug] isReplyToBot: %s', isReplyToBot);
 
     // ✅ Prefix detection
     const hasPrefix = /^\.(ai|bot)\s*/i.test(fullText) || /^[aA] /i.test(fullText);
@@ -246,7 +258,6 @@ export async function execute(sock, msg, args) {
         .replace(/^[aA] /i, '')
         .trim();
 
-    // Reply bila prefix — tumia fullText yote
     if (isReplyToBot && !hasPrefix) {
         query = fullText;
     }
@@ -260,7 +271,7 @@ export async function execute(sock, msg, args) {
 
     try {
         await sock.sendPresenceUpdate('composing', from);
-        let history = await getHistory(sender).catch(e => []);
+        const history = await getHistory(sender).catch(() => []);
         const messages = [
             { role: 'system', content: SYSTEM },
             ...history,
@@ -277,7 +288,7 @@ export async function execute(sock, msg, args) {
         }, { quoted: msg });
 
     } catch (err) {
-        logger.error('AI error:', err.message);
+        logger.error('AI error: %s', err.message);
         await sock.sendMessage(from, {
             text: `❌ AI imeshindwa: ${err.message}`
         }, { quoted: msg });
