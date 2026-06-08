@@ -1,409 +1,838 @@
-import {
-   updateProfilePicture,
-   parsedJid
-} from "../lib/handler.js";
+/**
+ * commands/group.js
+ * ─────────────────────────────────────────────────────────────
+ * Group commands — module-style (export name + execute)
+ * Inatumia raw sock + msg directly (si wrapper object)
+ * ─────────────────────────────────────────────────────────────
+ */
 
-import {
-   prefix,
-   bot_name as caption,
-   owner,
-   packname,
-   author
-} from "../config.js";
+import { downloadContentFromMessage } from '@whiskeysockets/baileys';
+import { packname, author } from '../config.js';
 
-import astro_patch from "../lib/plugins.js";
-const { cmd, smd } = astro_patch;
+// ── Helpers ──────────────────────────────────────────────────
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ===== Helper: Build Config-like object from config.js exports =====
 const Config = {
-   caption: `*${packname || "26-TECH"}* | _${author || "Bot"}_`
+    caption: `*${packname || '26-TECH'}* | _${author || 'Bot'}_`
 };
 
-// ===== Helper functions (since handler.js doesn't export these) =====
-const send = async (m, text, options = {}, _a = "", _b = "", jid = null) => {
-   const chatId = jid || m.chat;
-   return await m.bot.sendMessage(chatId, { text, ...options });
+function normalizeJid(jid) {
+    if (!jid) return '';
+    return jid.replace(/:\d+@/, '@');
+}
+
+/**
+ * Pata text kutoka msg
+ */
+function getMsgText(msg) {
+    return (
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        msg.message?.videoMessage?.caption ||
+        ''
+    ).trim();
+}
+
+/**
+ * Reply haraka
+ */
+async function reply(sock, msg, text) {
+    return sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg });
+}
+
+/**
+ * Pata group metadata salama
+ */
+async function getGroupMeta(sock, chatJid) {
+    try {
+        return await sock.groupMetadata(chatJid);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Angalia kama bot ni admin kwenye group
+ */
+async function isBotAdmin(sock, chatJid) {
+    try {
+        const meta    = await getGroupMeta(sock, chatJid);
+        if (!meta) return false;
+        const botId   = normalizeJid(sock.user?.id || '');
+        const botLid  = normalizeJid(sock.user?.lid || '');
+        const me      = meta.participants.find(p => {
+            const n = normalizeJid(p.id);
+            return n === botId || n === botLid;
+        });
+        return me?.admin === 'admin' || me?.admin === 'superadmin';
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Angalia kama sender ni admin kwenye group
+ */
+async function isSenderAdmin(sock, chatJid, senderJid) {
+    try {
+        const meta   = await getGroupMeta(sock, chatJid);
+        if (!meta) return false;
+        const sender = meta.participants.find(
+            p => normalizeJid(p.id) === normalizeJid(senderJid)
+        );
+        return sender?.admin === 'admin' || sender?.admin === 'superadmin';
+    } catch {
+        return false;
+    }
+}
+
+const groupLinkPattern = /https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]{22}/g;
+
+// ════════════════════════════════════════════════════════════════
+//   JOIN — ingia group kwa link
+// ════════════════════════════════════════════════════════════════
+export const join = {
+    name:        'join',
+    description: 'Ingia group kwa link',
+    category:    'whatsapp',
+    use:         '<group link>',
+    alias:       [],
+    adminOnly:   false,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+        const text    = args.join(' ').trim() || getMsgText(msg);
+
+        const matches = text.match(groupLinkPattern);
+        if (!matches) {
+            return reply(sock, msg, '*_Toa group link_*\nMfano: .join https://chat.whatsapp.com/...');
+        }
+
+        const code = matches[0].split('https://chat.whatsapp.com/')[1].trim();
+        try {
+            await sock.groupAcceptInvite(code);
+            return reply(sock, msg, '*_✅ Imeingia group!_*');
+        } catch {
+            return reply(sock, msg, "*_❌ Imeshindwa — link si sahihi au imekwisha._*");
+        }
+    }
 };
 
-const tlang = () => ({
-   group: "*_This command is for groups only!_*",
-   admin: "*_You or I must be admin to use this!_*",
-   owner: "*_This command is for owner only!_*"
-});
+// ════════════════════════════════════════════════════════════════
+//   NEWGC — tengeneza group mpya
+// ════════════════════════════════════════════════════════════════
+export const newgc = {
+    name:        'newgc',
+    description: 'Tengeneza group mpya',
+    category:    'whatsapp',
+    use:         '<jina la group>',
+    alias:       ['creategc'],
+    adminOnly:   false,
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    async execute(sock, msg, args) {
+        const chatJid   = msg.key.remoteJid;
+        const groupName = args.join(' ').trim().substring(0, 60);
 
-const getAdmin = (participants) => {
-   return participants
-      .filter(p => p.admin === "admin" || p.admin === "superadmin")
-      .map(p => p.id);
+        if (!groupName) {
+            return reply(sock, msg, `*_Toa jina la group_*\nMfano: .newgc My Group`);
+        }
+
+        // Weka sender kwenye group
+        const rawSender = msg.key.participant || msg.key.remoteJid;
+        const members   = [normalizeJid(rawSender)];
+
+        // Weka watu walioreplyiwa au waliomenhuwa
+        const mentioned  = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const quotedPart = msg.message?.extendedTextMessage?.contextInfo?.participant;
+        if (quotedPart) members.push(normalizeJid(quotedPart));
+        mentioned.forEach(j => members.push(normalizeJid(j)));
+
+        try {
+            const created = await sock.groupCreate(groupName, [...new Set(members)]);
+            if (!created) return reply(sock, msg, '*_❌ Imeshindwa kutengeneza group._*');
+
+            let link = '';
+            try {
+                const code = await sock.groupInviteCode(created.id);
+                link = `https://chat.whatsapp.com/${code}`;
+            } catch {}
+
+            await sock.sendMessage(created.id, {
+                text: `*_👋 Karibu kwenye group mpya!_*\n${Config.caption}`
+            });
+
+            return reply(sock, msg,
+                `*_✅ Group imeundwa!_*\n\n` +
+                `*Jina:* ${groupName}\n` +
+                (link ? `*Link:* ${link}` : '')
+            );
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
 };
 
-// =====================================================================
+// ════════════════════════════════════════════════════════════════
+//   GINFO — maelezo ya group kwa link
+// ════════════════════════════════════════════════════════════════
+export const ginfo = {
+    name:        'ginfo',
+    description: 'Pata maelezo ya group kwa link',
+    category:    'group',
+    use:         '<group link>',
+    alias:       [],
+    adminOnly:   false,
 
-const grouppattern = /https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]{22}/g;
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+        const text    = args.join(' ').trim() || getMsgText(msg);
 
-// ====================== JOIN ======================
-smd({
-   cmdname: "join",
-   info: "joins group by link",
-   type: "whatsapp",
-   fromMe: true,
-   filename: import.meta.url,
-   use: "<group link.>"
-}, async (_0x466dd8, _0x5b1338) => {
-   try {
-      if (_0x466dd8.reply_message && _0x466dd8.reply_message.groupInvite) {
-         var _0x29e5fc = await _0x466dd8.bot.groupAcceptInviteV4(_0x466dd8.chat, _0x466dd8.reply_message.msg);
-         if (_0x29e5fc && _0x29e5fc.includes("joined to:")) {
-            return await send(_0x466dd8, "*_Joined_*", {}, "", _0x466dd8);
-         }
-      }
-      let _0x208739 = _0x5b1338 ? _0x5b1338 : _0x466dd8.reply_text;
-      const _0x47ed60 = _0x208739.match(grouppattern);
-      if (!_0x47ed60) return await _0x466dd8.reply("*_Uhh Please, provide group link_*");
-      let _0x4263be = _0x47ed60[0].split("https://chat.whatsapp.com/")[1].trim();
-      await _0x466dd8.bot.groupAcceptInvite(_0x4263be)
-         .then(() => send(_0x466dd8, "*_Joined_*", {}, "", _0x466dd8))
-         .catch(() => _0x466dd8.send("*_Can't Join, Group Id not found!!_*"));
-   } catch (_0x5d3484) {
-      await _0x466dd8.error(_0x5d3484 + "\n\ncommand: join", _0x5d3484, "*_Can't Join, Group Id not found, Sorry!!_*");
-   }
-});
+        const matches = text.match(groupLinkPattern);
+        if (!matches) return reply(sock, msg, '*_Toa group link_*');
 
-// ====================== NEWGC ======================
-smd({
-   cmdname: "newgc",
-   info: "Create New Group",
-   type: "whatsapp",
-   filename: import.meta.url,
-   use: "<group name>"
-}, async (_0x1d2f1f, _0x3c558e, { smd: _0x2e7a79, cmdName: _0x49994a }) => {
-   try {
-      if (!_0x1d2f1f.isCreator) return _0x1d2f1f.reply(tlang().owner);
-      if (!_0x3c558e) return await _0x1d2f1f.reply(`*_provide Name to Create new Group!!!_*\n*_Ex: ${prefix + _0x2e7a79} My Name Group @user1,2,3.._*`);
+        const code = matches[0].split('https://chat.whatsapp.com/')[1].trim();
+        try {
+            const info    = await sock.groupGetInviteInfo(code);
+            const created = new Date(info.creation * 1000).toISOString().split('T')[0];
 
-      let _0x379d99 = _0x3c558e;
-      if (_0x379d99.toLowerCase() === "info") {
-         return await _0x1d2f1f.send(`\n  *Its a command to create new Gc*\n  \t\`\`\`Ex: ${prefix + _0x2e7a79} My new Group\`\`\`\n\n*You also add peoples in newGc*\n  \t\`\`\`just reply or mention Users\`\`\``.trim());
-      }
+            let out  = `*${info.subject}*\n\n`;
+            out     += `👤 *Creator:* wa.me/${info.owner?.split('@')[0]}\n`;
+            out     += `🆔 *GJid:* \`${info.id}\`\n`;
+            out     += `🔇 *Muted:*  ${info.announce  ? 'Ndiyo' : 'Hapana'}\n`;
+            out     += `🔒 *Locked:* ${info.restrict   ? 'Ndiyo' : 'Hapana'}\n`;
+            out     += `📅 *Imeundwa:* ${created}\n`;
+            out     += `👥 *Wanachama:* ${info.size}\n`;
+            if (info.desc) out += `📝 *Maelezo:* ${info.desc}\n`;
+            out     += `\n${Config.caption}`;
 
-      let _0x5a5c26 = [_0x1d2f1f.sender];
-      if (_0x1d2f1f.quoted) _0x5a5c26.push(_0x1d2f1f.quoted.sender);
-      if (_0x1d2f1f.mentionedJid && _0x1d2f1f.mentionedJid[0]) {
-         _0x5a5c26.push(..._0x1d2f1f.mentionedJid);
-      }
+            return reply(sock, msg, out);
+        } catch {
+            return reply(sock, msg, '*_❌ Group haipatikani au link si sahihi._*');
+        }
+    }
+};
 
-      const _0x37b490 = _0x379d99.substring(0, 60);
-      const _0x417018 = await _0x1d2f1f.bot.groupCreate(_0x37b490, [..._0x5a5c26]);
+// ════════════════════════════════════════════════════════════════
+//   REJECTALL — kataa maombi yote ya kujiunga
+// ════════════════════════════════════════════════════════════════
+export const rejectall = {
+    name:        'rejectall',
+    description: 'Kataa maombi yote ya kujiunga group',
+    category:    'group',
+    use:         '',
+    alias:       ['rejectjoin'],
+    adminOnly:   true,
 
-      if (_0x417018) {
-         let _0x2c6495 = await _0x1d2f1f.bot.sendMessage(_0x417018.id, { text: "*_Hey Master, Welcome to new Group_*\n" + Config.caption });
-         let _0x3a49e9 = false;
-         try { _0x3a49e9 = await _0x1d2f1f.bot.groupInviteCode(_0x417018.id); } catch {}
-         const link = _0x3a49e9 ? `https://chat.whatsapp.com/${_0x3a49e9}` : "";
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
 
-         const _0x539d8f = {
-            externalAdReply: {
-               title: "26-𝚃𝙴𝙲𝙷",
-               body: _0x37b490,
-               renderLargerThumbnail: true,
-               mediaType: 1,
-               mediaUrl: link,
-               sourceUrl: link
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin
+                    ? '*_Mimi si admin kwenye group hii!_*'
+                    : '*_Wewe si admin kwenye group hii!_*'
+            );
+        }
+
+        const requests = await sock.groupRequestParticipantsList(chatJid).catch(() => []);
+        if (!requests?.length) return reply(sock, msg, '*_Hakuna maombi ya kujiunga._*');
+
+        let rejected  = [];
+        let out       = `*❌ Waliofutwa (${requests.length}):*\n\n`;
+
+        for (const req of requests) {
+            try {
+                await sock.groupRequestParticipantsUpdate(chatJid, [req.jid], 'reject');
+                out      += `• @${req.jid.split('@')[0]}\n`;
+                rejected.push(req.jid);
+            } catch {}
+        }
+
+        return sock.sendMessage(chatJid, { text: out, mentions: rejected }, { quoted: msg });
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   ACCEPTALL — kubali maombi yote ya kujiunga
+// ════════════════════════════════════════════════════════════════
+export const acceptall = {
+    name:        'acceptall',
+    description: 'Kubali maombi yote ya kujiunga group',
+    category:    'group',
+    use:         '',
+    alias:       ['acceptjoin'],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin
+                    ? '*_Mimi si admin kwenye group hii!_*'
+                    : '*_Wewe si admin kwenye group hii!_*'
+            );
+        }
+
+        const requests = await sock.groupRequestParticipantsList(chatJid).catch(() => []);
+        if (!requests?.length) return reply(sock, msg, '*_Hakuna maombi ya kujiunga._*');
+
+        let accepted = [];
+        let out      = `*✅ Waliokubaliwa (${requests.length}):*\n\n`;
+
+        for (const req of requests) {
+            try {
+                await sock.groupRequestParticipantsUpdate(chatJid, [req.jid], 'approve');
+                out     += `• @${req.jid.split('@')[0]}\n`;
+                accepted.push(req.jid);
+            } catch {}
+        }
+
+        return sock.sendMessage(chatJid, { text: out, mentions: accepted }, { quoted: msg });
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   LISTREQUEST — orodha ya maombi ya kujiunga
+// ════════════════════════════════════════════════════════════════
+export const listrequest = {
+    name:        'listrequest',
+    description: 'Orodha ya watu wanaoomba kujiunga',
+    category:    'group',
+    use:         '',
+    alias:       ['requestjoin'],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin
+                    ? '*_Mimi si admin!_*'
+                    : '*_Wewe si admin!_*'
+            );
+        }
+
+        const requests = await sock.groupRequestParticipantsList(chatJid).catch(() => []);
+        if (!requests?.length) return reply(sock, msg, '*_Hakuna maombi ya kujiunga._*');
+
+        let jids = [];
+        let out  = `*📋 Maombi ya Kujiunga (${requests.length}):*\n\n`;
+        for (const req of requests) {
+            out += `• @${req.jid.split('@')[0]}\n`;
+            jids.push(req.jid);
+        }
+
+        return sock.sendMessage(chatJid, { text: out, mentions: jids }, { quoted: msg });
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   SETDESC — weka maelezo ya group
+// ════════════════════════════════════════════════════════════════
+export const setdesc = {
+    name:        'setdesc',
+    description: 'Weka maelezo ya group',
+    category:    'group',
+    use:         '<maelezo>',
+    alias:       ['setgdesc', 'gdesc'],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const desc = args.join(' ').trim();
+        if (!desc) return reply(sock, msg, '*_Toa maelezo ya group_*');
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
+
+        try {
+            await sock.groupUpdateDescription(chatJid, `${desc}\n\n\t${Config.caption}`);
+            return reply(sock, msg, '*_✅ Maelezo ya group yamebadilishwa!_*');
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   SETNAME — badilisha jina la group
+// ════════════════════════════════════════════════════════════════
+export const setname = {
+    name:        'setname',
+    description: 'Badilisha jina la group',
+    category:    'group',
+    use:         '<jina jipya>',
+    alias:       ['setgname', 'gname'],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const newName = args.join(' ').trim();
+        if (!newName) return reply(sock, msg, '*_Toa jina jipya_*');
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
+
+        try {
+            await sock.groupUpdateSubject(chatJid, newName);
+            return reply(sock, msg, '*_✅ Jina la group limebadilishwa!_*');
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   LEFT — toka kwenye group
+// ════════════════════════════════════════════════════════════════
+export const left = {
+    name:        'left',
+    description: 'Toka kwenye group',
+    category:    'group',
+    use:         '',
+    alias:       ['leave'],
+    adminOnly:   false,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const confirm = args[0]?.toLowerCase().trim();
+        if (!confirm || !['sure', 'yes', 'ok', 'ndiyo'].includes(confirm)) {
+            return reply(sock, msg, '*_Thibitisha: .left sure_*\n_(Andika sure/yes/ok/ndiyo)_');
+        }
+
+        try {
+            await reply(sock, msg, '*_👋 Kwaheri! Ninaondoka..._*');
+            await sleep(1000);
+            await sock.groupLeave(chatJid);
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   GPP — weka picha ya profile ya group
+// ════════════════════════════════════════════════════════════════
+export const gpp = {
+    name:        'gpp',
+    description: 'Weka picha ya profile ya group',
+    category:    'group',
+    use:         '<reply picha>',
+    alias:       [],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
+
+        // Pata picha — kutoka quoted message au msg yenyewe
+        const imageMsg =
+            msg.message?.imageMessage ||
+            msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+
+        if (!imageMsg) return reply(sock, msg, '*_Reply kwa picha kwanza_*');
+
+        try {
+            const stream = await downloadContentFromMessage(imageMsg, 'image');
+            let   buffer = Buffer.from([]);
+            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+
+            await sock.updateProfilePicture(chatJid, buffer);
+            return reply(sock, msg, '*_✅ Picha ya group imebadilishwa!_*');
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   TAGALL — tag wanachama wote
+// ════════════════════════════════════════════════════════════════
+export const tagall = {
+    name:        'tagall',
+    description: 'Tag wanachama wote wa group',
+    category:    'group',
+    use:         '[ujumbe]',
+    alias:       [],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+        if (!senderAdmin) return reply(sock, msg, '*_Wewe si admin!_*');
+
+        const meta         = await getGroupMeta(sock, chatJid);
+        if (!meta) return reply(sock, msg, '*_Imeshindwa kupata group info._*');
+
+        const participants = meta.participants || [];
+        const customMsg    = args.join(' ').trim() || 'Ujumbe wa group';
+        const pushName     = msg.pushName || 'Admin';
+
+        let text = `╔══✪〘 *TAG ALL* 〙✪══╗\n\n`;
+        text    += `📢 *Ujumbe:* ${customMsg}\n`;
+        text    += `✍️ *Na:* ${pushName}\n\n`;
+
+        for (const p of participants) {
+            text += `• @${p.id.split('@')[0]}\n`;
+        }
+        text += `\n${Config.caption}`;
+
+        return sock.sendMessage(
+            chatJid,
+            { text, mentions: participants.map(p => p.id) },
+            { quoted: msg }
+        );
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   BROADCAST — tuma ujumbe kwenye groups zote
+// ════════════════════════════════════════════════════════════════
+export const broadcast = {
+    name:        'broadcast',
+    description: 'Tuma ujumbe kwenye groups zote',
+    category:    'group',
+    use:         '<ujumbe>',
+    alias:       ['bc'],
+    adminOnly:   false,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+        const text    = args.join(' ').trim();
+
+        if (!text) return reply(sock, msg, '*_Toa ujumbe wa broadcast_*');
+
+        let groups;
+        try {
+            groups = await sock.groupFetchAllParticipating();
+        } catch {
+            return reply(sock, msg, '*_❌ Imeshindwa kupata groups._*');
+        }
+
+        const ids = Object.keys(groups);
+        await reply(sock, msg, `*_📡 Inatuma broadcast kwenye groups ${ids.length}..._*`);
+
+        let sent   = 0;
+        let failed = 0;
+
+        for (const id of ids) {
+            try {
+                await sleep(1500);
+                await sock.sendMessage(id, {
+                    text: `*━━ 📡 26-𝚃𝙴𝙲𝙷 Broadcast ━━*\n\n${text}\n\n${Config.caption}`
+                });
+                sent++;
+            } catch {
+                failed++;
             }
-         };
-         return await send(_0x1d2f1f, (`*_Hurray, New group created!!!_*\n${link}`).trim(), { contextInfo: _0x539d8f }, "", _0x2c6495);
-      } else {
-         await _0x1d2f1f.send("*_Can't create new group, Sorry!!_*");
-      }
-   } catch (_0x33d6f3) {
-      await _0x1d2f1f.error(_0x33d6f3 + "\n\ncommand: " + _0x49994a, _0x33d6f3, "*_Can't create new group, Sorry!!_*");
-   }
-});
+        }
 
-// ====================== GINFO ======================
-smd({
-   pattern: "ginfo",
-   desc: "get group info by link",
-   type: "group",
-   filename: import.meta.url,
-   use: "<group link.>"
-}, async (_0x4f7c88, _0x1490e0) => {
-   try {
-      let _0x3eb855 = _0x1490e0 ? _0x1490e0 : _0x4f7c88.reply_text;
-      const _0x3e5033 = _0x3eb855.match(grouppattern) || false;
-      if (!_0x3e5033) return await _0x4f7c88.reply("*_Uhh Please, provide group link_*");
+        return reply(sock, msg,
+            `*_✅ Broadcast imekamilika!_*\n\n` +
+            `✔️ Iliyofanikiwa: ${sent}\n` +
+            `❌ Iliyoshindwa: ${failed}`
+        );
+    }
+};
 
-      let _0x5ced5d = _0x3e5033[0].split("https://chat.whatsapp.com/")[1].trim();
-      const _0x5f4890 = await _0x4f7c88.bot.groupGetInviteInfo(_0x5ced5d);
+// ════════════════════════════════════════════════════════════════
+//   KICK — toa mtu kutoka group
+// ════════════════════════════════════════════════════════════════
+export const kick = {
+    name:        'kick',
+    description: 'Toa mtu kutoka group',
+    category:    'group',
+    use:         '@mention au reply',
+    alias:       ['remove'],
+    adminOnly:   true,
 
-      if (_0x5f4890) {
-         const _0x40ced5 = new Date(_0x5f4890.creation * 1000);
-         var _0x236a49 = _0x40ced5.toISOString().split('T')[0];
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
 
-         var _0x56eaaf = {
-            externalAdReply: {
-               title: "26-𝚃𝙴𝙲𝙷",
-               body: _0x5f4890.subject,
-               renderLargerThumbnail: true,
-               mediaType: 1,
-               mediaUrl: _0x3e5033[0],
-               sourceUrl: _0x3e5033[0]
-            }
-         };
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
 
-         let msg = `*${_0x5f4890.subject}*\n\nCreator: wa.me/${_0x5f4890.owner?.split("@")[0]}\nGJid: \`\`\`${_0x5f4890.id}\`\`\`\n`;
-         msg += `*Muted:* ${_0x5f4890.announce ? "yes" : "no"}\n*Locked:* ${_0x5f4890.restrict ? "yes" : "no"}\n`;
-         msg += `*createdAt:* ${_0x236a49}\n*participants:* ${_0x5f4890.size}\n`;
-         if (_0x5f4890.desc) msg += `*description:* ${_0x5f4890.desc}\n`;
-         msg += `\n${Config.caption}`;
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
 
-         return await send(_0x4f7c88, msg.trim(), { mentions: [_0x5f4890.owner], contextInfo: _0x56eaaf });
-      } else {
-         await _0x4f7c88.send("*_Group Id not found, Sorry!!_*");
-      }
-   } catch (_0x36c345) {
-      await _0x4f7c88.error(_0x36c345 + "\n\ncommand: ginfo", _0x36c345, "*_Group Id not found, Sorry!!_*");
-   }
-});
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
 
-// ====================== REJECTALL ======================
-smd({
-   cmdname: "rejectall",
-   alias: ["rejectjoin"],
-   info: "reject all request to join!",
-   type: "group",
-   filename: import.meta.url
-}, async (_0xb81e45) => {
-   try {
-      if (!_0xb81e45.isGroup) return _0xb81e45.reply(tlang().group);
-      if (!_0xb81e45.isBotAdmin || !_0xb81e45.isAdmin) return _0xb81e45.reply(!_0xb81e45.isBotAdmin ? "*_I'm Not Admin In This Group_*" : tlang().admin);
+        // Pata target: mentioned au quoted
+        const mentioned  = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const quotedPart = msg.message?.extendedTextMessage?.contextInfo?.participant;
 
-      const _0x4ea369 = await _0xb81e45.bot.groupRequestParticipantsList(_0xb81e45.chat);
-      if (!_0x4ea369 || !_0x4ea369[0]) return await _0xb81e45.reply("*_No Request Join Yet_*");
+        const targets = mentioned.length > 0
+            ? mentioned
+            : quotedPart
+            ? [normalizeJid(quotedPart)]
+            : [];
 
-      let _0x3b870c = [];
-      let _0x32f437 = "*List of rejected users*\n\n";
-      for (let _0x164385 = 0; _0x164385 < _0x4ea369.length; _0x164385++) {
-         try {
-            await _0xb81e45.bot.groupRequestParticipantsUpdate(_0xb81e45.chat, [_0x4ea369[_0x164385].jid], "reject");
-            _0x32f437 += "@" + _0x4ea369[_0x164385].jid.split("@")[0] + "\n";
-            _0x3b870c = [..._0x3b870c, _0x4ea369[_0x164385].jid];
-         } catch {}
-      }
-      await _0xb81e45.send(_0x32f437, { mentions: _0x3b870c });
-   } catch (_0x13cc87) {
-      await _0xb81e45.error(_0x13cc87 + "\n\ncommand: rejectall", _0x13cc87);
-   }
-});
+        if (!targets.length) {
+            return reply(sock, msg, '*_Mention au reply mtu unayetaka kumtoa_*');
+        }
 
-// ====================== ACCEPTALL ======================
-smd({
-   cmdname: "acceptall",
-   alias: ["acceptjoin"],
-   info: "accept all request to join!",
-   type: "group",
-   filename: import.meta.url
-}, async (_0x90a6de) => {
-   try {
-      if (!_0x90a6de.isGroup) return _0x90a6de.reply(tlang().group);
-      if (!_0x90a6de.isBotAdmin || !_0x90a6de.isAdmin) return _0x90a6de.reply(!_0x90a6de.isBotAdmin ? "*_I'm Not Admin In This Group_*" : tlang().admin);
+        try {
+            await sock.groupParticipantsUpdate(chatJid, targets, 'remove');
+            const names = targets.map(t => `+${t.replace('@s.whatsapp.net', '')}`).join(', ');
+            return reply(sock, msg, `*_✅ Ametolewa: ${names}_*`);
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
 
-      const _0x3da7c6 = await _0x90a6de.bot.groupRequestParticipantsList(_0x90a6de.chat);
-      if (!_0x3da7c6 || !_0x3da7c6[0]) return await _0x90a6de.reply("*_No Join Request Yet_*");
+// ════════════════════════════════════════════════════════════════
+//   PROMOTE — fanya mtu admin
+// ════════════════════════════════════════════════════════════════
+export const promote = {
+    name:        'promote',
+    description: 'Fanya mtu admin wa group',
+    category:    'group',
+    use:         '@mention au reply',
+    alias:       [],
+    adminOnly:   true,
 
-      let _0x4f391e = [];
-      let _0x26ddf1 = "*List of accepted users*\n\n";
-      for (let _0x5ed6e8 = 0; _0x5ed6e8 < _0x3da7c6.length; _0x5ed6e8++) {
-         try {
-            await _0x90a6de.bot.groupRequestParticipantsUpdate(_0x90a6de.chat, [_0x3da7c6[_0x5ed6e8].jid], "approve");
-            _0x26ddf1 += "@" + _0x3da7c6[_0x5ed6e8].jid.split("@")[0] + "\n";
-            _0x4f391e = [..._0x4f391e, _0x3da7c6[_0x5ed6e8].jid];
-         } catch {}
-      }
-      await _0x90a6de.send(_0x26ddf1, { mentions: _0x4f391e });
-   } catch (_0x366bd4) {
-      await _0x90a6de.error(_0x366bd4 + "\n\ncommand: acceptall", _0x366bd4);
-   }
-});
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
 
-// ====================== LISTREQUEST ======================
-smd({
-   cmdname: "listrequest",
-   alias: ["requestjoin"],
-   type: "group",
-   filename: import.meta.url
-}, async (_0x13cccd) => {
-   try {
-      if (!_0x13cccd.isGroup) return _0x13cccd.reply(tlang().group);
-      if (!_0x13cccd.isBotAdmin || !_0x13cccd.isAdmin) return _0x13cccd.reply(tlang().admin);
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
 
-      const _0x3115b1 = await _0x13cccd.bot.groupRequestParticipantsList(_0x13cccd.chat);
-      if (!_0x3115b1 || !_0x3115b1[0]) return await _0x13cccd.reply("*_No Request Join Yet_*");
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
 
-      let _0x4af6be = [];
-      let _0x59a317 = "*List of User Request to join*\n\n";
-      for (let _0x3230c3 = 0; _0x3230c3 < _0x3115b1.length; _0x3230c3++) {
-         _0x59a317 += "@" + _0x3115b1[_0x3230c3].jid.split("@")[0] + "\n";
-         _0x4af6be = [..._0x4af6be, _0x3115b1[_0x3230c3].jid];
-      }
-      return await _0x13cccd.send(_0x59a317, { mentions: _0x4af6be });
-   } catch (_0x5c8e97) {
-      await _0x13cccd.error(_0x5c8e97 + "\n\ncommand: listrequest", _0x5c8e97);
-   }
-});
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
 
-// ====================== SETDESC ======================
-smd({
-   cmdname: "setdesc",
-   alias: ["setgdesc", "gdesc"],
-   type: "group",
-   filename: import.meta.url,
-   use: "<enter Description Text>"
-}, async (_0x160b96, _0x4ef0da) => {
-   try {
-      if (!_0x160b96.isGroup) return _0x160b96.reply(tlang().group);
-      if (!_0x4ef0da) return await _0x160b96.reply("*Provide Description text*");
-      if (!_0x160b96.isBotAdmin || !_0x160b96.isAdmin) return _0x160b96.reply(tlang().admin);
+        const mentioned  = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const quotedPart = msg.message?.extendedTextMessage?.contextInfo?.participant;
 
-      await _0x160b96.bot.groupUpdateDescription(_0x160b96.chat, _0x4ef0da + "\n\n\t" + Config.caption);
-      _0x160b96.reply("*_✅Group description Updated Successfuly!_*");
-   } catch (_0x526bb2) {
-      await _0x160b96.error(_0x526bb2 + "\n\ncommand: setdesc", _0x526bb2);
-   }
-});
+        const targets = mentioned.length > 0
+            ? mentioned
+            : quotedPart
+            ? [normalizeJid(quotedPart)]
+            : [];
 
-// ====================== SETNAME ======================
-smd({
-   cmdname: "setname",
-   alias: ["setgname", "gname"],
-   type: "group",
-   filename: import.meta.url,
-   use: "<enter Name>"
-}, async (_0x25d56b, _0x332d77) => {
-   try {
-      if (!_0x25d56b.isGroup) return _0x25d56b.reply(tlang().group);
-      if (!_0x332d77) return await _0x25d56b.reply("*Uhh Dear, Give text to Update This Group Name*");
-      if (!_0x25d56b.isBotAdmin || !_0x25d56b.isAdmin) return _0x25d56b.reply(tlang().admin);
+        if (!targets.length) {
+            return reply(sock, msg, '*_Mention au reply mtu unayetaka kumfanya admin_*');
+        }
 
-      await _0x25d56b.bot.groupUpdateSubject(_0x25d56b.chat, _0x332d77);
-      _0x25d56b.reply("*_✅Group Name Updated Successfuly.!_*");
-   } catch (_0x1eee32) {
-      await _0x25d56b.error(_0x1eee32 + "\n\ncommand: setname", _0x1eee32);
-   }
-});
+        try {
+            await sock.groupParticipantsUpdate(chatJid, targets, 'promote');
+            const names = targets.map(t => `+${t.replace('@s.whatsapp.net', '')}`).join(', ');
+            return reply(sock, msg, `*_✅ Amefanywa admin: ${names}_*`);
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
 
-// ====================== LEFT ======================
-smd({
-   cmdname: "left",
-   info: "left from a group.",
-   fromMe: true,
-   type: "group",
-   filename: import.meta.url
-}, async (_0x37841c, _0x260aed) => {
-   try {
-      if (!_0x37841c.isGroup) return _0x37841c.reply(tlang().group);
-      let _0x6118c5 = _0x260aed.toLowerCase().trim();
-      if (_0x6118c5.match(/^(sure|yes|ok)$/)) {
-         await _0x37841c.bot.groupParticipantsUpdate(_0x37841c.chat, [_0x37841c.user], "remove");
-         _0x37841c.send("*Group Left!!*");
-      } else {
-         return await _0x37841c.send(`*_Use: ${prefix}left sure/yes/ok_*`);
-      }
-   } catch (_0x34f4a6) {
-      await _0x37841c.error(_0x34f4a6 + "\n\ncommand: left", _0x34f4a6);
-   }
-});
+// ════════════════════════════════════════════════════════════════
+//   DEMOTE — ondoa admin
+// ════════════════════════════════════════════════════════════════
+export const demote = {
+    name:        'demote',
+    description: 'Ondoa admin wa group',
+    category:    'group',
+    use:         '@mention au reply',
+    alias:       [],
+    adminOnly:   true,
 
-// ====================== GPP & FULLGPP ======================
-let mtypes = ["imageMessage"];
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
 
-smd({
-   pattern: "gpp",
-   desc: "Set Group profile picture",
-   category: "group",
-   filename: import.meta.url
-}, async (_0x5ac912) => {
-   try {
-      if (!_0x5ac912.isGroup) return _0x5ac912.reply(tlang().group);
-      if (!_0x5ac912.isBotAdmin || !_0x5ac912.isAdmin) return _0x5ac912.reply(tlang().admin);
-      let _0xc0618e = mtypes.includes(_0x5ac912.mtype) ? _0x5ac912 : _0x5ac912.reply_message;
-      if (!_0xc0618e || !mtypes.includes(_0xc0618e?.mtype)) return _0x5ac912.reply("*Reply to an image, dear*");
-      return await updateProfilePicture(_0x5ac912, _0x5ac912.chat, _0xc0618e, "gpp");
-   } catch (_0x5abd07) {
-      await _0x5ac912.error(_0x5abd07 + "\n\ncommand : gpp", _0x5abd07);
-   }
-});
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
 
-smd({
-   pattern: "fullgpp",
-   desc: "Set full screen group profile picture",
-   category: "group",
-   filename: import.meta.url
-}, async (_0x31201a) => {
-   try {
-      if (!_0x31201a.isGroup) return _0x31201a.reply(tlang().group);
-      if (!_0x31201a.isBotAdmin || !_0x31201a.isAdmin) return _0x31201a.reply(tlang().admin);
-      let _0x3fba56 = mtypes.includes(_0x31201a.mtype) ? _0x31201a : _0x31201a.reply_message;
-      if (!_0x3fba56 || !mtypes.includes(_0x3fba56?.mtype)) return _0x31201a.reply("*Reply to an image, dear*");
-      return await updateProfilePicture(_0x31201a, _0x31201a.chat, _0x3fba56, "fullgpp");
-   } catch (_0x1f879e) {
-      await _0x31201a.error(_0x1f879e + "\n\ncommand : fullgpp", _0x1f879e);
-   }
-});
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
 
-// ====================== TAGALL ======================
-cmd({
-   pattern: "tagall",
-   desc: "Tags every person of group.",
-   category: "group",
-   filename: import.meta.url
-}, async (_0x1ed055, _0x929954) => {
-   try {
-      if (!_0x1ed055.isGroup) return _0x1ed055.reply(tlang().group);
-      if (!_0x1ed055.isAdmin && !_0x1ed055.isCreator) return _0x1ed055.reply(tlang().admin);
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
 
-      const participants = _0x1ed055.metadata.participants || [];
-      let text = `\n══✪〘   *Tag All* 〙✪══\n\n➲ *Message :* ${_0x929954 || "blank Message"} \n ${Config.caption} \n\n➲ *Author:* ${_0x1ed055.pushName} 🔖\n`;
+        const mentioned  = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const quotedPart = msg.message?.extendedTextMessage?.contextInfo?.participant;
 
-      for (let mem of participants) {
-         if (!mem.id.startsWith("2348039607375")) {
-            text += ` 📍 @${mem.id.split("@")[0]}\n`;
-         }
-      }
-      await _0x1ed055.bot.sendMessage(_0x1ed055.chat, { text, mentions: participants.map(p => p.id) }, { quoted: _0x1ed055 });
-   } catch (e) {
-      await _0x1ed055.error(e + "\n\ncommand: tagall", e);
-   }
-});
+        const targets = mentioned.length > 0
+            ? mentioned
+            : quotedPart
+            ? [normalizeJid(quotedPart)]
+            : [];
 
-// ====================== BROADCAST ======================
-cmd({
-   pattern: "broadcast",
-   desc: "Bot makes a broadcast in all groups",
-   fromMe: true,
-   category: "group",
-   filename: import.meta.url
-}, async (_0x553d05, _0x5d14a3) => {
-   try {
-      if (!_0x5d14a3) return await _0x553d05.reply("*_Provide text for broadcast_*");
+        if (!targets.length) {
+            return reply(sock, msg, '*_Mention au reply mtu unayetaka kumondolea admin_*');
+        }
 
-      let groups = await _0x553d05.bot.groupFetchAllParticipating();
-      let ids = Object.keys(groups);
+        try {
+            await sock.groupParticipantsUpdate(chatJid, targets, 'demote');
+            const names = targets.map(t => `+${t.replace('@s.whatsapp.net', '')}`).join(', ');
+            return reply(sock, msg, `*_✅ Ameondolewa admin: ${names}_*`);
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
 
-      await _0x553d05.send(`*_Sending Broadcast To ${ids.length} Groups..._*`);
+// ════════════════════════════════════════════════════════════════
+//   MUTE — zuia wanachama kutuma messages
+// ════════════════════════════════════════════════════════════════
+export const mute = {
+    name:        'mute',
+    description: 'Zuia wanachama kutuma messages (admins peke yao)',
+    category:    'group',
+    use:         '',
+    alias:       ['lock'],
+    adminOnly:   true,
 
-      for (let id of ids) {
-         try {
-            await sleep(1500);
-            await send(_0x553d05, `*--❗ 26-𝚃𝙴𝙲𝙷 Broadcast ❗--*\n\n*🍀Message:* ${_0x5d14a3}`, {}, "", "", id);
-         } catch {}
-      }
-      return _0x553d05.reply(`*_Broadcast sent to ${ids.length} groups_*`);
-   } catch (e) {
-      await _0x553d05.error(e + "\n\ncommand: broadcast", e);
-   }
-});
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
 
-export default {};
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
+
+        try {
+            await sock.groupSettingUpdate(chatJid, 'announcement');
+            return reply(sock, msg, '*_🔇 Group imefungwa — admins peke yao waweze kutuma._*');
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   UNMUTE — ruhusu wanachama wote kutuma messages
+// ════════════════════════════════════════════════════════════════
+export const unmute = {
+    name:        'unmute',
+    description: 'Ruhusu wanachama wote kutuma messages',
+    category:    'group',
+    use:         '',
+    alias:       ['unlock'],
+    adminOnly:   true,
+
+    async execute(sock, msg, args) {
+        const chatJid = msg.key.remoteJid;
+
+        if (!chatJid.endsWith('@g.us')) {
+            return reply(sock, msg, '*_Command hii ni ya group tu!_*');
+        }
+
+        const botAdmin    = await isBotAdmin(sock, chatJid);
+        const senderAdmin = await isSenderAdmin(sock, chatJid, normalizeJid(msg.key.participant || ''));
+
+        if (!botAdmin || !senderAdmin) {
+            return reply(sock, msg,
+                !botAdmin ? '*_Mimi si admin!_*' : '*_Wewe si admin!_*'
+            );
+        }
+
+        try {
+            await sock.groupSettingUpdate(chatJid, 'not_announcement');
+            return reply(sock, msg, '*_🔊 Group imefunguliwa — wote waweze kutuma._*');
+        } catch (e) {
+            return reply(sock, msg, `*_❌ Imeshindwa: ${e.message}_*`);
+        }
+    }
+};
+
+// ════════════════════════════════════════════════════════════════
+//   DEFAULT EXPORT — lazima iwepo ili loadCommands() iifanye kazi
+//   Handler inatumia: module.default || module
+//   Kwa hivyo tunatoa object na commands zote
+// ════════════════════════════════════════════════════════════════
+export default {
+    join, newgc, ginfo, rejectall, acceptall, listrequest,
+    setdesc, setname, left, gpp, tagall, broadcast,
+    kick, promote, demote, mute, unmute
+};
