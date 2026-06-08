@@ -25,7 +25,7 @@ export async function execute(sock, msg, args) {
     // Jenga help message
     // ============================
     let text = `╔═══════════════════════╗\n`;
-    text += `║  🤖 *26-𝚃𝙴𝙲𝙷*   ║\n`;
+    text += `║  🤖 *26-𝐓𝐄𝐂𝐇*   ║\n`;
     text += `║    📋 *HELP MENU*       ║\n`;
     text += `╚═══════════════════════╝\n\n`;
 
