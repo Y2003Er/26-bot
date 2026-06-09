@@ -28,19 +28,13 @@ try {
     logger.error('PostgreSQL Pool initialization failed critically:', e.message);
 }
 
-const MAX_HISTORY    = 20;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MAX_HISTORY = 20;
 
-// Gemini SDK client yenye ulinzi wa uanzishwaji
-let genai = null;
-try {
-    if (GEMINI_API_KEY) {
-        genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-    } else {
-        logger.warn('GEMINI_API_KEY haipo kwenye mazingira (.env)');
-    }
-} catch (e) {
-    logger.error('Gemini SDK client initialization failed:', e.message);
+// Helper ya kupata Gemini Client iliyo hai kiotomatiki kwa ajili ya Vision/Audio
+function getGeminiKeys() {
+    const keysRaw = process.env.GEMINI_API_KEYS;
+    if (!keysRaw) return [];
+    return keysRaw.split(',').map(k => k.trim()).filter(Boolean);
 }
 
 // ════════════════════════════════════════════════
@@ -70,7 +64,7 @@ async function getHistory(userId) {
         return res.rows[0]?.history || [];
     } catch (err) {
         logger.error(`Failed to fetch history for user ${userId}:`, err.message);
-        return []; // Fallback ya amani ili asicrash
+        return [];
     }
 }
 
@@ -104,12 +98,12 @@ const SYSTEM = `Wewe ni 26 Tech AI, mshirika wa kiakili aliyetengenezwa na 26 Te
 ### 🧠 MBINU YA KAZI NA UTATUZI (Universal Logic)
 - **Jiongeze Kulingana na Data:** Usikariri sekta moja. Mtumiaji akikupa data ya aina yoyote (maandishi, kodi ya programu, mifumo ya kiufundi, au picha za vifaa), daka muktadha huo haraka, changanua mfumo wake ulivyo, na toa majibu kulingana na muundo wa kile ulichopewa sasa hivi.
 - **Kushika Muktadha (Context Retention):** Fuatilia kwa umakini mkubwa mtiririko wa chat (Chat History). Kama mtumiaji anauliza swali fupi au la kufuatilia (mfano: "Kwanini?", "Which demands?", "Ipi?"), usianzishe mada mpya. Rejea ujumbe uliopita au hitilafu yoyote iliyotokea kwenye mfumo sekunde chache zilizopita na fafanua hapo hapo.
-- **Udhibiti wa Hitilafu (Error Handling):** Kama muktadha Quran inaonyesha kuna hitilafu ya mfumo au API imefeli (mfano: Server Busy/High Demand 503), usijibu kiroboti. Waombe radhi kwa ufupi, fafanua kuwa ni tatizo la seva kupata foleni kwa sekunde hiyo, na uwaambie wajaribu tena au waeleze kwa maandishi.
+- **Udhibiti wa Hitilafu (Error Handling):** Kama muktadha unaonyesha kuna hitilafu ya mfumo au API imefeli (mfano: Server Busy/High Demand 503), usijibu kiroboti. Waombe radhi kwa ufupi, fafanua kuwa ni tatizo la seva kupata foleni kwa sekunde hiyo, na uwaambie wajaribu tena au waeleze kwa maandishi.
 
 ---
 
 ### 🛑 USIMAMIZI WA UREFU WA MAJIBU (Strict Formatting)
-- **Nenda Kwenye Pointi Moja kwa Moja:** Marufuku kutoa utangulizi mrefu (Intro) au hitimisho la maneno mengi (Outro) yasiyoombwa. Anza jibu lako kwa pointi ya msingi tanzu tangu neno la kwanza.
+- **Nenda Kwenye Pointi Moja kwa Moja:** Marufuku kutoa utangulizi mrefu (Intro) au hitimisho la maneno mengi (Outro) yasiyoombwa. Anza jibu lento kwa pointi ya msingi tanzu tangu neno la kwanza.
 - **Uwiano wa Urefu:** Swali fupi au la kawaida lipewe jibu fupi linalosomeka kwa haraka (sentensi 1-3). Swali zito linalohitaji hatua za kiufundi au kodi (code blocks) lipewe uchambuzi wa kina bila kukata maelezo au kodi katikati.
 - **Lugha ya Asili:** Jibu kwa kutumia lugha na mtindo ule ule aliotumia mtumiaji (Kiswahili, English, au mchanganyiko wa kawaida). Ukiona ametumia maneno ya kiufundi ya lugha nyingine, baki kwenye mchanganyiko asilia wa mazungumzo (Code-switching), usihamie kwenye lugha kavu ya darasani.
 
@@ -119,54 +113,56 @@ const SYSTEM = `Wewe ni 26 Tech AI, mshirika wa kiakili aliyetengenezwa na 26 Te
 //   ⚡ AI PROVIDERS — Text
 // ════════════════════════════════════════════════
 
-// ── 1. GEMINI (via @google/genai SDK) — PRIMARY ──
+// ── 1. GEMINI (Pamoja na Rotation ya Keys zote 10) ──
 async function callGemini(messages) {
-    if (!genai) throw new Error('GEMINI_API_KEY haipo au haikuanzishwa vizuri');
+    const keys = getGeminiKeys();
+    if (keys.length === 0) throw new Error('GEMINI_API_KEYS haipo kwenye variables (.env)');
 
-    try {
-        const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-        const turns     = messages.filter(m => m.role !== 'system');
+    let keyIndex = 0;
+    while (keyIndex < keys.length) {
+        try {
+            logger.info(`[Gemini Rotation] Tunajaribu kutumia Key namba ${keyIndex + 1}/${keys.length}...`);
+            const currentKey = keys[keyIndex];
+            const genaiClient = new GoogleGenAI({ apiKey: currentKey });
 
-        const contents = turns.map(m => ({
-            role:  m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: m.content || '' }]
-        }));
+            const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+            const turns     = messages.filter(m => m.role !== 'system');
 
-        const response = await genai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents,
-            config: {
-                systemInstruction: systemMsg,
-                temperature:     0.3,
-                maxOutputTokens: 2048
-            }
-        });
+            const contents = turns.map(m => ({
+                role:  m.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: m.content || '' }]
+            }));
 
-        if (!response || !response.text) {
-            throw new Error('Gemini API imerudisha jibu tupu (empty response)');
+            const response = await genaiClient.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents,
+                config: {
+                    systemInstruction: systemMsg,
+                    temperature:     0.3,
+                    maxOutputTokens: 2048
+                }
+            });
+
+            if (response?.text) return response.text;
+            throw new Error('Gemini imerudisha jibu tupu');
+        } catch (e) {
+            logger.warn(`⚠️ [Gemini Rotation] Key namba ${keyIndex + 1} imefeli au imejaa limit. Tunahamia inayofuata...`);
+            keyIndex++;
         }
-
-        return response.text;
-    } catch (e) {
-        logger.error(`Error ya ndani kwenye callGemini: ${e.message}`);
-        throw e; // Tupia juu ili router idake na kufanya fallback kwenda kwa Groq
     }
+    throw new Error('Akaunti zote za Gemini zilizowekwa zimegonga limit!');
 }
 
-// ── 2. GROQ (Fallback ikiwa na API Rotation kutoka kwenye .env) ──
+// ── 2. GROQ (Pamoja na Rotation ya Keys zote 10) ──
 async function callGroq(messages) {
     const keysRaw = process.env.GROQ_API_KEYS;
-    if (!keysRaw) throw new Error('GROQ_API_KEYS haipo kwenye .env');
+    if (!keysRaw) throw new Error('GROQ_API_KEYS haipo kwenye variables (.env)');
 
-    // Tenganisha funguo kuwa array
     const keys = keysRaw.split(',').map(k => k.trim()).filter(Boolean);
-    if (keys.length === 0) throw new Error('Hakuna API Keys zilizopatikana kwenye GROQ_API_KEYS');
-
     let keyIndex = 0;
     let success = false;
     let aiContent = null;
 
-    // Loop inayozunguka kupitia funguo zako zote 10
     while (keyIndex < keys.length && !success) {
         const currentApiKey = keys[keyIndex];
         const controller = new AbortController();
@@ -191,7 +187,6 @@ async function callGroq(messages) {
 
             const data = await res.json();
 
-            // Kama imegonga limit au quota
             if (res.status === 429 || data.error?.type === 'quota_exceeded' || data.error?.code === 'rate_limit_exceeded') {
                 logger.warn(`⚠️ [Groq Rotation] Key namba ${keyIndex + 1} imejaa limit. Tunahamia inayofuata...`);
                 keyIndex++;
@@ -200,87 +195,96 @@ async function callGroq(messages) {
             }
 
             if (!res.ok) throw new Error(`Groq HTTP error! status: ${res.status}`);
-            
+
             aiContent = data.choices?.[0]?.message?.content || null;
             success = true;
         } catch (e) {
-            logger.error(`Error kwenye key namba ${keyIndex + 1}: ${e.message}`);
-            keyIndex++; // Mtandao ukifeli jaribu inayofuata
+            logger.error(`Error kwenye Groq key namba ${keyIndex + 1}: ${e.message}`);
+            keyIndex++;
         } finally {
             clearTimeout(timer);
         }
     }
 
-    if (!success) throw new Error('Akaunti zote za Groq zilizowekwa kwenye .env zimegonga limit!');
+    if (!success) throw new Error('Akaunti zote za Groq zilizowekwa zimegonga limit!');
     return aiContent;
 }
 
-// ── ROUTER: Gemini → Groq ──
+// ── ROUTER: Gemini Rotation → Groq Rotation ──
 async function aiRouter(messages) {
-    // 1. Jaribu Gemini kwanza
-    if (GEMINI_API_KEY) {
-        try {
-            const result = await callGemini(messages);
-            if (result) return result;
-        } catch (e) {
-            logger.warn(`Gemini failed (${e.message}) — ikihama kwenda kwa Groq...`);
-        }
+    // 1. Jaribu mzunguko wa Gemini kwanza
+    try {
+        const result = await callGemini(messages);
+        if (result) return result;
+    } catch (e) {
+        logger.warn(`Gemini zote zimefeli au zimegonga limit — sasa tunahamia kwenye mzunguko wa Groq...`);
     }
 
-    // 2. Jaribu Groq kama fallback (Hapa sasa itazungusha keys 10 zenyewe)
+    // 2. Jaribu mzunguko wa Groq kama fallback
     try {
         const result = await callGroq(messages);
         if (result) return result;
     } catch (e) {
-        logger.error(`Groq pia imefeli kwenye Router au keys zote zimegonga limit (${e.message})`);
+        logger.error(`Mifumo yote miwili (Gemini na Groq) imemaliza ukomo kwa sasa: ${e.message}`);
     }
 
-    return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante kwa uvumilivu wako! 🙏`;
+    return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante! 🙏`;
 }
 
 // ════════════════════════════════════════════════
-//   🖼️ IMAGE ANALYSIS — Gemini Vision
+//   🖼️ IMAGE ANALYSIS — Gemini Vision (with Key Rotation)
 // ════════════════════════════════════════════════
 async function analyzeImage(imageBuffer, mimeType, userQuestion) {
-    if (!genai) throw new Error('GEMINI_API_KEY haipo au haikuanzishwa — image analysis haiwezekani');
+    const keys = getGeminiKeys();
+    if (keys.length === 0) throw new Error('GEMINI_API_KEYS haipo — image analysis haiwezekani');
 
-    try {
-        const base64 = imageBuffer.toString('base64');
-        const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
+    let keyIndex = 0;
+    while (keyIndex < keys.length) {
+        try {
+            const currentKey = keys[keyIndex];
+            const genai = new GoogleGenAI({ apiKey: currentKey });
+            const base64 = imageBuffer.toString('base64');
+            const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
 
-        const response = await genai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{
-                role: 'user',
-                parts: [
-                    { inlineData: { mimeType, data: base64 } },
-                    { text: prompt }
-                ]
-            }],
-            config: { 
-                systemInstruction: SYSTEM,
-                temperature: 0.4, 
-                maxOutputTokens: 2048 
-            }
-        });
+            const response = await genai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { inlineData: { mimeType, data: base64 } },
+                        { text: prompt }
+                    ]
+                }],
+                config: { 
+                    systemInstruction: SYSTEM,
+                    temperature: 0.4, 
+                    maxOutputTokens: 2048 
+                }
+            });
 
-        const text = response?.text;
-        if (!text) throw new Error('Gemini haikutoa jibu lolote la picha');
-
-        return { result: text, provider: 'Gemini Vision' };
-    } catch (e) {
-        logger.error(`Internal error kwenye analyzeImage: ${e.message}`);
-        throw e;
+            const text = response?.text;
+            if (text) return { result: text, provider: `Gemini Vision (Key ${keyIndex + 1})` };
+            throw new Error('Jibu tupu la picha');
+        } catch (e) {
+            logger.warn(`⚠️ [Vision Rotation] Key namba ${keyIndex + 1} imefeli kwenye picha. Tunahamia inayofuata...`);
+            keyIndex++;
+        }
     }
+    throw new Error('Funguo zote za Gemini zimefeli kuchambua picha.');
 }
 
 // ════════════════════════════════════════════════
 //   🎤 VOICE NOTE — Gemini Audio → Groq Whisper (with Key Rotation)
 // ════════════════════════════════════════════════
 async function transcribeAudio(audioBuffer, mimeType) {
-    // ── 1. Gemini Audio — PRIMARY ──
-    if (genai) {
+    // ── 1. Gemini Audio Rotation ──
+    const geminiKeys = getGeminiKeys();
+    let geminiIndex = 0;
+    
+    while (geminiIndex < geminiKeys.length) {
         try {
+            const currentKey = geminiKeys[geminiIndex];
+            const genai = new GoogleGenAI({ apiKey: currentKey });
             const base64 = audioBuffer.toString('base64');
 
             const response = await genai.models.generateContent({
@@ -300,23 +304,25 @@ async function transcribeAudio(audioBuffer, mimeType) {
             });
 
             const text = response?.text?.trim();
-            if (text) return { transcript: text, provider: 'Gemini Audio' };
+            if (text) return { transcript: text, provider: `Gemini Audio (Key ${geminiIndex + 1})` };
+            throw new Error('Transcript tupu');
         } catch (e) {
-            logger.warn(`Gemini Audio failed (${e.message}) — ikihamia kwa Groq Whisper...`);
+            logger.warn(`⚠️ [Audio Gemini Rotation] Key ${geminiIndex + 1} imefeli. Tunajaribu inayofuata...`);
+            geminiIndex++;
         }
     }
 
-    // ── 2. Groq Whisper — Fallback yenye Rotation ya keys zote 10 ──
+    // ── 2. Groq Whisper Fallback Rotation ──
     const keysRaw = process.env.GROQ_API_KEYS;
     if (keysRaw) {
         const keys = keysRaw.split(',').map(k => k.trim()).filter(Boolean);
         let keyIndex = 0;
-        
+
         while (keyIndex < keys.length) {
             const currentApiKey = keys[keyIndex];
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 60000);
-            
+
             try {
                 const formData = new FormData();
                 const blob     = new Blob([audioBuffer], { type: mimeType });
@@ -332,7 +338,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
                 });
 
                 if (res.status === 429) {
-                    logger.warn(`⚠️ [Whisper Rotation] Key namba ${keyIndex + 1} imeishiwa nguvu. Tunasonga mbele...`);
+                    logger.warn(`⚠️ [Whisper Rotation] Key namba ${keyIndex + 1} imejaa. Tunasonga mbele...`);
                     keyIndex++;
                     clearTimeout(timer);
                     continue;
@@ -353,7 +359,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
         }
     }
 
-    throw new Error('Transcription imeshindwa kabisa kwenye mifumo yote na keys zote zimegonga limit.');
+    throw new Error('Transcription imeshindwa kabisa kwenye keys zote za mifumo yote miwili.');
 }
 
 // ════════════════════════════════════════════════
@@ -517,7 +523,7 @@ export const adminOnly   = false;
 export async function execute(sock, msg, args) {
     try {
         const from     = msg?.key?.remoteJid;
-        if (!from) return false; // Usalama dhidi ya ujumbe mbovu usio na jid
+        if (!from) return false;
 
         const sender   = msg.key.participant || from;
         const fullText = (
@@ -526,12 +532,10 @@ export async function execute(sock, msg, args) {
             ''
         ).trim();
 
-        // ── 1. Photo editor (.photo) ──
         if (fullText.startsWith('.photo')) {
             return await handlePhoto(sock, msg, from, fullText);
         }
 
-        // ── 2. Voice note ──
         const hasAudio =
             !!msg.message?.audioMessage ||
             !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
@@ -540,7 +544,6 @@ export async function execute(sock, msg, args) {
             return await handleVoiceNote(sock, msg, from, sender);
         }
 
-        // ── 3. Image analysis ──
         const hasImage =
             !!msg.message?.imageMessage ||
             !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
@@ -553,7 +556,6 @@ export async function execute(sock, msg, args) {
             return await handleImageAnalysis(sock, msg, from, sender, imageCaption);
         }
 
-        // ── 4. Text AI ──
         if (!fullText) return false;
 
         const contextInfo       = msg.message?.extendedTextMessage?.contextInfo;
