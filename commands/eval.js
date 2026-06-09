@@ -965,7 +965,20 @@ export async function execute(sock, msg, args) {
             return reply('🛡️ *Safe Mode:* Code hii imezuiwa kwa usalama.');
         }
 
-        const result  = await runEval(text, { sock, msg, from });
+        // Smart eval: jaribu return(...) kwanza (kama REPL), kama syntaxError run kawaida
+        // Hii inafanya `1+1` → 2, `sock.user` → object, na multi-line code ifanye kazi pia
+        let result;
+        try {
+            result = await runEval(`return (${text})`, { sock, msg, from });
+        } catch (e1) {
+            if (e1 instanceof SyntaxError) {
+                // return(...) haikufanya kazi — jaribu code kama ilivyo
+                result = await runEval(text, { sock, msg, from });
+            } else {
+                throw e1;
+            }
+        }
+
         const output  = formatOutput(result);
         const timeMs  = Date.now() - start;
 
