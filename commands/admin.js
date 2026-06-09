@@ -96,3 +96,81 @@ export async function execute(sock, msg, args) {
         }, { quoted: msg });
     }
 }
+
+// ════════════════════════════════════════════════
+// 🛡️ MFUMO WA ULINZI WA KIMAFIA (ANTI-KICK & ANTI-DEMOTE)
+// ════════════════════════════════════════════════
+export function initGroupProtection(sock, logger) {
+    sock.ev.on('group-participants.update', async (update) => {
+        const { id, participants, action, author } = update;
+        
+        // ✅ FIX 1 — botNumber ilikuwa ikivunja JID kwa kuondoa @s.whatsapp.net
+        // kisha kuiongeza tena — matokeo ilikuwa JID mbaya isiyofanana na yoyote.
+        // sock.user.id tayari ina format "2557xx:xx@s.whatsapp.net" —
+        // tunafuta ":xx" tu, tunaacha "@s.whatsapp.net" kama ilivyo.
+        const botNumber  = sock.user.id.replace(/:\d+@/, '@'); // ✅ FIXED
+
+        const superAdmin = normalizeJid(OWNER_JID);
+
+        // Kama aliyeleta mabadiliko ni Bot au ni hatua ya kawaida ya kuongeza watu, simama.
+        if (author === botNumber || action === 'add' || action === 'promote') return;
+
+        try {
+            // Kagua kama bot ni admin ili kuzuia makosa ya permissions
+            const groupMetadata = await sock.groupMetadata(id).catch(() => null);
+            if (!groupMetadata) return;
+            
+            const botParticipant = groupMetadata.participants.find(p => p.id === botNumber);
+            const isBotAdmin     = botParticipant?.admin === 'admin' || botParticipant?.admin === 'superadmin';
+
+            if (!isBotAdmin) return;
+
+            // Walengwa wanaolindwa na huu mfumo (Wewe + Bot)
+            const targetsProtected = [superAdmin, botNumber];
+
+            // ✅ FIX 2 — participants ni array ya JID strings, si objects.
+            // .includes(p) ilikuwa ikishindwa kwa sababu haikufanya normalize kwanza —
+            // JID kama "2557xx:xx@s.whatsapp.net" haikuwa inafanana na "2557xx@s.whatsapp.net".
+            // Sasa tunafanya normalizeJid(p) kabla ya kulinganisha.
+            const affectedTarget = participants.find(p => targetsProtected.includes(normalizeJid(p))); // ✅ FIXED
+
+            if (affectedTarget) {
+                // 🛑 1. ANTI-KICK (Ulinzi wa kutolewa)
+                if (action === 'remove') {
+                    if (logger && logger.warn) {
+                        logger.warn(`⚠️ Mapinduzi! Admin ${author} amemtoa @${affectedTarget.split('@')[0]}`);
+                    }
+
+                    await sock.groupParticipantsUpdate(id, [affectedTarget], 'add');
+                    await sock.groupParticipantsUpdate(id, [author], 'demote');
+                    await sock.groupParticipantsUpdate(id, [author], 'remove');
+
+                    await sock.sendMessage(id, {
+                        text: `🛡️ *26-TECH SUITE PROTECTION*\n\n` +
+                              `❌ Admin @${author.split('@')[0]} amepigwa *BANNED + KICK* ya kiotomatiki baada ya kujaribu kufanya mapinduzi dhidi ya mfumo wa utawala.`,
+                        mentions: [author]
+                    });
+                }
+
+                // 📉 2. ANTI-DEMOTE (Ulinzi wa kushushwa cheo)
+                if (action === 'demote') {
+                    if (logger && logger.warn) {
+                        logger.warn(`⚠️ Jaribio la Demotion kutoka kwa ${author} dhidi ya @${affectedTarget.split('@')[0]}`);
+                    }
+
+                    await sock.groupParticipantsUpdate(id, [affectedTarget], 'promote');
+                    await sock.groupParticipantsUpdate(id, [author], 'demote');
+
+                    await sock.sendMessage(id, {
+                        text: `❌ *Ulinzi wa 26 Tech:* Admin @${author.split('@')[0]} amepokonywa madaraka baada ya kujaribu kumshusha cheo Kiongozi Mkuu.`,
+                        mentions: [author]
+                    });
+                }
+            }
+        } catch (criticalError) {
+            if (logger && logger.error) {
+                logger.error(`Critical error kwenye ulinzi wa kundi: ${criticalError.message}`);
+            }
+        }
+    });
+}
