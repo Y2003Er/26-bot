@@ -1,3 +1,5 @@
+// index.js
+
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -11,22 +13,26 @@ import {
 } from '@whiskeysockets/baileys';
 
 import './config.js';
-import { loadCommands, handleMessage, setupContactListener } from './lib/handler.js';
-import { initializeDatabase, usePostgresAuthState, deleteSession, deleteAllSessions } from './session-db.js';
+import {
+    loadCommands,
+    handleMessage,
+    setupContactListener,
+    setupAntiDelete,
+    setupAntiViewOnce,
+    setupAutoStatusViewer
+} from './lib/handler.js';
+import {
+    initializeDatabase,
+    usePostgresAuthState,
+    deleteAllSessions
+} from './session-db.js';
 
-const logger = pino({ level: 'info' });
+const logger       = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
-const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
+const SESSION_ID   = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
-const CLEAN_SESSIONS = process.env.CLEAN_SESSIONS === 'true';
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║                     BANNER SYSTEM                            ║
-// ║  updateBanner() → hifadhi state tu, HAKUNA cursor/ANSI      ║
-// ║  printBanner()  → chapisha banner kamili (inaitwa 2x):       ║
-// ║    1. Mwanzoni   (values za default)                         ║
-// ║    2. Baada ya bot kuunganika (values zote zimesasishwa)     ║
-// ╚══════════════════════════════════════════════════════════════╝
+global.prefix = process.env.PREFIX || '.';
 
 const C = {
     reset:   '\x1b[0m',
@@ -48,7 +54,11 @@ const bannerState = {
     messages:   0,
     groups:     0,
     lastMsg:    '—',
-    ai:         process.env.GROQ_API_KEYS ? 'Groq + Gemini' : process.env.GEMINI_API_KEYS ? 'Gemini' : '—',
+    ai:         process.env.GROQ_API_KEY
+                    ? 'Groq + Gemini'
+                    : process.env.GEMINI_API_KEY
+                    ? 'Gemini'
+                    : '—',
     startTime:  Date.now(),
 };
 
@@ -63,23 +73,27 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
+    const used  = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
     return `${used}/${total} MB`;
 }
 
-// ── Chapisha banner kamili — mistari moja moja (kila mstari = log entry yake) ──
 function printBanner() {
     const s = bannerState;
 
-    const connVal = s.connection === 'ONLINE'     ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
-                  : s.connection === 'connecting' ? `${C.yellow}⏳ Connecting...${C.reset}`
-                  : s.connection === 'OFFLINE'    ? `${C.red}🔴 OFFLINE${C.reset}`
-                  :                                 `${C.yellow}${s.connection}${C.reset}`;
+    const connVal = s.connection === 'ONLINE'
+        ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
+        : s.connection === 'connecting'
+        ? `${C.yellow}⏳ Connecting...${C.reset}`
+        : s.connection === 'OFFLINE'
+        ? `${C.red}🔴 OFFLINE${C.reset}`
+        : `${C.yellow}${s.connection}${C.reset}`;
 
-    const dbVal   = s.database.includes('✅') ? `${C.green}✅ Connected${C.reset}`
-                  : s.database.includes('❌') ? `${C.red}❌ Error${C.reset}`
-                  :                             `${C.yellow}${s.database}${C.reset}`;
+    const dbVal = s.database.includes('✅')
+        ? `${C.green}✅ Connected${C.reset}`
+        : s.database.includes('❌')
+        ? `${C.red}❌ Error${C.reset}`
+        : `${C.yellow}${s.database}${C.reset}`;
 
     const lines = [
         `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
@@ -97,22 +111,15 @@ function printBanner() {
         `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
     ];
 
-    // Chapisha kila mstari kwa console.log — Railway itaona kila mstari vizuri
     lines.forEach(line => console.log(line));
     console.log('');
 }
 
-// ── updateBanner: hifadhi state tu — HAKUNA output yoyote ──
-// Banner inachapishwa tena na printBanner() peke yake
 function updateBanner(key, value) {
     if (value !== null && value !== undefined && key in bannerState) {
         bannerState[key] = value;
     }
 }
-
-// ════════════════════════════════════════════════
-//        BOT LOGS
-// ════════════════════════════════════════════════
 
 const log = {
     info:    (msg) => console.log(`  ✦  ${msg}`),
@@ -133,12 +140,12 @@ if (!PHONE_NUMBER || !/^\d{10,15}$/.test(PHONE_NUMBER)) {
     process.exit(1);
 }
 
-let sock = null;
-let isConnecting = false;
+let sock             = null;
+let isConnecting     = false;
 let pairingRequested = false;
-let bootLock = false;
-let openTimer = null;
-let hasEverOpened = false;
+let bootLock         = false;
+let openTimer        = null;
+let hasEverOpened    = false;
 
 function clearOpenTimer() {
     if (openTimer) clearTimeout(openTimer);
@@ -161,8 +168,8 @@ async function startBot() {
     if (bootLock || isConnecting) return;
     if (sock?.ws?.readyState === 1) return;
 
-    bootLock = true;
-    isConnecting = true;
+    bootLock         = true;
+    isConnecting     = true;
     pairingRequested = false;
     clearOpenTimer();
 
@@ -170,7 +177,6 @@ async function startBot() {
         await loadCommands();
         const cmdCount = global.allCommands?.size || 0;
         updateBanner('commands', `${cmdCount} loaded`);
-        // ── Banner ya kwanza: database ✅ + commands loaded ──
         printBanner();
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
@@ -181,22 +187,22 @@ async function startBot() {
                 sock.ev.removeAllListeners();
                 await sock.ws?.close();
                 sock.end?.(new Error('Restarting'));
-            } catch (e) {}
+            } catch {}
             sock = null;
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         sock = makeWASocket({
-            auth: state,
+            auth:                           state,
             msgRetryCounterCache,
             logger,
-            printQRInTerminal: false,
-            browser: Browsers.ubuntu('Chrome'),
-            connectTimeoutMs: 120000,
-            keepAliveIntervalMs: 30000,
-            defaultQueryTimeoutMs: undefined,
+            printQRInTerminal:              false,
+            browser:                        Browsers.ubuntu('Chrome'),
+            connectTimeoutMs:               120000,
+            keepAliveIntervalMs:            30000,
+            defaultQueryTimeoutMs:          undefined,
             generateHighQualityLinkPreview: false,
-            patchMessageBeforeSending: (msg) => msg,
+            patchMessageBeforeSending:      (msg) => msg,
         });
 
         sock.ev.on('creds.update', saveCreds);
@@ -206,7 +212,6 @@ async function startBot() {
             const { connection, lastDisconnect } = update;
 
             if (connection) {
-                // Update banner moja kwa moja — si log
                 updateBanner('connection', connection === 'open' ? 'ONLINE' : connection);
                 log.state(`Connection  →  ${connection}`);
             }
@@ -245,43 +250,46 @@ async function startBot() {
                     updateBanner('groups', Object.keys(groups).length);
                 } catch {}
 
+                setupAntiDelete(sock);
+                setupAntiViewOnce(sock);
+                setupAutoStatusViewer(sock);
+
                 log.div();
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL (JSONB)');
                 log.div();
-                // ── Chapisha banner tena na values zote zilizosasishwa ──
                 printBanner();
                 isConnecting = false;
-                bootLock = false;
+                bootLock     = false;
             }
 
             if (connection === 'close') {
                 clearOpenTimer();
                 const code = lastDisconnect?.error?.output?.statusCode;
                 isConnecting = false;
-                bootLock = false;
+                bootLock     = false;
                 updateBanner('connection', 'OFFLINE');
-
-                if (code === 515) {
-                    log.info('Pairing restart (515) — restarting in 2s...');
-                    setTimeout(startBot, 2000);
-                    return;
-                }
 
                 log.div();
                 log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
-                if (code === 440) {
-                    log.warn('Connection replaced (440) – waiting 15s before restart');
+                if (code === 515) {
+                    log.info('Pairing restart (515) — restarting in 2s...');
+                    setTimeout(startBot, 2000);
+                } else if (code === 440) {
+                    log.warn('Connection replaced (440) — restarting in 15s...');
                     setTimeout(startBot, 15000);
-                } else if (code === 403) {
-                    log.warn('Account banned au restricted (403) — restarting in 30s');
-                    setTimeout(startBot, 30000);
+                } else if (code === DisconnectReason.loggedOut || code === 401) {
+                    // ✅ HAKUNA deleteSession hapa — session inabaki salama
+                    // Kufuta session: weka CLEAN_SESSIONS=true kwenye .env/Railway kisha restart
+                    log.warn('Code 401 — restarting bila kufuta session...');
+                    log.warn('(Kama unataka fresh login: weka CLEAN_SESSIONS=true kwenye Railway)');
+                    setTimeout(startBot, 10000);
                 } else if (!hasEverOpened) {
-                    log.warn('Haijaunganika kabla — restarting in 15s');
+                    log.warn('Haijaunganika kabla — restarting in 15s...');
                     setTimeout(startBot, 15000);
                 } else {
-                    log.warn(`Disconnect [${code ?? '?'}] — restarting in 7s`);
+                    log.warn('Disconnect baada ya open — restarting in 7s...');
                     setTimeout(startBot, 7000);
                 }
             }
@@ -291,29 +299,30 @@ async function startBot() {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
-            if (msg.key.fromMe) return;
 
             bannerState.messages++;
             const text =
                 msg.message?.conversation ||
-                msg.message?.extendedTextMessage?.text ||
-                '[media]';
+                msg.message?.extendedTextMessage?.text || '[media]';
             const isGroup = msg.key.remoteJid?.endsWith('@g.us');
-            const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const time    = new Date().toLocaleTimeString('en-GB', {
+                hour: '2-digit', minute: '2-digit'
+            });
             const source = isGroup ? 'Group' : 'DM';
 
-            // Update banner: messages count + lastMsg — si log
             updateBanner('messages', bannerState.messages);
-            updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
+            updateBanner('lastMsg',
+                `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`
+            );
 
-            console.log(`📩 Ujumbe kutoka ${msg.key.remoteJid}: ${text}`);
+            console.log(`📩 ${msg.key.remoteJid}: ${text}`);
             await handleMessage(sock, msg);
         });
 
         openTimer = setTimeout(() => {
             log.warn('Timeout — restart...');
             isConnecting = false;
-            bootLock = false;
+            bootLock     = false;
             try { sock?.ev?.removeAllListeners(); sock?.ws?.close(); } catch {}
             setTimeout(startBot, 7000);
         }, 180000);
@@ -327,51 +336,29 @@ async function startBot() {
     } catch (err) {
         log.error(`HITILAFU → ${err.message}`);
         isConnecting = false;
-        bootLock = false;
+        bootLock     = false;
         setTimeout(startBot, 7000);
-    }
-}
-
-let dbRetryCount = 0;
-const DB_MAX_RETRIES = 5;
-const DB_RETRY_BASE  = 5000; // 5s, 10s, 20s, 40s, 80s
-
-async function connectWithRetry() {
-    while (dbRetryCount < DB_MAX_RETRIES) {
-        try {
-            log.info('Inaunganika na PostgreSQL...');
-            await initializeDatabase();
-            updateBanner('database', '✅ Connected');
-            dbRetryCount = 0;
-            return; // success
-        } catch (err) {
-            dbRetryCount++;
-            updateBanner('database', '❌ Error');
-            const wait = DB_RETRY_BASE * Math.pow(2, dbRetryCount - 1);
-            log.error(`DB error: ${err.message}`);
-            if (dbRetryCount >= DB_MAX_RETRIES) {
-                log.error(`DB imeshindwa mara ${DB_MAX_RETRIES} — Bot inasimama.`);
-                process.exit(1);
-            }
-            log.warn(`Itajaribu tena baada ya sekunde ${wait / 1000}...`);
-            await new Promise(r => setTimeout(r, wait));
-        }
     }
 }
 
 (async () => {
     try {
-        await connectWithRetry();
+        log.info('Inaunganika na PostgreSQL...');
+        await initializeDatabase();
+        updateBanner('database', '✅ Connected');
 
-        if (CLEAN_SESSIONS) {
-            log.warn('🧹 CLEAN_SESSIONS=true – Inafuta session zote...');
+        // ✅ Session inafutwa MANUAL TU — weka CLEAN_SESSIONS=true kwenye Railway
+        // Baada ya login mpya, irudi CLEAN_SESSIONS=false au ifute kabisa
+        if (process.env.CLEAN_SESSIONS === 'true') {
+            log.warn('🧹 CLEAN_SESSIONS=true — Inafuta session zote...');
             await deleteAllSessions();
-            log.success('Session zote zimefutwa.');
+            log.success('Session zote zimefutwa. Sasa itafanya pairing mpya.');
         }
 
         await startBot();
     } catch (err) {
-        log.error(`Hitilafu: ${err.message}`);
+        updateBanner('database', '❌ Error');
+        log.error(`DB error: ${err.message}`);
         process.exit(1);
     }
 })();
