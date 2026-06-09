@@ -45,7 +45,6 @@ const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
 
 function normalizeJid(jid) {
     if (!jid) return '';
-    // Kusafisha namba za WhatsApp Web au vifaa vya ziada (vya mawakala mfano :1@s.w.n)
     return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
 }
 
@@ -53,8 +52,6 @@ function isOwner(msg) {
     const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
     const isFromMe = msg.key.fromMe === true;
     const sender   = normalizeJid(isGroup ? (msg.key.participant || '') : msg.key.remoteJid);
-    
-    // Angalia kama aliyetuma yumo kwenye list ya ma-owner au ni boti yenyewe kwenye group
     return OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
 }
 
@@ -74,7 +71,7 @@ function addToHistory(type, input, output, timeMs = 0) {
     if (evalHistory.length > MAX_HISTORY) evalHistory.pop();
 }
 
-// ── Safe mode (Maboresho ya kuzuia bypass ya ujanja wa mabano na bracket notation) ──
+// ── Safe mode ──
 const BLOCKED_PATTERNS = [
     /process\s*(\.exit|\[\s*['"`]exit['"`]\s*\])\s*\(/i,
     /rm\s+-rf\s+[\/~]/i,
@@ -112,7 +109,6 @@ function formatOutput(val) {
     return util.inspect(val, { depth: 4, colors: false, breakLength: 80 });
 }
 
-// Function hii ilihitajika na $state lkn ilikuwa inatumia data za contacts
 function getContactsList() {
     const contacts = global.contactCache;
     if (!contacts || contacts.size === 0) return '📭 Cache ya contacts haina kitu kwa sasa.';
@@ -160,9 +156,7 @@ async function runTerminal(command, cwd = process.cwd()) {
 // ── JS Eval na timeout + context ──
 async function runEval(code, context) {
     const { sock, msg, from } = context;
-
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-
     const fn = new AsyncFunction(
         'sock', 'msg', 'from', 'global', 'process', 'require',
         `
@@ -170,11 +164,9 @@ async function runEval(code, context) {
         ${code}
         `
     );
-
     const timeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('⏱️ Timeout — imechukua zaidi ya sekunde 15')), 15000)
     );
-
     return Promise.race([
         fn(sock, msg, from, global, process, (m) => import(m)),
         timeout
@@ -192,7 +184,6 @@ async function getBotState(sock, query) {
         const mem    = process.memoryUsage();
         const ws     = sock.ws?.readyState;
         const wsState = ws === 0 ? 'CONNECTING' : ws === 1 ? 'OPEN ✅' : ws === 2 ? 'CLOSING' : 'CLOSED ❌';
-
         return (
             `*📊 BOT STATE — ${new Date().toLocaleString('sw-TZ')}*\n\n` +
             `🔗 *Connection:* ${wsState}\n` +
@@ -348,7 +339,6 @@ async function runDB(query) {
 //   $SEND — Tuma ujumbe kwa mtu yeyote
 // ════════════════════════════════════════════════
 async function sendMessage(sock, input) {
-    // Format: <number|jid> <message>
     const parts  = input.trim().split(/\s+/);
     const target = parts[0];
     const text   = parts.slice(1).join(' ');
@@ -382,9 +372,9 @@ async function quickBroadcast(sock, text) {
         return `❌ Imeshindwa kupata groups: ${e.message}`;
     }
 
-    const ids    = Object.keys(groups);
-    let sent     = 0;
-    let failed   = 0;
+    const ids  = Object.keys(groups);
+    let sent   = 0;
+    let failed = 0;
 
     for (const id of ids) {
         try {
@@ -419,7 +409,6 @@ async function banNumber(sock, number, unban = false) {
     }
 }
 
-// ── Multi-owner custom check ya JID wakati wa kuping ──
 const MAIN_OWNER_JID = OWNERS_LIST[0] || `${(process.env.OWNER_NUMBER || '').split(',')[0].replace(/[^0-9]/g, '')}@s.whatsapp.net`;
 
 // ════════════════════════════════════════════════
@@ -427,7 +416,6 @@ const MAIN_OWNER_JID = OWNERS_LIST[0] || `${(process.env.OWNER_NUMBER || '').spl
 // ════════════════════════════════════════════════
 async function pingTarget(sock, target) {
     if (!target) {
-        // Ping bot yenyewe
         const start = Date.now();
         try {
             await sock.sendPresenceUpdate('available', MAIN_OWNER_JID);
@@ -443,10 +431,9 @@ async function pingTarget(sock, target) {
 
     const start = Date.now();
     try {
-        const result = await sock.onWhatsApp(jid.replace('@s.whatsapp.net', ''));
+        const result  = await sock.onWhatsApp(jid.replace('@s.whatsapp.net', ''));
         const latency = Date.now() - start;
         const exists  = result?.[0]?.exists;
-
         return (
             `📓 *Ping Result*\n\n` +
             `Target: +${clean}\n` +
@@ -466,7 +453,7 @@ async function restartBot(sock, from) {
         text: '🔄 *Bot inarestart...*\n_Itarudi baada ya sekunde chache._'
     });
     setTimeout(() => process.exit(0), 2000);
-    return null; // Response tayari imetumwa
+    return null;
 }
 
 // ════════════════════════════════════════════════
@@ -495,7 +482,6 @@ async function updateBot(sock, from) {
 //   $LOGS — Bot logs za mwisho
 // ════════════════════════════════════════════════
 async function getLogs(lines = 50) {
-    // Jaribu kupata logs kwa njia mbalimbali
     const cmds = [
         `journalctl -n ${lines} --no-pager 2>/dev/null`,
         `tail -n ${lines} /proc/1/fd/1 2>/dev/null`,
@@ -614,8 +600,8 @@ function runGC() {
     const before = process.memoryUsage().heapUsed;
     if (global.gc) {
         global.gc();
-        const after   = process.memoryUsage().heapUsed;
-        const freed   = before - after;
+        const after = process.memoryUsage().heapUsed;
+        const freed = before - after;
         return `✅ *Garbage Collection*\n\nBefore: ${formatBytes(before)}\nAfter:  ${formatBytes(after)}\nFreed:  ${formatBytes(Math.max(0, freed))}`;
     }
     return `⚠️ GC haipatikani — anza Node.js na flag:\n\`node --expose-gc index.js\``;
@@ -658,8 +644,7 @@ function manageEnv(action, key, value) {
 
     if (act === 'get') {
         if (!key) return '❓ Format: $env get <KEY>';
-        // Ficha values za keys nyeti
-        const sensitive = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'DATABASE_URL'];
+        const sensitive   = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'DATABASE_URL'];
         const isSensitive = sensitive.some(s => key.toUpperCase().includes(s));
         const val = process.env[key];
         if (!val) return `❌ ENV key *${key}* haipatikani`;
@@ -690,9 +675,9 @@ function manageEnv(action, key, value) {
 function exportHistory() {
     if (!evalHistory.length) return { text: '📭 Historia haina chochote.' };
 
-    let content = `26-TECH EVAL HISTORY\n`;
-    content    += `Exported: ${new Date().toLocaleString('sw-TZ')}\n`;
-    content    += `${'═'.repeat(50)}\n\n`;
+    let content  = `26-TECH EVAL HISTORY\n`;
+    content     += `Exported: ${new Date().toLocaleString('sw-TZ')}\n`;
+    content     += `${'═'.repeat(50)}\n\n`;
 
     evalHistory.forEach((h, i) => {
         content += `[${i + 1}] ${h.date} ${h.timestamp} | TYPE: ${h.type}\n`;
@@ -776,5 +761,205 @@ export async function execute(sock, msg, args) {
     let text = fullText.replace(/^\.(eval|ev|exec)\s*/i, '').trim();
 
     // Support code blocks ```...```
-    const codeBlockMatch = text.match(/^
-http://googleusercontent.com/immersive_entry_chip/0
+    const codeBlockMatch = text.match(/^```(?:js|javascript)?\n?([\s\S]*?)```$/s);
+    if (codeBlockMatch) {
+        text = codeBlockMatch[1].trim();
+    }
+
+    if (!text) {
+        return sock.sendMessage(from, { text: getHelp() }, { quoted: msg });
+    }
+
+    const reply = async (content) => {
+        if (content === null || content === undefined) return;
+        await sock.sendMessage(from, { text: truncate(String(content)) }, { quoted: msg });
+    };
+
+    const start = Date.now();
+
+    try {
+        // ── $help ──
+        if (/^\$help$/i.test(text)) {
+            return reply(getHelp());
+        }
+
+        // ── $clear ──
+        if (/^\$clear$/i.test(text)) {
+            evalHistory.length = 0;
+            return reply('🗑️ Historia imefutwa.');
+        }
+
+        // ── $history ──
+        if (/^\$history$/i.test(text)) {
+            if (!evalHistory.length) return reply('📭 Historia haina chochote.');
+            const list = evalHistory.map((h, i) =>
+                `*${i + 1}.* [${h.timestamp}] ${h.type}\n` +
+                `   IN: ${h.input}\n` +
+                `   OUT: ${h.output}${h.timeMs ? ` (${h.timeMs}ms)` : ''}`
+            ).join('\n\n');
+            return reply(`*📋 EVAL HISTORY (${evalHistory.length}):*\n\n${list}`);
+        }
+
+        // ── $export ──
+        if (/^\$export$/i.test(text)) {
+            const { text: errText, content, filename } = exportHistory();
+            if (errText) return reply(errText);
+            try {
+                const tmpPath = path.join(os.tmpdir(), filename);
+                fs.writeFileSync(tmpPath, content, 'utf8');
+                await sock.sendMessage(from, {
+                    document: fs.readFileSync(tmpPath),
+                    fileName: filename,
+                    mimetype: 'text/plain'
+                }, { quoted: msg });
+                fs.unlinkSync(tmpPath);
+            } catch (e) {
+                return reply(`❌ Export imeshindwa: ${e.message}`);
+            }
+            return;
+        }
+
+        // ── $restart ──
+        if (/^\$restart$/i.test(text)) {
+            const res = await restartBot(sock, from);
+            return res ? reply(res) : undefined;
+        }
+
+        // ── $update ──
+        if (/^\$update$/i.test(text)) {
+            const res = await updateBot(sock, from);
+            return res ? reply(res) : undefined;
+        }
+
+        // ── $logs [lines] ──
+        if (/^\$logs(\s+\d+)?$/i.test(text)) {
+            const lines = parseInt(text.split(/\s+/)[1]) || 50;
+            return reply(await getLogs(lines));
+        }
+
+        // ── $gc ──
+        if (/^\$gc$/i.test(text)) {
+            return reply(runGC());
+        }
+
+        // ── $ping [target] ──
+        if (/^\$ping/i.test(text)) {
+            const target = text.replace(/^\$ping\s*/i, '').trim() || null;
+            return reply(await pingTarget(sock, target));
+        }
+
+        // ── $send <num> <msg> ──
+        if (/^\$send\s+/i.test(text)) {
+            const input = text.replace(/^\$send\s+/i, '');
+            const res   = await sendMessage(sock, input);
+            addToHistory('$send', input.slice(0, 60), res, Date.now() - start);
+            return reply(res);
+        }
+
+        // ── $broadcast <msg> ──
+        if (/^\$broadcast\s*/i.test(text)) {
+            const msg2 = text.replace(/^\$broadcast\s*/i, '').trim();
+            return reply(await quickBroadcast(sock, msg2));
+        }
+
+        // ── $ban <num> ──
+        if (/^\$ban\s+/i.test(text)) {
+            const num = text.replace(/^\$ban\s+/i, '').trim();
+            return reply(await banNumber(sock, num, false));
+        }
+
+        // ── $unban <num> ──
+        if (/^\$unban\s+/i.test(text)) {
+            const num = text.replace(/^\$unban\s+/i, '').trim();
+            return reply(await banNumber(sock, num, true));
+        }
+
+        // ── $state [query] ──
+        if (/^\$state/i.test(text)) {
+            const query = text.replace(/^\$state\s*/i, '').trim() || 'all';
+            return reply(await getBotState(sock, query));
+        }
+
+        // ── $db <SQL> ──
+        if (/^\$db\s+/i.test(text)) {
+            const sql = text.replace(/^\$db\s+/i, '').trim();
+            const res = await runDB(sql);
+            addToHistory('$db', sql.slice(0, 60), res, Date.now() - start);
+            return reply(res);
+        }
+
+        // ── $sessions [sub] ──
+        if (/^\$sessions/i.test(text)) {
+            const sub = text.replace(/^\$sessions\s*/i, '').trim() || 'list';
+            return reply(await manageSessions(sub));
+        }
+
+        // ── $ai <sub> [target] ──
+        if (/^\$ai/i.test(text)) {
+            const parts = text.replace(/^\$ai\s*/i, '').trim().split(/\s+/);
+            return reply(await manageAI(parts[0], parts[1]));
+        }
+
+        // ── $env <action> [key] [value] ──
+        if (/^\$env/i.test(text)) {
+            const parts = text.replace(/^\$env\s*/i, '').trim().split(/\s+/);
+            return reply(manageEnv(parts[0], parts[1], parts.slice(2).join(' ')));
+        }
+
+        // ── $contacts ──
+        if (/^\$contacts$/i.test(text)) {
+            return reply(getContactsList());
+        }
+
+        // ── $socket / $ws ──
+        if (/^\$(socket|ws)$/i.test(text)) {
+            return reply(await getBotState(sock, 'socket'));
+        }
+
+        // ── $perf <code> ──
+        if (/^\$perf\s+/i.test(text)) {
+            const code = text.replace(/^\$perf\s+/i, '').trim();
+            return reply(await runPerf(code, { sock, msg, from }));
+        }
+
+        // ── $ <terminal command> ──
+        if (/^\$\s+/.test(text) || text.startsWith('$ ')) {
+            const cmd = text.replace(/^\$\s+/, '').trim();
+            if (!cmd) return reply('❓ Format: $ <command>');
+
+            const { output, error } = await runTerminal(cmd);
+            const res = `*💻 Terminal:*\n\`\`\`\n${output}\n\`\`\`${error ? '\n⚠️ (stderr/error)' : ''}`;
+            addToHistory('terminal', cmd, output.slice(0, 100), Date.now() - start);
+            return reply(res);
+        }
+
+        // ── JS Eval ──
+        if (!isSafe(text)) {
+            return reply('🛡️ *Safe Mode:* Code hii imezuiwa kwa usalama.');
+        }
+
+        const result  = await runEval(text, { sock, msg, from });
+        const output  = formatOutput(result);
+        const timeMs  = Date.now() - start;
+
+        addToHistory('eval', text, output, timeMs);
+
+        return reply(
+            `*✅ Result* (${timeMs}ms)\n\n` +
+            `\`\`\`\n${truncate(output, 3000)}\n\`\`\``
+        );
+
+    } catch (err) {
+        const timeMs = Date.now() - start;
+        addToHistory('error', text, err.message, timeMs);
+
+        const stack = err.stack
+            ? truncate(err.stack, 1500)
+            : err.message;
+
+        return reply(
+            `*❌ Error* (${timeMs}ms)\n\n` +
+            `\`\`\`\n${stack}\n\`\`\``
+        );
+    }
+}
