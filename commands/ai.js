@@ -7,54 +7,92 @@ import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { GoogleGenAI } from '@google/genai';
 
-// Singleton PostgreSQL Pool
-global.dbPool ||= new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
-const pool = global.dbPool;
+const logger = pino({ level: 'info' });
+
+// Singleton PostgreSQL Pool ikiwa na ulinzi wa Error handling ya ngazi ya juu
+let pool;
+try {
+    global.dbPool ||= new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        max: 20, // Limit connections kuzuia database kujaa
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 2000,
+    });
+    pool = global.dbPool;
+
+    pool.on('error', (err) => {
+        logger.error('Unexpected error on idle PostgreSQL client:', err.message);
+    });
+} catch (e) {
+    logger.error('PostgreSQL Pool initialization failed critically:', e.message);
+}
 
 const MAX_HISTORY    = 20;
 const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const logger         = pino({ level: 'info' });
 
-// Gemini SDK client (singleton)
-const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+// Gemini SDK client yenye ulinzi wa uanzishwaji
+let genai = null;
+try {
+    if (GEMINI_API_KEY) {
+        genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    } else {
+        logger.warn('GEMINI_API_KEY haipo kwenye mazingira (.env)');
+    }
+} catch (e) {
+    logger.error('Gemini SDK client initialization failed:', e.message);
+}
 
 // ════════════════════════════════════════════════
-//   🧠 MEMORY — PostgreSQL
+//   🧠 MEMORY — PostgreSQL (Ulinzi wa Hali ya Juu)
 // ════════════════════════════════════════════════
 async function initMemoryTable() {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS ai_memory (
-            user_id TEXT PRIMARY KEY,
-            history JSONB NOT NULL DEFAULT '[]'
-        )
-    `);
+    if (!pool) return;
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_memory (
+                user_id TEXT PRIMARY KEY,
+                history JSONB NOT NULL DEFAULT '[]'
+            )
+        `);
+    } catch (err) {
+        logger.error('Memory table init error:', err.message);
+    }
 }
-initMemoryTable().catch(err => logger.error('Memory table init error:', err));
+initMemoryTable().catch(err => logger.error('Memory table unhandled promise rejection:', err.message));
 
 async function getHistory(userId) {
-    const res = await pool.query(
-        'SELECT history FROM ai_memory WHERE user_id = $1', [userId]
-    );
-    return res.rows[0]?.history || [];
+    if (!pool) return [];
+    try {
+        const res = await pool.query(
+            'SELECT history FROM ai_memory WHERE user_id = $1', [userId]
+        );
+        return res.rows[0]?.history || [];
+    } catch (err) {
+        logger.error(`Failed to fetch history for user ${userId}:`, err.message);
+        return []; // Fallback ya amani ili asicrash
+    }
 }
 
 async function saveConversation(userId, userMsg, aiMsg) {
-    const history = await getHistory(userId);
-    history.push(
-        { role: 'user',      content: userMsg },
-        { role: 'assistant', content: aiMsg   }
-    );
-    const trimmed = history.slice(-MAX_HISTORY);
-    await pool.query(`
-        INSERT INTO ai_memory (user_id, history)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE
-        SET history = EXCLUDED.history
-    `, [userId, JSON.stringify(trimmed)]);
+    if (!pool) return;
+    try {
+        const history = await getHistory(userId);
+        history.push(
+            { role: 'user',      content: userMsg },
+            { role: 'assistant', content: aiMsg   }
+        );
+        const trimmed = history.slice(-MAX_HISTORY);
+        await pool.query(`
+            INSERT INTO ai_memory (user_id, history)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE
+            SET history = EXCLUDED.history
+        `, [userId, JSON.stringify(trimmed)]);
+    } catch (err) {
+        logger.error(`Failed to save conversation for user ${userId}:`, err.message);
+    }
 }
 
 // =====================
@@ -78,34 +116,42 @@ const SYSTEM = `Wewe ni 26 Tech AI, mshirika wa kiakili aliyetengenezwa na 26 Te
 
 *Kumbuka: Wewe ni 26 Tech AI—mwenye akili ya kubadilika kulingana na mazingira (flexible), fupi, na mwenye mamlaka.*`;
 
-
 // ════════════════════════════════════════════════
 //   ⚡ AI PROVIDERS — Text
 // ════════════════════════════════════════════════
 
 // ── 1. GEMINI (via @google/genai SDK) — PRIMARY ──
 async function callGemini(messages) {
-    if (!genai) throw new Error('GEMINI_API_KEY haipo');
+    if (!genai) throw new Error('GEMINI_API_KEY haipo au haikuanzishwa vizuri');
 
-    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-    const turns     = messages.filter(m => m.role !== 'system');
+    try {
+        const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+        const turns     = messages.filter(m => m.role !== 'system');
 
-    const contents = turns.map(m => ({
-        role:  m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-    }));
+        const contents = turns.map(m => ({
+            role:  m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content || '' }]
+        }));
 
-    const response = await genai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        systemInstruction: systemMsg,
-        contents,
-        config: {
-            temperature:     0.3,
-            maxOutputTokens: 2048
+        const response = await genai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents,
+            config: {
+                systemInstruction: systemMsg,
+                temperature:     0.3,
+                maxOutputTokens: 2048
+            }
+        });
+
+        if (!response || !response.text) {
+            throw new Error('Gemini API imerudisha jibu tupu (empty response)');
         }
-    });
 
-    return response.text;
+        return response.text;
+    } catch (e) {
+        logger.error(`Error ya ndani kwenye callGemini: ${e.message}`);
+        throw e; // Tupia juu ili router idake na kufanya fallback kwenda kwa Groq
+    }
 }
 
 // ── 2. GROQ (fallback) ──
@@ -129,9 +175,12 @@ async function callGroq(messages) {
             }),
             signal: controller.signal
         });
-        if (!res.ok) throw new Error(`Groq failed: ${res.status}`);
+        if (!res.ok) throw new Error(`Groq HTTP error! status: ${res.status}`);
         const data = await res.json();
-        return data.choices?.[0]?.message?.content;
+        return data.choices?.[0]?.message?.content || null;
+    } catch (e) {
+        logger.error(`Error ya ndani kwenye callGroq: ${e.message}`);
+        throw e;
     } finally {
         clearTimeout(timer);
     }
@@ -145,7 +194,7 @@ async function aiRouter(messages) {
             const result = await callGemini(messages);
             if (result) return result;
         } catch (e) {
-            logger.warn(`Gemini failed (${e.message}) — trying Groq...`);
+            logger.warn(`Gemini failed (${e.message}) — ikihama kwenda kwa Groq...`);
         }
     }
 
@@ -155,7 +204,7 @@ async function aiRouter(messages) {
             const result = await callGroq(messages);
             if (result) return result;
         } catch (e) {
-            logger.warn(`Groq failed (${e.message})`);
+            logger.error(`Groq pia imefeli kwenye Router (${e.message})`);
         }
     }
 
@@ -166,43 +215,49 @@ async function aiRouter(messages) {
 //   🖼️ IMAGE ANALYSIS — Gemini Vision
 // ════════════════════════════════════════════════
 async function analyzeImage(imageBuffer, mimeType, userQuestion) {
-    if (!genai) throw new Error('GEMINI_API_KEY haipo — image analysis haiwezekani');
+    if (!genai) throw new Error('GEMINI_API_KEY haipo au haikuanzishwa — image analysis haiwezekani');
 
-    const base64 = imageBuffer.toString('base64');
-    const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
+    try {
+        const base64 = imageBuffer.toString('base64');
+        const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
 
-    const response = await genai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        systemInstruction: SYSTEM,
-        contents: [{
-            role: 'user',
-            parts: [
-                { inlineData: { mimeType, data: base64 } },
-                { text: prompt }
-            ]
-        }],
-        config: { temperature: 0.4, maxOutputTokens: 2048 }
-    });
+        const response = await genai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType, data: base64 } },
+                    { text: prompt }
+                ]
+            }],
+            config: { 
+                systemInstruction: SYSTEM,
+                temperature: 0.4, 
+                maxOutputTokens: 2048 
+            }
+        });
 
-    const text = response.text;
-    if (!text) throw new Error('Gemini haikutoa jibu la picha');
+        const text = response?.text;
+        if (!text) throw new Error('Gemini haikutoa jibu lolote la picha');
 
-    return { result: text, provider: 'Gemini Vision' };
+        return { result: text, provider: 'Gemini Vision' };
+    } catch (e) {
+        logger.error(`Internal error kwenye analyzeImage: ${e.message}`);
+        throw e;
+    }
 }
 
 // ════════════════════════════════════════════════
 //   🎤 VOICE NOTE — Gemini Audio → Groq Whisper
 // ════════════════════════════════════════════════
 async function transcribeAudio(audioBuffer, mimeType) {
-
-    // ── 1. Gemini Audio (inbulid transcription) — PRIMARY ──
+    // ── 1. Gemini Audio (inbuilt transcription) — PRIMARY ──
     if (genai) {
         try {
             const base64 = audioBuffer.toString('base64');
 
             const response = await genai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                systemInstruction: SYSTEM,
                 contents: [{
                     role: 'user',
                     parts: [
@@ -210,18 +265,24 @@ async function transcribeAudio(audioBuffer, mimeType) {
                         { text: 'Transcribe kwa usahihi maneno yote yaliyosemwa kwenye audio hii. Toa maandishi tu bila maelezo mengine.' }
                     ]
                 }],
-                config: { temperature: 0.1, maxOutputTokens: 2048 }
+                config: { 
+                    systemInstruction: SYSTEM,
+                    temperature: 0.1, 
+                    maxOutputTokens: 2048 
+                }
             });
 
-            const text = response.text?.trim();
+            const text = response?.text?.trim();
             if (text) return { transcript: text, provider: 'Gemini Audio' };
         } catch (e) {
-            logger.warn(`Gemini Audio failed (${e.message}) — trying Groq Whisper...`);
+            logger.warn(`Gemini Audio failed (${e.message}) — ikihamia kwa Groq Whisper...`);
         }
     }
 
     // ── 2. Groq Whisper — fallback ──
     if (GROQ_API_KEY) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 60000);
         try {
             const formData = new FormData();
             const blob     = new Blob([audioBuffer], { type: mimeType });
@@ -229,27 +290,25 @@ async function transcribeAudio(audioBuffer, mimeType) {
             formData.append('model', 'whisper-large-v3');
             formData.append('response_format', 'text');
 
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 60000);
-
             const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
                 method:  'POST',
                 headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
                 body:    formData,
                 signal:  controller.signal
             });
-            clearTimeout(timer);
 
-            if (!res.ok) throw new Error(`Groq Whisper: ${res.status}`);
+            if (!res.ok) throw new Error(`Groq Whisper standard failed: ${res.status}`);
             const text = await res.text();
             if (text?.trim()) return { transcript: text.trim(), provider: 'Groq Whisper' };
         } catch (e) {
-            logger.warn(`Groq Whisper failed: ${e.message}`);
-            throw new Error(`Transcription imeshindwa: ${e.message}`);
+            logger.error(`Groq Whisper integration failure: ${e.message}`);
+            throw new Error(`Transcription imeshindwa kabisa kwenye mifumo yote: ${e.message}`);
+        } finally {
+            clearTimeout(timer);
         }
     }
 
-    throw new Error('Hakuna transcription provider — weka GEMINI_API_KEY au GROQ_API_KEY');
+    throw new Error('Hakuna transcription provider inayopatikana — weka GEMINI_API_KEY au GROQ_API_KEY');
 }
 
 // ════════════════════════════════════════════════
@@ -260,10 +319,9 @@ async function handlePhoto(sock, msg, from, commandText) {
     try {
         sharp = (await import('sharp')).default;
     } catch {
-        await sock.sendMessage(from,
-            { text: '❌ sharp haipo — run: npm install sharp' },
-            { quoted: msg }
-        );
+        try {
+            await sock.sendMessage(from, { text: '❌ sharp haipo — run: npm install sharp' }, { quoted: msg });
+        } catch (se) { logger.error('Failed to send missing sharp warning:', se.message); }
         return true;
     }
 
@@ -272,13 +330,15 @@ async function handlePhoto(sock, msg, from, commandText) {
         msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
 
     if (!imageMsg) {
-        await sock.sendMessage(from, {
-            text: '📸 Tuma picha pamoja na command:\n' +
-                  '*.photo blur* — blur\n' +
-                  '*.photo gray* — grayscale\n' +
-                  '*.photo rotate* — rotate 90°\n' +
-                  '*.photo enhance* — resize/sharpen'
-        }, { quoted: msg });
+        try {
+            await sock.sendMessage(from, {
+                text: '📸 Tuma picha pamoja na command:\n' +
+                      '*.photo blur* — blur\n' +
+                      '*.photo gray* — grayscale\n' +
+                      '*.photo rotate* — rotate 90°\n' +
+                      '*.photo enhance* — resize/sharpen'
+            }, { quoted: msg });
+        } catch (se) { logger.error('Failed to send photo command guidance:', se.message); }
         return true;
     }
 
@@ -300,8 +360,10 @@ async function handlePhoto(sock, msg, from, commandText) {
             { quoted: msg }
         );
     } catch (e) {
-        logger.error('Photo edit error:', e.message);
-        await sock.sendMessage(from, { text: '❌ Photo edit imeshindwa' }, { quoted: msg });
+        logger.error('Photo edit processing error:', e.message);
+        try {
+            await sock.sendMessage(from, { text: '❌ Photo edit imeshindwa' }, { quoted: msg });
+        } catch (se) { logger.error('Failed to send photo failure message:', se.message); }
     }
 
     return true;
@@ -317,12 +379,8 @@ async function handleVoiceNote(sock, msg, from, sender) {
 
     if (!audioMsg) return false;
 
-    await sock.sendMessage(from,
-        { text: '🎤 _Ninasikia voice note yako..._' },
-        { quoted: msg }
-    );
-
     try {
+        await sock.sendMessage(from, { text: '🎤 _Ninasikia voice note yako..._' }, { quoted: msg });
         await sock.sendPresenceUpdate('composing', from);
 
         const stream = await downloadContentFromMessage(audioMsg, 'audio');
@@ -330,10 +388,9 @@ async function handleVoiceNote(sock, msg, from, sender) {
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
         const { transcript, provider } = await transcribeAudio(buffer, 'audio/ogg; codecs=opus');
-
         logger.info(`Voice transcribed by ${provider}: ${transcript.substring(0, 50)}...`);
 
-        const history  = await getHistory(sender).catch(() => []);
+        const history  = await getHistory(sender);
         const messages = [
             { role: 'system',    content: SYSTEM },
             ...history,
@@ -341,7 +398,7 @@ async function handleVoiceNote(sock, msg, from, sender) {
         ];
 
         const aiReply = await aiRouter(messages);
-        if (!aiReply) throw new Error('Jibu tupu');
+        if (!aiReply) throw new Error('Jibu la AI limekuja tupu');
 
         const typingDelay = Math.min(aiReply.length * 30, 4000);
         await new Promise(resolve => setTimeout(resolve, typingDelay));
@@ -354,11 +411,10 @@ async function handleVoiceNote(sock, msg, from, sender) {
         }, { quoted: msg });
 
     } catch (err) {
-        logger.error('Voice note error:', err.message);
-        await sock.sendMessage(from,
-            { text: `❌ Voice note imeshindwa: ${err.message}` },
-            { quoted: msg }
-        );
+        logger.error('Voice note failure inside handler:', err.message);
+        try {
+            await sock.sendMessage(from, { text: `❌ Voice note imeshindwa: ${err.message}` }, { quoted: msg });
+        } catch (se) { logger.error('Failed to send audio fallback notification:', se.message); }
     } finally {
         await sock.sendPresenceUpdate('paused', from).catch(() => {});
     }
@@ -376,12 +432,8 @@ async function handleImageAnalysis(sock, msg, from, sender, userQuestion) {
 
     if (!imageMsg) return false;
 
-    await sock.sendMessage(from,
-        { text: '🔍 _Ninaangalia picha yako..._' },
-        { quoted: msg }
-    );
-
     try {
+        await sock.sendMessage(from, { text: '🔍 _Ninaangalia picha yako..._' }, { quoted: msg });
         await sock.sendPresenceUpdate('composing', from);
 
         const stream = await downloadContentFromMessage(imageMsg, 'image');
@@ -389,24 +441,18 @@ async function handleImageAnalysis(sock, msg, from, sender, userQuestion) {
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
         const mimeType = imageMsg.mimetype || 'image/jpeg';
-
         const { result, provider } = await analyzeImage(buffer, mimeType, userQuestion);
 
         logger.info(`Image analyzed by ${provider}`);
-
         const question = userQuestion || 'Eleza picha hii';
         await saveConversation(sender, `[Picha]: ${question}`, result);
 
-        await sock.sendMessage(from, {
-            text: `🖼️ *26 Tech AI — Image Analysis*\n\n${result}`
-        }, { quoted: msg });
-
+        await sock.sendMessage(from, { text: `🖼️ *26 Tech AI — Image Analysis*\n\n${result}` }, { quoted: msg });
     } catch (err) {
-        logger.error('Image analysis error:', err.message);
-        await sock.sendMessage(from,
-            { text: `❌ Image analysis imeshindwa: ${err.message}` },
-            { quoted: msg }
-        );
+        logger.error('Image analysis failure inside handler:', err.message);
+        try {
+            await sock.sendMessage(from, { text: `❌ Image analysis imeshindwa: ${err.message}` }, { quoted: msg });
+        } catch (se) { logger.error('Failed to send vision fallback notification:', se.message); }
     } finally {
         await sock.sendPresenceUpdate('paused', from).catch(() => {});
     }
@@ -424,107 +470,107 @@ export const alias       = ['bot'];
 export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
-    const from     = msg.key.remoteJid;
-    const sender   = msg.key.participant || from;
-    const fullText = (
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        ''
-    ).trim();
-
-    // ── 1. Photo editor (.photo) ──
-    if (fullText.startsWith('.photo')) {
-        return await handlePhoto(sock, msg, from, fullText);
-    }
-
-    // ── 2. Voice note ──
-    const hasAudio =
-        !!msg.message?.audioMessage ||
-        !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
-
-    if (hasAudio) {
-        return await handleVoiceNote(sock, msg, from, sender);
-    }
-
-    // ── 3. Image analysis ──
-    const hasImage =
-        !!msg.message?.imageMessage ||
-        !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
-
-    if (hasImage) {
-        const imageCaption =
-            msg.message?.imageMessage?.caption ||
-            fullText.replace(/^\.(ai|bot)\s*/i, '').trim() ||
-            '';
-        return await handleImageAnalysis(sock, msg, from, sender, imageCaption);
-    }
-
-    // ── 4. Text AI ──
-    if (!fullText) return false;
-
-    const contextInfo       = msg.message?.extendedTextMessage?.contextInfo;
-    const quotedParticipant = contextInfo?.participant   || '';
-    const quotedStanzaId    = contextInfo?.stanzaId      || '';
-
-    const botId        = sock.user?.id  || '';
-    const botLid       = sock.user?.lid || '';
-    const botNumber    = botId.replace(/:.*@/, '').replace(/@.*/, '');
-    const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
-
-    const isDM           = !from.endsWith('@g.us');
-    const isReplyInDM    = isDM && !!quotedStanzaId;
-    const isReplyInGroup = Boolean(
-        (botNumber    && quotedParticipant.includes(botNumber))    ||
-        (botLidNumber && quotedParticipant.includes(botLidNumber))
-    );
-    const isReplyToBot = isReplyInDM || isReplyInGroup;
-    const hasPrefix    = /^\.(ai|bot)\s*/i.test(fullText);
-
-    if (!hasPrefix && !isReplyToBot) return false;
-
-    let query = fullText.replace(/^\.(ai|bot)\s*/i, '').trim();
-    if (isReplyToBot && !hasPrefix) query = fullText;
-
-    if (!query) {
-        await sock.sendMessage(from,
-            { text: '💬 Tumia: *.ai swali lako*\nAu tuma picha/voice note — nitaichakata!' },
-            { quoted: msg }
-        );
-        return true;
-    }
-
     try {
-        await sock.sendPresenceUpdate('composing', from);
+        const from     = msg?.key?.remoteJid;
+        if (!from) return false; // Usalama dhidi ya ujumbe mbovu usio na jid
 
-        const history  = await getHistory(sender).catch(() => []);
-        const messages = [
-            { role: 'system',    content: SYSTEM },
-            ...history,
-            { role: 'user',      content: query }
-        ];
+        const sender   = msg.key.participant || from;
+        const fullText = (
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            ''
+        ).trim();
 
-        const reply = await aiRouter(messages);
-        if (!reply) throw new Error('Jibu tupu');
+        // ── 1. Photo editor (.photo) ──
+        if (fullText.startsWith('.photo')) {
+            return await handlePhoto(sock, msg, from, fullText);
+        }
 
-        const typingDelay = Math.min(reply.length * 30, 4000);
-        await new Promise(resolve => setTimeout(resolve, typingDelay));
+        // ── 2. Voice note ──
+        const hasAudio =
+            !!msg.message?.audioMessage ||
+            !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
 
-        await saveConversation(sender, query, reply);
+        if (hasAudio) {
+            return await handleVoiceNote(sock, msg, from, sender);
+        }
 
-        await sock.sendMessage(from,
-            { text: `🤖 *26 Tech AI*\n\n${reply}` },
-            { quoted: msg }
+        // ── 3. Image analysis ──
+        const hasImage =
+            !!msg.message?.imageMessage ||
+            !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+
+        if (hasImage) {
+            const imageCaption =
+                msg.message?.imageMessage?.caption ||
+                fullText.replace(/^\.(ai|bot)\s*/i, '').trim() ||
+                '';
+            return await handleImageAnalysis(sock, msg, from, sender, imageCaption);
+        }
+
+        // ── 4. Text AI ──
+        if (!fullText) return false;
+
+        const contextInfo       = msg.message?.extendedTextMessage?.contextInfo;
+        const quotedParticipant = contextInfo?.participant   || '';
+        const quotedStanzaId    = contextInfo?.stanzaId      || '';
+
+        const botId        = sock?.user?.id  || '';
+        const botLid       = sock?.user?.lid || '';
+        const botNumber    = botId.replace(/:.*@/, '').replace(/@.*/, '');
+        const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
+
+        const isDM           = !from.endsWith('@g.us');
+        const isReplyInDM    = isDM && !!quotedStanzaId;
+        const isReplyInGroup = Boolean(
+            (botNumber    && quotedParticipant.includes(botNumber))    ||
+            (botLidNumber && quotedParticipant.includes(botLidNumber))
         );
+        const isReplyToBot = isReplyInDM || isReplyInGroup;
+        const hasPrefix    = /^\.(ai|bot)\s*/i.test(fullText);
 
-    } catch (err) {
-        logger.error('AI error: %s', err.message);
-        await sock.sendMessage(from,
-            { text: `❌ AI imeshindwa: ${err.message}` },
-            { quoted: msg }
-        );
-    } finally {
-        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+        if (!hasPrefix && !isReplyToBot) return false;
+
+        let query = fullText.replace(/^\.(ai|bot)\s*/i, '').trim();
+        if (isReplyToBot && !hasPrefix) query = fullText;
+
+        if (!query) {
+            await sock.sendMessage(from,
+                { text: '💬 Tumia: *.ai swali lako*\nAu tuma picha/voice note — nitaichakata!' },
+                { quoted: msg }
+            );
+            return true;
+        }
+
+        try {
+            await sock.sendPresenceUpdate('composing', from);
+
+            const history  = await getHistory(sender);
+            const messages = [
+                { role: 'system',    content: SYSTEM },
+                ...history,
+                { role: 'user',      content: query }
+            ];
+
+            const reply = await aiRouter(messages);
+            if (!reply) throw new Error('Jibu la router limekuja tupu kabisa');
+
+            const typingDelay = Math.min(reply.length * 30, 4000);
+            await new Promise(resolve => setTimeout(resolve, typingDelay));
+
+            await saveConversation(sender, query, reply);
+
+            await sock.sendMessage(from, { text: `🤖 *26 Tech AI*\n\n${reply}` }, { quoted: msg });
+        } catch (err) {
+            logger.error('Text AI inner logic error:', err.message);
+            await sock.sendMessage(from, { text: `❌ AI imeshindwa: ${err.message}` }, { quoted: msg });
+        } finally {
+            await sock.sendPresenceUpdate('paused', from).catch(() => {});
+        }
+
+        return true;
+    } catch (criticalErr) {
+        logger.error('CRITICAL TOP-LEVEL CRASH PREVENTED in execute():', criticalErr.message);
+        return false;
     }
-
-    return true;
 }
