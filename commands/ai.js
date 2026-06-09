@@ -5,6 +5,7 @@ dotenv.config();
 import { Pool } from 'pg';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
+import { GoogleGenAI } from '@google/genai';
 
 // Singleton PostgreSQL Pool
 global.dbPool ||= new Pool({
@@ -16,8 +17,10 @@ const pool = global.dbPool;
 const MAX_HISTORY    = 20;
 const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const logger         = pino({ level: 'info' });
+
+// Gemini SDK client (singleton)
+const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 // ════════════════════════════════════════════════
 //   🧠 MEMORY — PostgreSQL
@@ -87,8 +90,35 @@ Siri ya majibu yako ni lazima yawe rahisi kusomeka kwa haraka. Epuka kabisa rund
 //   ⚡ AI PROVIDERS — Text
 // ════════════════════════════════════════════════
 
-// ── 1. GROQ ──
+// ── 1. GEMINI (via @google/genai SDK) — PRIMARY ──
+async function callGemini(messages) {
+    if (!genai) throw new Error('GEMINI_API_KEY haipo');
+
+    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+    const turns     = messages.filter(m => m.role !== 'system');
+
+    const contents = turns.map(m => ({
+        role:  m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+    }));
+
+    const response = await genai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        systemInstruction: systemMsg,
+        contents,
+        config: {
+            temperature:     0.3,
+            maxOutputTokens: 2048
+        }
+    });
+
+    return response.text;
+}
+
+// ── 2. GROQ (fallback) ──
 async function callGroq(messages) {
+    if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY haipo');
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     try {
@@ -114,237 +144,90 @@ async function callGroq(messages) {
     }
 }
 
-// ── 2. GEMINI AUTO-SWITCH ROUTER ──
-function getOptimalGeminiModel(messages) {
-    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || '';
-
-    const complexKeywords = [
-        'code', 'function', 'bug', 'error', 'database', 'postgres',
-        'tengeneza', 'chambua', 'hesabu', 'algorithm', 'buni', 'script',
-        'sql', 'api', 'json', 'server', 'deploy', 'fix'
-    ];
-
-    const isComplex     = complexKeywords.some(k => lastUserMessage.toLowerCase().includes(k));
-    const isLongRequest = lastUserMessage.length > 250;
-
-    if (isComplex || isLongRequest) {
-        logger.info('[Gemini Router]: Swali ni gumu/refu -> gemini-1.5-pro 🧠');
-        return 'gemini-1.5-pro';
-    }
-
-    logger.info('[Gemini Router]: Swali ni jepesi -> gemini-1.5-flash ⚡');
-    return 'gemini-1.5-flash';
-}
-
-async function callGemini(messages) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
-    try {
-        const systemMsg     = messages.find(m => m.role === 'system')?.content || '';
-        const turns         = messages.filter(m => m.role !== 'system');
-        const contents      = turns.map(m => ({
-            role:  m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: m.content }]
-        }));
-        const selectedModel = getOptimalGeminiModel(messages);
-
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    systemInstruction: { parts: [{ text: systemMsg }] },
-                    contents,
-                    generationConfig: {
-                        temperature:     selectedModel === 'gemini-1.5-pro' ? 0.5 : 0.3,
-                        maxOutputTokens: 2048
-                    }
-                }),
-                signal: controller.signal
-            }
-        );
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(`Gemini failed: ${res.status} — ${err.error?.message || ''}`);
-        }
-        const data = await res.json();
-        return data.candidates?.[0]?.content?.parts?.[0]?.text;
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-// ── 3. OPENAI (fallback wa mwisho) ──
-async function callOpenAI(messages) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
-    try {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-            method:  'POST',
-            headers: {
-                'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                'Content-Type':  'application/json'
-            },
-            body: JSON.stringify({
-                model:       'gpt-4o-mini',
-                messages,
-                temperature: 0.5,
-                max_tokens:  2048
-            }),
-            signal: controller.signal
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(`OpenAI failed: ${res.status} — ${err.error?.message || ''}`);
-        }
-        const data = await res.json();
-        return data.choices?.[0]?.message?.content;
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-// ── ROUTER: Groq → Gemini → OpenAI ──
+// ── ROUTER: Gemini → Groq ──
 async function aiRouter(messages) {
-    // 1. Jaribu Groq kwanza
-    if (GROQ_API_KEY) {
-        try {
-            const result = await callGroq(messages);
-            if (result) return result;
-        } catch (e) {
-            logger.warn(`Groq failed (${e.message}) — trying Gemini...`);
-        }
-    }
-
-    // 2. Jaribu Gemini
+    // 1. Jaribu Gemini kwanza
     if (GEMINI_API_KEY) {
         try {
             const result = await callGemini(messages);
             if (result) return result;
         } catch (e) {
-            logger.warn(`Gemini failed (${e.message}) — trying OpenAI...`);
+            logger.warn(`Gemini failed (${e.message}) — trying Groq...`);
         }
     }
 
-    // 3. Jaribu OpenAI kama fallback wa mwisho
-    if (OPENAI_API_KEY) {
+    // 2. Jaribu Groq kama fallback
+    if (GROQ_API_KEY) {
         try {
-            const result = await callOpenAI(messages);
+            const result = await callGroq(messages);
             if (result) return result;
         } catch (e) {
-            logger.warn(`OpenAI failed (${e.message})`);
+            logger.warn(`Groq failed (${e.message})`);
         }
     }
 
-    // Badala ya kutupa error ngumu ya code kwa mtumiaji, mpe ujumbe huu mzuri:
     return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante kwa uvumilivu wako! 🙏`;
 }
 
 // ════════════════════════════════════════════════
-//   🖼️ IMAGE ANALYSIS — Gemini Vision AU OpenAI Vision
+//   🖼️ IMAGE ANALYSIS — Gemini Vision
 // ════════════════════════════════════════════════
 async function analyzeImage(imageBuffer, mimeType, userQuestion) {
+    if (!genai) throw new Error('GEMINI_API_KEY haipo — image analysis haiwezekani');
 
-    // ── Jaribu Gemini Vision kwanza ──
-    if (GEMINI_API_KEY) {
-        try {
-            const base64 = imageBuffer.toString('base64');
-            const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
+    const base64 = imageBuffer.toString('base64');
+    const prompt = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
 
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 30000);
+    const response = await genai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        systemInstruction: SYSTEM,
+        contents: [{
+            role: 'user',
+            parts: [
+                { inlineData: { mimeType, data: base64 } },
+                { text: prompt }
+            ]
+        }],
+        config: { temperature: 0.4, maxOutputTokens: 2048 }
+    });
 
-            const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-                {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        systemInstruction: { parts: [{ text: SYSTEM }] },
-                        contents: [{
-                            role:  'user',
-                            parts: [
-                                { inlineData: { mimeType: mimeType, data: base64 } },
-                                { text: prompt }
-                            ]
-                        }],
-                        generationConfig: { temperature: 0.4, maxOutputTokens: 2048 }
-                    }),
-                    signal: controller.signal
-                }
-            );
-            clearTimeout(timer);
+    const text = response.text;
+    if (!text) throw new Error('Gemini haikutoa jibu la picha');
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(`Gemini Vision: ${res.status} — ${err.error?.message || ''}`);
-            }
-            const data = await res.json();
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) return { result: text, provider: 'Gemini Vision' };
-        } catch (e) {
-            logger.warn(`Gemini Vision failed (${e.message}) — trying OpenAI Vision...`);
-        }
-    }
-
-    // ── Jaribu OpenAI Vision ──
-    if (OPENAI_API_KEY) {
-        try {
-            const base64   = imageBuffer.toString('base64');
-            const dataUrl  = `data:${mimeType};base64,${base64}`;
-            const prompt   = userQuestion || 'Eleza kwa undani kila kitu unachokiona kwenye picha hii.';
-
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 30000);
-
-            const res = await fetch('https://api.openai.com/v1/chat/completions', {
-                method:  'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type':  'application/json'
-                },
-                body: JSON.stringify({
-                    model:      'gpt-4o-mini',
-                    max_tokens: 2048,
-                    messages: [
-                        { role: 'system', content: SYSTEM },
-                        {
-                            role:    'user',
-                            content: [
-                                { type: 'image_url', image_url: { url: dataUrl } },
-                                { type: 'text',      text: prompt }
-                            ]
-                        }
-                    ]
-                }),
-                signal: controller.signal
-            });
-            clearTimeout(timer);
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(`OpenAI Vision: ${res.status} — ${err.error?.message || ''}`);
-            }
-            const data = await res.json();
-            const text = data.choices?.[0]?.message?.content;
-            if (text) return { result: text, provider: 'OpenAI Vision' };
-        } catch (e) {
-            logger.warn(`OpenAI Vision failed: ${e.message}`);
-            throw new Error(`Image analysis imeshindwa: ${e.message}`);
-        }
-    }
-
-    throw new Error('Hakuna provider ya image analysis — weka GEMINI_API_KEY au OPENAI_API_KEY');
+    return { result: text, provider: 'Gemini Vision' };
 }
 
 // ════════════════════════════════════════════════
-//   🎤 VOICE NOTE — Transcribe na Kujibu
-//   Groq Whisper → OpenAI Whisper → fallback
+//   🎤 VOICE NOTE — Gemini Audio → Groq Whisper
 // ════════════════════════════════════════════════
 async function transcribeAudio(audioBuffer, mimeType) {
 
-    // Groq Whisper — haraka na bure
+    // ── 1. Gemini Audio (inbulid transcription) — PRIMARY ──
+    if (genai) {
+        try {
+            const base64 = audioBuffer.toString('base64');
+
+            const response = await genai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                systemInstruction: SYSTEM,
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { inlineData: { mimeType, data: base64 } },
+                        { text: 'Transcribe kwa usahihi maneno yote yaliyosemwa kwenye audio hii. Toa maandishi tu bila maelezo mengine.' }
+                    ]
+                }],
+                config: { temperature: 0.1, maxOutputTokens: 2048 }
+            });
+
+            const text = response.text?.trim();
+            if (text) return { transcript: text, provider: 'Gemini Audio' };
+        } catch (e) {
+            logger.warn(`Gemini Audio failed (${e.message}) — trying Groq Whisper...`);
+        }
+    }
+
+    // ── 2. Groq Whisper — fallback ──
     if (GROQ_API_KEY) {
         try {
             const formData = new FormData();
@@ -368,39 +251,12 @@ async function transcribeAudio(audioBuffer, mimeType) {
             const text = await res.text();
             if (text?.trim()) return { transcript: text.trim(), provider: 'Groq Whisper' };
         } catch (e) {
-            logger.warn(`Groq Whisper failed (${e.message}) — trying OpenAI Whisper...`);
-        }
-    }
-
-    // OpenAI Whisper — fallback
-    if (OPENAI_API_KEY) {
-        try {
-            const formData = new FormData();
-            const blob     = new Blob([audioBuffer], { type: mimeType });
-            formData.append('file',  blob, 'audio.ogg');
-            formData.append('model', 'whisper-1');
-
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 60000);
-
-            const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-                method:  'POST',
-                headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-                body:    formData,
-                signal:  controller.signal
-            });
-            clearTimeout(timer);
-
-            if (!res.ok) throw new Error(`OpenAI Whisper: ${res.status}`);
-            const data = await res.json();
-            if (data.text?.trim()) return { transcript: data.text.trim(), provider: 'OpenAI Whisper' };
-        } catch (e) {
-            logger.warn(`OpenAI Whisper failed: ${e.message}`);
+            logger.warn(`Groq Whisper failed: ${e.message}`);
             throw new Error(`Transcription imeshindwa: ${e.message}`);
         }
     }
 
-    throw new Error('Hakuna transcription provider — weka GROQ_API_KEY au OPENAI_API_KEY');
+    throw new Error('Hakuna transcription provider — weka GEMINI_API_KEY au GROQ_API_KEY');
 }
 
 // ════════════════════════════════════════════════
@@ -468,7 +324,6 @@ async function handleVoiceNote(sock, msg, from, sender) {
 
     if (!audioMsg) return false;
 
-    // Tuma "inasikiliza..." ili mtumiaji ajue
     await sock.sendMessage(from,
         { text: '🎤 _Ninasikia voice note yako..._' },
         { quoted: msg }
@@ -477,17 +332,14 @@ async function handleVoiceNote(sock, msg, from, sender) {
     try {
         await sock.sendPresenceUpdate('composing', from);
 
-        // Download audio
         const stream = await downloadContentFromMessage(audioMsg, 'audio');
         let   buffer = Buffer.from([]);
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
-        // Transcribe
         const { transcript, provider } = await transcribeAudio(buffer, 'audio/ogg; codecs=opus');
 
         logger.info(`Voice transcribed by ${provider}: ${transcript.substring(0, 50)}...`);
 
-        // Ongeza transcript kwenye history na ujibu
         const history  = await getHistory(sender).catch(() => []);
         const messages = [
             { role: 'system',    content: SYSTEM },
@@ -503,7 +355,6 @@ async function handleVoiceNote(sock, msg, from, sender) {
 
         await saveConversation(sender, `[Voice]: ${transcript}`, aiReply);
 
-        // Tuma transcript + jibu
         await sock.sendMessage(from, {
             text: `🎤 *Ulisema:*\n_${transcript}_\n\n` +
                   `🤖 *26 Tech AI:*\n\n${aiReply}`
@@ -532,7 +383,6 @@ async function handleImageAnalysis(sock, msg, from, sender, userQuestion) {
 
     if (!imageMsg) return false;
 
-    // Tuma "inaangalia..." ili mtumiaji ajue
     await sock.sendMessage(from,
         { text: '🔍 _Ninaangalia picha yako..._' },
         { quoted: msg }
@@ -541,19 +391,16 @@ async function handleImageAnalysis(sock, msg, from, sender, userQuestion) {
     try {
         await sock.sendPresenceUpdate('composing', from);
 
-        // Download picha
         const stream = await downloadContentFromMessage(imageMsg, 'image');
         let   buffer = Buffer.from([]);
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
         const mimeType = imageMsg.mimetype || 'image/jpeg';
 
-        // Analyze
         const { result, provider } = await analyzeImage(buffer, mimeType, userQuestion);
 
         logger.info(`Image analyzed by ${provider}`);
 
-        // Hifadhi kwenye history
         const question = userQuestion || 'Eleza picha hii';
         await saveConversation(sender, `[Picha]: ${question}`, result);
 
@@ -597,7 +444,7 @@ export async function execute(sock, msg, args) {
         return await handlePhoto(sock, msg, from, fullText);
     }
 
-    // ── 2. Voice note — audio message iliyotumwa moja kwa moja ──
+    // ── 2. Voice note ──
     const hasAudio =
         !!msg.message?.audioMessage ||
         !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
@@ -606,13 +453,12 @@ export async function execute(sock, msg, args) {
         return await handleVoiceNote(sock, msg, from, sender);
     }
 
-    // ── 3. Image analysis — picha iliyotumwa na caption au reply ──
+    // ── 3. Image analysis ──
     const hasImage =
         !!msg.message?.imageMessage ||
         !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
 
     if (hasImage) {
-        // Pata swali la mtumiaji kuhusu picha (kama lipo)
         const imageCaption =
             msg.message?.imageMessage?.caption ||
             fullText.replace(/^\.(ai|bot)\s*/i, '').trim() ||
@@ -623,7 +469,6 @@ export async function execute(sock, msg, args) {
     // ── 4. Text AI ──
     if (!fullText) return false;
 
-    // Reply detection
     const contextInfo       = msg.message?.extendedTextMessage?.contextInfo;
     const quotedParticipant = contextInfo?.participant   || '';
     const quotedStanzaId    = contextInfo?.stanzaId      || '';
@@ -633,8 +478,8 @@ export async function execute(sock, msg, args) {
     const botNumber    = botId.replace(/:.*@/, '').replace(/@.*/, '');
     const botLidNumber = botLid.replace(/:.*@/, '').replace(/@.*/, '');
 
-    const isDM          = !from.endsWith('@g.us');
-    const isReplyInDM   = isDM && !!quotedStanzaId;
+    const isDM           = !from.endsWith('@g.us');
+    const isReplyInDM    = isDM && !!quotedStanzaId;
     const isReplyInGroup = Boolean(
         (botNumber    && quotedParticipant.includes(botNumber))    ||
         (botLidNumber && quotedParticipant.includes(botLidNumber))
