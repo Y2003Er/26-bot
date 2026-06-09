@@ -51,15 +51,23 @@ function normalizeJid(jid) {
 function isOwner(msg) {
     const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
     const isFromMe = msg.key.fromMe === true;
-    const sender   = normalizeJid(isGroup ? (msg.key.participant || '') : msg.key.remoteJid);
-    const result   = OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
+    const rawJid   = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
+    const sender   = normalizeJid(rawJid);
+
+    // @lid = Linked Device ID — WhatsApp mpya inatumia hii badala ya @s.whatsapp.net
+    // Ujumbe kutoka @lid ni wewe mwenyewe ukitumia linked device
+    const isLidSender = rawJid.endsWith('@lid');
+
+    const result = OWNERS_LIST.includes(sender) || (isGroup && isFromMe) || isLidSender;
 
     console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
     console.log('  remoteJid  :', msg.key.remoteJid);
     console.log('  participant:', msg.key.participant || '(none)');
     console.log('  fromMe     :', isFromMe);
     console.log('  isGroup    :', isGroup);
+    console.log('  rawJid     :', rawJid);
     console.log('  sender     :', sender);
+    console.log('  isLid      :', isLidSender);
     console.log('  OWNERS_LIST:', OWNERS_LIST);
     console.log('  isOwner ✅ :', result);
     console.log('─────────────────────────────────────\n');
