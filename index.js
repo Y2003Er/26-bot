@@ -31,6 +31,15 @@ import {
 import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
 
+// ── Maboresho kwa ajili ya Eval SQL Commands ($db) ──
+import pg from 'pg';
+const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
+global.dbPool = pool;
+// ────────────────────────────────────────────────────
+
 // 🧠 CACHE MAALUM YA KUZUIA MTU ASISPAM AI (RATE LIMITER CHENYE SEKUNDE 10 COOLDOWN)
 const aiCache = new NodeCache({ stdTTL: 10 });
 
