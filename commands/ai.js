@@ -234,11 +234,11 @@ async function aiRouter(messages) {
             if (result) return result;
         } catch (e) {
             logger.warn(`OpenAI failed (${e.message})`);
-            throw new Error(`Providers zote zimeshindwa. OpenAI: ${e.message}`);
         }
     }
 
-    throw new Error('Hakuna AI provider inayofanya kazi — angalia API keys zako');
+    // Badala ya kutupa error ngumu ya code kwa mtumiaji, mpe ujumbe huu mzuri:
+    return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante kwa uvumilivu wako! 🙏`;
 }
 
 // ════════════════════════════════════════════════
