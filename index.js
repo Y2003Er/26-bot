@@ -29,6 +29,10 @@ import {
 
 // ✅ IMPORT YA KIPENGELE CHA ULINZI PEKEE
 import { initGroupProtection } from './commands/admin.js';
+import { handleAntiLink } from './lib/antilink.js';
+
+// 🧠 CACHE MAALUM YA KUZUIA MTU ASISPAM AI (RATE LIMITER CHENYE SEKUNDE 10 COOLDOWN)
+const aiCache = new NodeCache({ stdTTL: 10 });
 
 const logger       = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
@@ -256,7 +260,7 @@ async function startBot() {
                 setupAntiDelete(sock);
                 setupAntiViewOnce(sock);
                 setupAutoStatusViewer(sock);
-                
+
                 // ✅ ANZA KUFUATILIA ULINZI WA KUNDI (Umeshawashwa Hapa)
                 initGroupProtection(sock, logger);
 
@@ -320,6 +324,33 @@ async function startBot() {
             );
 
             console.log(`📩 ${msg.key.remoteJid}: ${text}`);
+
+            // 🔥 CHUMA CHA ANTI-LINK: Kinafuta link ya asiye admin na kumfuata DM kimya kimya
+            await handleAntiLink(sock, msg, logger);
+
+            // 🤖 MFUMO WA AI SMART-MENTION & RATE LIMITER
+            const botNumber = sock.user.id.replace(/:\d+@/, '@');
+            const sender = msg.key.participant || msg.key.remoteJid;
+            
+            const isMentioned = text.toLowerCase().includes('26-tech') || 
+                                msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
+
+            if (isMentioned && !msg.key.fromMe) {
+                if (aiCache.has(sender)) {
+                    return; // Cooldown lock ipo - kausha kulinda API key
+                }
+                
+                aiCache.set(sender, true);
+
+                if (!text.startsWith(global.prefix)) {
+                    if (msg.message.conversation) {
+                        msg.message.conversation = `${global.prefix}ai ${text}`;
+                    } else if (msg.message.extendedTextMessage) {
+                        msg.message.extendedTextMessage.text = `${global.prefix}ai ${text}`;
+                    }
+                }
+            }
+
             await handleMessage(sock, msg);
         });
 
