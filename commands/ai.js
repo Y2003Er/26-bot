@@ -29,7 +29,6 @@ try {
 }
 
 const MAX_HISTORY    = 20;
-const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Gemini SDK client yenye ulinzi wa uanzishwaji
@@ -105,7 +104,7 @@ const SYSTEM = `Wewe ni 26 Tech AI, mshirika wa kiakili aliyetengenezwa na 26 Te
 ### 🧠 MBINU YA KAZI NA UTATUZI (Universal Logic)
 - **Jiongeze Kulingana na Data:** Usikariri sekta moja. Mtumiaji akikupa data ya aina yoyote (maandishi, kodi ya programu, mifumo ya kiufundi, au picha za vifaa), daka muktadha huo haraka, changanua mfumo wake ulivyo, na toa majibu kulingana na muundo wa kile ulichopewa sasa hivi.
 - **Kushika Muktadha (Context Retention):** Fuatilia kwa umakini mkubwa mtiririko wa chat (Chat History). Kama mtumiaji anauliza swali fupi au la kufuatilia (mfano: "Kwanini?", "Which demands?", "Ipi?"), usianzishe mada mpya. Rejea ujumbe uliopita au hitilafu yoyote iliyotokea kwenye mfumo sekunde chache zilizopita na fafanua hapo hapo.
-- **Udhibiti wa Hitilafu (Error Handling):** Kama muktadha unaonyesha kuna hitilafu ya mfumo au API imefeli (mfano: Server Busy/High Demand 503), usijibu kiroboti. Waombe radhi kwa ufupi, fafanua kuwa ni tatizo la seva kupata foleni kwa sekunde hiyo, na uwaambie wajaribu tena au waeleze kwa maandishi.
+- **Udhibiti wa Hitilafu (Error Handling):** Kama muktadha Quran inaonyesha kuna hitilafu ya mfumo au API imefeli (mfano: Server Busy/High Demand 503), usijibu kiroboti. Waombe radhi kwa ufupi, fafanua kuwa ni tatizo la seva kupata foleni kwa sekunde hiyo, na uwaambie wajaribu tena au waeleze kwa maandishi.
 
 ---
 
@@ -154,36 +153,66 @@ async function callGemini(messages) {
     }
 }
 
-// ── 2. GROQ (fallback) ──
+// ── 2. GROQ (Fallback ikiwa na API Rotation kutoka kwenye .env) ──
 async function callGroq(messages) {
-    if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY haipo');
+    const keysRaw = process.env.GROQ_API_KEYS;
+    if (!keysRaw) throw new Error('GROQ_API_KEYS haipo kwenye .env');
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
-    try {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${GROQ_API_KEY}`,
-                'Content-Type':  'application/json'
-            },
-            body: JSON.stringify({
-                model:       'llama-3.3-70b-versatile',
-                messages,
-                temperature: 0.3,
-                max_tokens:  2048
-            }),
-            signal: controller.signal
-        });
-        if (!res.ok) throw new Error(`Groq HTTP error! status: ${res.status}`);
-        const data = await res.json();
-        return data.choices?.[0]?.message?.content || null;
-    } catch (e) {
-        logger.error(`Error ya ndani kwenye callGroq: ${e.message}`);
-        throw e;
-    } finally {
-        clearTimeout(timer);
+    // Tenganisha funguo kuwa array
+    const keys = keysRaw.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) throw new Error('Hakuna API Keys zilizopatikana kwenye GROQ_API_KEYS');
+
+    let keyIndex = 0;
+    let success = false;
+    let aiContent = null;
+
+    // Loop inayozunguka kupitia funguo zako zote 10
+    while (keyIndex < keys.length && !success) {
+        const currentApiKey = keys[keyIndex];
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+
+        try {
+            logger.info(`[Groq Rotation] Tunajaribu kutumia Key namba ${keyIndex + 1}/${keys.length}...`);
+            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${currentApiKey}`,
+                    'Content-Type':  'application/json'
+                },
+                body: JSON.stringify({
+                    model:       'llama-3.3-70b-versatile',
+                    messages,
+                    temperature: 0.3,
+                    max_tokens:  2048
+                }),
+                signal: controller.signal
+            });
+
+            const data = await res.json();
+
+            // Kama imegonga limit au quota
+            if (res.status === 429 || data.error?.type === 'quota_exceeded' || data.error?.code === 'rate_limit_exceeded') {
+                logger.warn(`⚠️ [Groq Rotation] Key namba ${keyIndex + 1} imejaa limit. Tunahamia inayofuata...`);
+                keyIndex++;
+                clearTimeout(timer);
+                continue;
+            }
+
+            if (!res.ok) throw new Error(`Groq HTTP error! status: ${res.status}`);
+            
+            aiContent = data.choices?.[0]?.message?.content || null;
+            success = true;
+        } catch (e) {
+            logger.error(`Error kwenye key namba ${keyIndex + 1}: ${e.message}`);
+            keyIndex++; // Mtandao ukifeli jaribu inayofuata
+        } finally {
+            clearTimeout(timer);
+        }
     }
+
+    if (!success) throw new Error('Akaunti zote za Groq zilizowekwa kwenye .env zimegonga limit!');
+    return aiContent;
 }
 
 // ── ROUTER: Gemini → Groq ──
@@ -198,14 +227,12 @@ async function aiRouter(messages) {
         }
     }
 
-    // 2. Jaribu Groq kama fallback
-    if (GROQ_API_KEY) {
-        try {
-            const result = await callGroq(messages);
-            if (result) return result;
-        } catch (e) {
-            logger.error(`Groq pia imefeli kwenye Router (${e.message})`);
-        }
+    // 2. Jaribu Groq kama fallback (Hapa sasa itazungusha keys 10 zenyewe)
+    try {
+        const result = await callGroq(messages);
+        if (result) return result;
+    } catch (e) {
+        logger.error(`Groq pia imefeli kwenye Router au keys zote zimegonga limit (${e.message})`);
     }
 
     return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante kwa uvumilivu wako! 🙏`;
@@ -248,10 +275,10 @@ async function analyzeImage(imageBuffer, mimeType, userQuestion) {
 }
 
 // ════════════════════════════════════════════════
-//   🎤 VOICE NOTE — Gemini Audio → Groq Whisper
+//   🎤 VOICE NOTE — Gemini Audio → Groq Whisper (with Key Rotation)
 // ════════════════════════════════════════════════
 async function transcribeAudio(audioBuffer, mimeType) {
-    // ── 1. Gemini Audio (inbuilt transcription) — PRIMARY ──
+    // ── 1. Gemini Audio — PRIMARY ──
     if (genai) {
         try {
             const base64 = audioBuffer.toString('base64');
@@ -279,36 +306,54 @@ async function transcribeAudio(audioBuffer, mimeType) {
         }
     }
 
-    // ── 2. Groq Whisper — fallback ──
-    if (GROQ_API_KEY) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 60000);
-        try {
-            const formData = new FormData();
-            const blob     = new Blob([audioBuffer], { type: mimeType });
-            formData.append('file',  blob, 'audio.ogg');
-            formData.append('model', 'whisper-large-v3');
-            formData.append('response_format', 'text');
+    // ── 2. Groq Whisper — Fallback yenye Rotation ya keys zote 10 ──
+    const keysRaw = process.env.GROQ_API_KEYS;
+    if (keysRaw) {
+        const keys = keysRaw.split(',').map(k => k.trim()).filter(Boolean);
+        let keyIndex = 0;
+        
+        while (keyIndex < keys.length) {
+            const currentApiKey = keys[keyIndex];
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 60000);
+            
+            try {
+                const formData = new FormData();
+                const blob     = new Blob([audioBuffer], { type: mimeType });
+                formData.append('file',  blob, 'audio.ogg');
+                formData.append('model', 'whisper-large-v3');
+                formData.append('response_format', 'text');
 
-            const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-                method:  'POST',
-                headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
-                body:    formData,
-                signal:  controller.signal
-            });
+                const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                    method:  'POST',
+                    headers: { 'Authorization': `Bearer ${currentApiKey}` },
+                    body:    formData,
+                    signal:  controller.signal
+                });
 
-            if (!res.ok) throw new Error(`Groq Whisper standard failed: ${res.status}`);
-            const text = await res.text();
-            if (text?.trim()) return { transcript: text.trim(), provider: 'Groq Whisper' };
-        } catch (e) {
-            logger.error(`Groq Whisper integration failure: ${e.message}`);
-            throw new Error(`Transcription imeshindwa kabisa kwenye mifumo yote: ${e.message}`);
-        } finally {
-            clearTimeout(timer);
+                if (res.status === 429) {
+                    logger.warn(`⚠️ [Whisper Rotation] Key namba ${keyIndex + 1} imeishiwa nguvu. Tunasonga mbele...`);
+                    keyIndex++;
+                    clearTimeout(timer);
+                    continue;
+                }
+
+                if (!res.ok) throw new Error(`Groq Whisper standard failed: ${res.status}`);
+                const text = await res.text();
+                if (text?.trim()) {
+                    clearTimeout(timer);
+                    return { transcript: text.trim(), provider: `Groq Whisper (Key ${keyIndex + 1})` };
+                }
+            } catch (e) {
+                logger.error(`Whisper error kwenye key namba ${keyIndex + 1}: ${e.message}`);
+                keyIndex++;
+            } finally {
+                clearTimeout(timer);
+            }
         }
     }
 
-    throw new Error('Hakuna transcription provider inayopatikana — weka GEMINI_API_KEY au GROQ_API_KEY');
+    throw new Error('Transcription imeshindwa kabisa kwenye mifumo yote na keys zote zimegonga limit.');
 }
 
 // ════════════════════════════════════════════════
