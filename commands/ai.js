@@ -114,27 +114,52 @@ async function callGroq(messages) {
     }
 }
 
-// ── 2. GEMINI ──
+// ── 2. GEMINI AUTO-SWITCH ROUTER ──
+function getOptimalGeminiModel(messages) {
+    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+
+    const complexKeywords = [
+        'code', 'function', 'bug', 'error', 'database', 'postgres',
+        'tengeneza', 'chambua', 'hesabu', 'algorithm', 'buni', 'script',
+        'sql', 'api', 'json', 'server', 'deploy', 'fix'
+    ];
+
+    const isComplex     = complexKeywords.some(k => lastUserMessage.toLowerCase().includes(k));
+    const isLongRequest = lastUserMessage.length > 250;
+
+    if (isComplex || isLongRequest) {
+        logger.info('[Gemini Router]: Swali ni gumu/refu -> gemini-1.5-pro 🧠');
+        return 'gemini-1.5-pro';
+    }
+
+    logger.info('[Gemini Router]: Swali ni jepesi -> gemini-1.5-flash ⚡');
+    return 'gemini-1.5-flash';
+}
+
 async function callGemini(messages) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     try {
-        const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-        const turns     = messages.filter(m => m.role !== 'system');
-        const contents  = turns.map(m => ({
+        const systemMsg     = messages.find(m => m.role === 'system')?.content || '';
+        const turns         = messages.filter(m => m.role !== 'system');
+        const contents      = turns.map(m => ({
             role:  m.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: m.content }]
         }));
+        const selectedModel = getOptimalGeminiModel(messages);
 
         const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${GEMINI_API_KEY}`,
             {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    system_instruction: { parts: [{ text: systemMsg }] },
+                    systemInstruction: { parts: [{ text: systemMsg }] },
                     contents,
-                    generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+                    generationConfig: {
+                        temperature:     selectedModel === 'gemini-1.5-pro' ? 0.5 : 0.3,
+                        maxOutputTokens: 2048
+                    }
                 }),
                 signal: controller.signal
             }
@@ -236,11 +261,11 @@ async function analyzeImage(imageBuffer, mimeType, userQuestion) {
                     method:  'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        system_instruction: { parts: [{ text: SYSTEM }] },
+                        systemInstruction: { parts: [{ text: SYSTEM }] },
                         contents: [{
                             role:  'user',
                             parts: [
-                                { inline_data: { mime_type: mimeType, data: base64 } },
+                                { inlineData: { mimeType: mimeType, data: base64 } },
                                 { text: prompt }
                             ]
                         }],
