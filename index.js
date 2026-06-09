@@ -27,6 +27,9 @@ import {
     deleteAllSessions
 } from './session-db.js';
 
+// ✅ IMPORT YA KIPENGELE CHA ULINZI PEKEE
+import { initGroupProtection } from './commands/admin.js';
+
 const logger       = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID   = process.env.SESSION_ID || '26_tech_v5';
@@ -253,6 +256,9 @@ async function startBot() {
                 setupAntiDelete(sock);
                 setupAntiViewOnce(sock);
                 setupAutoStatusViewer(sock);
+                
+                // ✅ ANZA KUFUATILIA ULINZI WA KUNDI (Umeshawashwa Hapa)
+                initGroupProtection(sock, logger);
 
                 log.div();
                 log.success('BOT IMEUNGANIKA ✔');
@@ -280,8 +286,6 @@ async function startBot() {
                     log.warn('Connection replaced (440) — restarting in 15s...');
                     setTimeout(startBot, 15000);
                 } else if (code === DisconnectReason.loggedOut || code === 401) {
-                    // ✅ HAKUNA deleteSession hapa — session inabaki salama
-                    // Kufuta session: weka CLEAN_SESSIONS=true kwenye .env/Railway kisha restart
                     log.warn('Code 401 — restarting bila kufuta session...');
                     log.warn('(Kama unataka fresh login: weka CLEAN_SESSIONS=true kwenye Railway)');
                     setTimeout(startBot, 10000);
@@ -347,8 +351,6 @@ async function startBot() {
         await initializeDatabase();
         updateBanner('database', '✅ Connected');
 
-        // ✅ Session inafutwa MANUAL TU — weka CLEAN_SESSIONS=true kwenye Railway
-        // Baada ya login mpya, irudi CLEAN_SESSIONS=false au ifute kabisa
         if (process.env.CLEAN_SESSIONS === 'true') {
             log.warn('🧹 CLEAN_SESSIONS=true — Inafuta session zote...');
             await deleteAllSessions();
