@@ -1,7 +1,4 @@
 // index.js
-// ════════════════════════════════════════════════════════════════
-//   FIX: global.prefix imewekwa kabla ya bot kuanza
-// ════════════════════════════════════════════════════════════════
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -35,15 +32,9 @@ const logger       = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID   = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
-const CLEAN_SESSIONS = process.env.CLEAN_SESSIONS === 'true';
 
-// FIX — global.prefix imewekwa hapa mapema
-// Handler na commands zote zitatumia hii
 global.prefix = process.env.PREFIX || '.';
 
-// ════════════════════════════════════════════════
-//   BANNER SYSTEM
-// ════════════════════════════════════════════════
 const C = {
     reset:   '\x1b[0m',
     bold:    '\x1b[1m',
@@ -131,9 +122,6 @@ function updateBanner(key, value) {
     }
 }
 
-// ════════════════════════════════════════════════
-//   BOT LOGS
-// ════════════════════════════════════════════════
 const log = {
     info:    (msg) => console.log(`  ✦  ${msg}`),
     success: (msg) => console.log(`  ✔  ${msg}`),
@@ -361,7 +349,7 @@ async function startBot() {
         await initializeDatabase();
         updateBanner('database', '✅ Connected');
 
-        if (CLEAN_SESSIONS) {
+        if (process.env.CLEAN_SESSIONS === 'true') {
             log.warn('🧹 CLEAN_SESSIONS=true – Inafuta session zote...');
             await deleteAllSessions();
             log.success('Session zote zimefutwa.');
