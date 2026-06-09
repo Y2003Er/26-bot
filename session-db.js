@@ -1,10 +1,9 @@
-// session-db.js – inahifadhi state nzima kwenye safu ya 'state' (JSONB)
+// session-db.js – Toleo la Ulinzi dhidi ya Bot Kuganda (Memory Leak Fix)
 import { Pool } from 'pg';
 import pino from 'pino';
 import { initAuthCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
 
 const logger = pino({ level: 'silent' });
-
 let pool = null;
 
 function getPool() {
@@ -14,41 +13,30 @@ function getPool() {
     pool = new Pool({
         connectionString,
         ssl: { rejectUnauthorized: false },
-        max: 5,
+        max: 10, // Tumeongeza connection pool kufungua njia
         connectionTimeoutMillis: 30000,
     });
     pool.on('error', (err) => console.error('[DB] Pool error:', err.message));
     return pool;
 }
 
-// ✅ Rejesha Buffer kutoka Base64 string au { type:'Buffer', data:[...] }
 function reviveBuffers(obj) {
     if (obj == null) return obj;
-
-    if (typeof obj === 'string') {
-        return obj;
-    }
-
-    if (Array.isArray(obj)) {
-        return obj.map(reviveBuffers);
-    }
-
+    if (typeof obj === 'string') return obj;
+    if (Array.isArray(obj)) return obj.map(reviveBuffers);
     if (typeof obj === 'object') {
         if (obj.type === 'Buffer' && Array.isArray(obj.data)) {
             return Buffer.from(obj.data);
         }
-
         const result = {};
         for (const [key, value] of Object.entries(obj)) {
             result[key] = reviveBuffers(value);
         }
         return result;
     }
-
     return obj;
 }
 
-// ✅ Badilisha Buffer kuwa Base64 kabla ya kuhifadhi kwenye JSONB
 function replacer(key, value) {
     if (Buffer.isBuffer(value)) {
         return { type: 'Buffer', data: [...value] };
@@ -60,29 +48,13 @@ export async function initializeDatabase() {
     const client = await getPool().connect();
     try {
         await client.query(`
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_name = 'wa_sessions'
-                ) AND NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'wa_sessions' AND column_name = 'state'
-                ) THEN
-                    DROP TABLE wa_sessions;
-                    RAISE NOTICE 'wa_sessions (schema ya zamani) imefutwa — itaundwa upya.';
-                END IF;
-            END $$;
-        `);
-
-        await client.query(`
             CREATE TABLE IF NOT EXISTS wa_sessions (
                 session_id TEXT PRIMARY KEY,
                 state JSONB NOT NULL,
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         `);
-        console.log('[session-db] Table "wa_sessions" ready (state JSONB).');
+        console.log('[session-db] Table "wa_sessions" ipo tayari kabisa.');
         return true;
     } catch (err) {
         console.error('[session-db] Table error:', err.message);
@@ -102,7 +74,6 @@ async function loadState(sessionId) {
         if (res.rows.length === 0) return null;
         return res.rows[0].state;
     } catch (err) {
-        console.error('[session-db] Load error:', err.message);
         return null;
     } finally {
         client.release();
@@ -121,19 +92,7 @@ async function saveState(sessionId, stateData) {
             [sessionId, serialized]
         );
     } catch (err) {
-        console.error('[session-db] Save error:', err.message);
-    } finally {
-        client.release();
-    }
-}
-
-export async function deleteSession(sessionId) {
-    const client = await getPool().connect();
-    try {
-        await client.query(`DELETE FROM wa_sessions WHERE session_id = $1`, [sessionId]);
-        console.log(`[session-db] Session ${sessionId} deleted`);
-    } catch (err) {
-        console.error('[session-db] Delete error:', err.message);
+        console.error('[session-db] DB Save error:', err.message);
     } finally {
         client.release();
     }
@@ -142,30 +101,16 @@ export async function deleteSession(sessionId) {
 export async function deleteAllSessions() {
     const client = await getPool().connect();
     try {
-        const result = await client.query(`DELETE FROM wa_sessions`);
-        console.log(`[session-db] Deleted ${result.rowCount} session(s).`);
-    } catch (err) {
-        console.error('[session-db] Delete all error:', err.message);
-    } finally {
-        client.release();
-    }
+        await client.query(`DELETE FROM wa_sessions`);
+    } catch (err) {} finally { client.release(); }
 }
 
-// ✅ Main auth state kwa Baileys v7 yenye DEBOUNCE CACHE ya Keys kulinda DB
 export async function usePostgresAuthState(sessionId) {
     const fullState = await loadState(sessionId);
 
     const creds = reviveBuffers(fullState?.creds) || initAuthCreds();
+    // 💡 MUHIMU: Tunapakia keys za zamani kama zipo, lakini hatutaruhusu pre-keys zizibe DB
     let keysStore = reviveBuffers(fullState?.keys) || {};
-
-    // 🕒 Kichapuzi cha DB: Huwa kinakusanya Keys zote zinazokuja kwa sekunde hiyo na kuzisave pamoja
-    let saveTimeout = null;
-    const scheduleSave = () => {
-        if (saveTimeout) clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(async () => {
-            await saveState(sessionId, { creds, keys: keysStore });
-        }, 2000); // Subiri sekunde 2 mfululizo kabla ya kugusa DB
-    };
 
     const keyStore = {
         get: async (type, ids) => {
@@ -177,24 +122,39 @@ export async function usePostgresAuthState(sessionId) {
             return result;
         },
         set: async (data) => {
-            let changed = false;
+            let shouldSaveToDB = false;
+
             for (const [type, entries] of Object.entries(data)) {
                 if (!entries) continue;
+                
+                // 🚫 KANUNI YA DHAHABU: Zuia pre-keys na session-keys zisijaze database na kugandisha bot
+                if (type === 'pre-key' || type === 'session' || type === 'app-state-sync-key') {
+                    for (const [id, value] of Object.entries(entries)) {
+                        const key = `${type}--${id}`;
+                        if (value == null) delete keysStore[key];
+                        else keysStore[key] = value;
+                    }
+                    continue; // Hifadhi kwenye RAM pekee, usiende kwenye database!
+                }
+
+                // Vitu vya msingi (kama sender-key ya vikundi au identity) vinaruhusiwa kwenda kwenye DB
                 for (const [id, value] of Object.entries(entries)) {
                     const key = `${type}--${id}`;
                     if (value == null) {
                         if (keysStore[key] !== undefined) {
                             delete keysStore[key];
-                            changed = true;
+                            shouldSaveToDB = true;
                         }
                     } else {
                         keysStore[key] = value;
-                        changed = true;
+                        shouldSaveToDB = true;
                     }
                 }
             }
-            if (changed) {
-                scheduleSave(); // ✅ Tumia schedule ya ulinzi badala ya kupiga DB direct kila sekunde
+
+            // Save kwenye database pale tu vitu muhimu vya muunganisho vinapobadilika
+            if (shouldSaveToDB) {
+                await saveState(sessionId, { creds, keys: keysStore });
             }
         },
     };
@@ -205,12 +165,8 @@ export async function usePostgresAuthState(sessionId) {
         if (update && typeof update === 'object') {
             Object.assign(creds, update);
         }
-        // Creds bado zinasave papo hapo kwa usalama wa session
         await saveState(sessionId, { creds, keys: keysStore });
-        console.log('[session-db] Creds updated & saved.');
     };
 
-    const state = { creds, keys };
-
-    return { state, saveCreds };
+    return { state: { creds, keys }, saveCreds };
 }
