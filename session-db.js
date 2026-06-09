@@ -22,13 +22,10 @@ function getPool() {
 }
 
 // ✅ Rejesha Buffer kutoka Base64 string au { type:'Buffer', data:[...] }
-// PostgreSQL JSONB inabadilisha Buffer — lazima irudishwe kabla ya kutumika na Baileys
 function reviveBuffers(obj) {
     if (obj == null) return obj;
 
     if (typeof obj === 'string') {
-        // Base64 encoded buffer — rejesha Buffer
-        // Baileys inaweza kuhifadhi baadhi ya keys kama base64
         return obj;
     }
 
@@ -37,7 +34,6 @@ function reviveBuffers(obj) {
     }
 
     if (typeof obj === 'object') {
-        // { type: 'Buffer', data: [...] } — format ya JSON.stringify(Buffer)
         if (obj.type === 'Buffer' && Array.isArray(obj.data)) {
             return Buffer.from(obj.data);
         }
@@ -53,7 +49,6 @@ function reviveBuffers(obj) {
 }
 
 // ✅ Badilisha Buffer kuwa Base64 kabla ya kuhifadhi kwenye JSONB
-// Hii inafanya data iwe stable zaidi kuliko { type:'Buffer', data:[...] }
 function replacer(key, value) {
     if (Buffer.isBuffer(value)) {
         return { type: 'Buffer', data: [...value] };
@@ -117,7 +112,6 @@ async function loadState(sessionId) {
 async function saveState(sessionId, stateData) {
     const client = await getPool().connect();
     try {
-        // ✅ Tumia JSON.stringify na replacer ili Buffer zihifadhiwe vizuri
         const serialized = JSON.parse(JSON.stringify(stateData, replacer));
         await client.query(
             `INSERT INTO wa_sessions (session_id, state, updated_at)
@@ -157,13 +151,21 @@ export async function deleteAllSessions() {
     }
 }
 
-// ✅ Main auth state kwa Baileys v7
+// ✅ Main auth state kwa Baileys v7 yenye DEBOUNCE CACHE ya Keys kulinda DB
 export async function usePostgresAuthState(sessionId) {
     const fullState = await loadState(sessionId);
 
-    // ✅ reviveBuffers — rejesha Buffer kutoka JSONB
     const creds = reviveBuffers(fullState?.creds) || initAuthCreds();
     let keysStore = reviveBuffers(fullState?.keys) || {};
+
+    // 🕒 Kichapuzi cha DB: Huwa kinakusanya Keys zote zinazokuja kwa sekunde hiyo na kuzisave pamoja
+    let saveTimeout = null;
+    const scheduleSave = () => {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(async () => {
+            await saveState(sessionId, { creds, keys: keysStore });
+        }, 2000); // Subiri sekunde 2 mfululizo kabla ya kugusa DB
+    };
 
     const keyStore = {
         get: async (type, ids) => {
@@ -192,18 +194,18 @@ export async function usePostgresAuthState(sessionId) {
                 }
             }
             if (changed) {
-                await saveState(sessionId, { creds, keys: keysStore });
+                scheduleSave(); // ✅ Tumia schedule ya ulinzi badala ya kupiga DB direct kila sekunde
             }
         },
     };
 
     const keys = makeCacheableSignalKeyStore(keyStore, logger);
 
-    // ✅ saveCreds inakubali update na kufanya Object.assign
     const saveCreds = async (update) => {
         if (update && typeof update === 'object') {
             Object.assign(creds, update);
         }
+        // Creds bado zinasave papo hapo kwa usalama wa session
         await saveState(sessionId, { creds, keys: keysStore });
         console.log('[session-db] Creds updated & saved.');
     };
