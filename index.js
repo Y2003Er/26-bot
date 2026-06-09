@@ -210,6 +210,8 @@ async function startBot() {
             defaultQueryTimeoutMs:          undefined,
             generateHighQualityLinkPreview: false,
             patchMessageBeforeSending:      (msg) => msg,
+            retryRequestDelayMs:            2000,
+            maxRetries:                     5,
         });
 
         sock.ev.on('creds.update', saveCreds);
