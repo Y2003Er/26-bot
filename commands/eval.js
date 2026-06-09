@@ -52,7 +52,19 @@ function isOwner(msg) {
     const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
     const isFromMe = msg.key.fromMe === true;
     const sender   = normalizeJid(isGroup ? (msg.key.participant || '') : msg.key.remoteJid);
-    return OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
+    const result   = OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
+
+    console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
+    console.log('  remoteJid  :', msg.key.remoteJid);
+    console.log('  participant:', msg.key.participant || '(none)');
+    console.log('  fromMe     :', isFromMe);
+    console.log('  isGroup    :', isGroup);
+    console.log('  sender     :', sender);
+    console.log('  OWNERS_LIST:', OWNERS_LIST);
+    console.log('  isOwner ✅ :', result);
+    console.log('─────────────────────────────────────\n');
+
+    return result;
 }
 
 // ── History ──
@@ -741,8 +753,15 @@ export const adminOnly   = false;
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
 
+    console.log('\n⚡ [EVAL] execute() imeitwa!');
+    console.log('  from:', from);
+
     // ── Owner peke yake ──
-    if (!isOwner(msg)) return;
+    if (!isOwner(msg)) {
+        console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
+        return;
+    }
+    console.log('✅ [EVAL] isOwner = true — inaendelea...');
 
     // ── DM tu ──
     if (from.endsWith('@g.us')) {
