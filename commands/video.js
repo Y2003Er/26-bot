@@ -1,12 +1,10 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la 26-TECH (Multi-API Auto Fallback)
+ * Download video kutoka YouTube — Toleo la 26-TECH (Bypass Mode)
  */
 
 import yts from 'yt-search';
 import axios from 'axios';
-import pkg from 'ruhend-scraper';
-const { ytdl } = pkg;
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -26,6 +24,7 @@ export async function execute(sock, msg, args) {
     }
 
     try {
+        // Tuma ujumbe wa kuanza kupakua
         await sock.sendMessage(from, { text: '⏳ *Napakua video yako kutoka YouTube, subiri sekunde chache...*' }, { quoted: msg });
 
         let videoUrl = '';
@@ -33,7 +32,7 @@ export async function execute(sock, msg, args) {
         let videoDuration = '';
         let videoViews = '';
 
-        // 1. Tafuta video kwenye YouTube
+        // 1. Tafuta video kwenye YouTube kwa yt-search
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
             const searchLink = await yts(text);
@@ -56,51 +55,34 @@ export async function execute(sock, msg, args) {
         const finalTitle = videoTitle || 'Video';
         let downloadUrl = null;
 
-        // NJIA YA 1: Kujaribu kutumia API ya bure na imara ya Y2Mate REST API
+        // TUNAPIGA API YA DIRECT BYPASS AMBACHO HAIKWAMI RAILWAY
         try {
-            console.log('🔄 Jaribio la 1: Inapakua kupitia Y2Mate API...');
-            const apiRes = await axios.get(`https://api.vreden.web.id/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
-            if (apiRes.data && apiRes.data.result && apiRes.data.result.download) {
+            const apiRes = await axios.get(`https://api.giftedtech.my.id/api/download/dlmp4?url=${encodeURIComponent(videoUrl)}`);
+            if (apiRes.data && apiRes.data.success && apiRes.data.result && apiRes.data.result.download_url) {
+                downloadUrl = apiRes.data.result.download_url;
+            } else if (apiRes.data && apiRes.data.result && apiRes.data.result.download) {
                 downloadUrl = apiRes.data.result.download;
             }
-        } catch (apiErr) {
-            console.warn('⚠️ Jaribio la 1 limefeli, tunahamia Jaribio la 2...');
-        }
-
-        // NJIA YA 2: Kama Njia ya 1 imefeli, tunajaribu kutumia Ruhend Scraper
-        if (!downloadUrl) {
+        } catch (e) {
+            console.warn('⚠️ Bypass API 1 imefeli, tunajaribu API 2...');
             try {
-                console.log('🔄 Jaribio la 2: Inapakua kupitia Ruhend Scraper...');
-                const downloadData = await ytdl(videoUrl);
-                if (downloadData && downloadData.video) {
-                    downloadUrl = downloadData.video;
+                const apiRes2 = await axios.get(`https://api.agatz.xyz/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
+                if (apiRes2.data && apiRes2.data.status === 200 && apiRes2.data.data.url) {
+                    downloadUrl = apiRes2.data.data.url;
                 }
-            } catch (scrpErr) {
-                console.warn('⚠️ Jaribio la 2 limefeli, tunahamia Jaribio la 3...');
+            } catch (e2) {
+                console.error('❌ API zote zimegoma kupenya.');
             }
         }
 
-        // NJIA YA 3: Kama zote zimefeli, tunatumia API mbadala ya tatu (Aggregator)
-        if (!downloadUrl) {
-            try {
-                console.log('🔄 Jaribio la 3: Inapakua kupitia API ya Akiba...');
-                const fallbackRes = await axios.get(`https://api.sandipbhetwal.com/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
-                if (fallbackRes.data && fallbackRes.data.url) {
-                    downloadUrl = fallbackRes.data.url;
-                }
-            } catch (fbErr) {
-                console.error('❌ Njia zote 3 za download zimegonga ukuta.');
-            }
-        }
-
-        // Kama mifumo yote imegoma kabisa kutoa link ya download
+        // Kama bado zote zimegoma kupata link ya download
         if (!downloadUrl) {
             return await sock.sendMessage(from, { 
-                text: '❌ Kushindwa kupakua video. YouTube wameweka ulinzi mkali kwa sasa au faili ni kubwa mno kupita kiasi. Jaribu link ya video nyingine.' 
+                text: '❌ Kushindwa kupakua video. Mfumo wa YouTube umeweka ulinzi mkali sana kwenye seva za Railway kwa sasa. Jaribu tena baadae kidogo.' 
             }, { quoted: msg });
         }
 
-        // 3. Tuma video kwenda kwa mtumiaji ikiwa na brand ya 26-𝐓𝐄𝐂𝐇
+        // 3. Tuma video ikiwa imekamilika kwenda kwa mteja ikiwa na brand ya 26-𝐓𝐄𝐂𝐇
         await sock.sendMessage(from, {
             video: { url: downloadUrl },
             mimetype: 'video/mp4',
