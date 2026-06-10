@@ -9,10 +9,11 @@
   "dependencies": {
     "@google/genai": "^2.8.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.3.1",
+    "mumaker": "^2.0.0",
     "node-cache": "^5.1.2",
     "pg": "^8.11.5",
-    "dotenv": "^16.3.1",
-    "chalk": "^4.1.2",
     "pino": "^8.17.2",
     "sharp": "^0.34.5"
   }
