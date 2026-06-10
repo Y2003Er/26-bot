@@ -4,8 +4,7 @@
  */
 
 import yts from 'yt-search';
-// Inatoka hatua moja nyuma kwenye commands/ na kusoma api.js iliyopo root directly
-import APIs from '../api.js'; 
+import { APIs } from '../api.js'; 
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube';
@@ -48,7 +47,7 @@ export async function execute(sock, msg, args) {
         const finalTitle = videoTitle || 'Audio';
         let downloadUrl = null;
 
-        // SERVER 1: Yupro Audio API
+        // Seva ya 1
         try {
             console.log('🔄 [26-TECH] Kujaribu Yupro Audio...');
             const res1 = await APIs.getYupraDownloadByUrl(videoUrl);
@@ -57,7 +56,7 @@ export async function execute(sock, msg, args) {
             console.warn('⚠️ Yupro Audio imefeli.');
         }
 
-        // SERVER 2: Izumi Audio API
+        // Seva ya 2
         if (!downloadUrl) {
             try {
                 console.log('🔄 [26-TECH] Kujaribu Izumi Audio...');
@@ -68,7 +67,7 @@ export async function execute(sock, msg, args) {
             }
         }
 
-        // SERVER 3: Okatsu Audio API
+        // Seva ya 3
         if (!downloadUrl) {
             try {
                 console.log('🔄 [26-TECH] Kujaribu Okatsu Audio...');
@@ -79,14 +78,14 @@ export async function execute(sock, msg, args) {
             }
         }
 
-        // SERVER 4: EliteProTech Audio API
+        // Seva ya 4
         if (!downloadUrl) {
             try {
                 console.log('🔄 [26-TECH] Kujaribu EliteProTech Audio...');
                 const res4 = await APIs.getEliteProTechDownloadByUrl(videoUrl);
                 if (res4 && res4.download) downloadUrl = res4.download;
             } catch (e) {
-                console.error('❌ Seva zote za Ndani za Audio zimegoma.');
+                console.error('❌ Seva zote za Audio zimegoma.');
             }
         }
 
