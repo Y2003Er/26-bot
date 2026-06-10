@@ -1,14 +1,13 @@
 /**
  * commands/help.js
- * Orodha ya commands zote — Toleo jipya la 26-TECH (Yusuph Hanigomba)
- * Inatumia muundo wako asili wa ES Modules lakini ikiwa na muonekano wa kijasusi!
+ * Orodha ya commands zote — Toleo la Clean Menu (Yusuph Hanigomba)
+ * Maelezo yameondolewa kwenye orodha ili menu iwe fupi na nadhifu!
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// Kutengeneza __dirname kwa ajili ya ES Modules ili isilete error ya directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -24,12 +23,10 @@ export async function execute(sock, msg, args) {
     const pfx    = global.prefix || '.';
     const allCmds = global.allCommands || new Map();
     
-    // Kupata namba na jina la aliyepiga amri kwa usalama
     const sender = msg.key.participant || msg.key.remoteJid || '';
     const userNumber = sender && sender.includes('@') ? sender.split('@')[0] : 'Mtumiaji';
-    const pushName = msg.pushName || 'Mtumiaji Mtanashati';
 
-    // ── 1. Kama ametoa jina la command — toa maelezo yake peke yake ──
+    // ── 1. Kama ametoa jina la command maalum (Mfano: .help ping) — Toa maelezo hapa ──
     if (args[0] && args[0].trim()) {
         const target = args[0].toLowerCase().trim().replace(/^\./, '');
         const cmd    = allCmds.get(target);
@@ -55,7 +52,7 @@ export async function execute(sock, msg, args) {
         return sock.sendMessage(from, { text: info }, { quoted: msg });
     }
 
-    // ── 2. Gawanya commands kwa category (Inasoma zote mbili: type au category) ──
+    // ── 2. Gawanya commands kwa category ──
     const grouped = {};
     for (const [key, cmd] of allCmds.entries()) {
         if (!cmd || !cmd.name || cmd.name === 'help' || cmd.name === 'menu') continue; 
@@ -63,20 +60,18 @@ export async function execute(sock, msg, args) {
         const cat = (cmd.type || cmd.category || 'general').toLowerCase();
         if (!grouped[cat]) grouped[cat] = [];
 
-        // Epuka duplicates za aliases
         const alreadyIn = grouped[cat].some(c => c.name === cmd.name);
         if (!alreadyIn) grouped[cat].push(cmd);
     }
 
-    // ── 3. Jenga menu yenye muundo wa kishari kama ya yule jamaa ──
+    // ── 3. Jenga menu (Bila maelezo ya mbele ya kila command) ──
     let menuText = `╭━━『 *26-𝐓𝐄𝐂𝐇* 』━━╮\n\n`;
     menuText += `👋 Hello @${userNumber}!\n\n`;
     menuText += `⚡ Prefix: ${pfx}\n`;
     menuText += `📦 Total Commands: ${allCmds.size}\n`;
     menuText += `👑 Owner: 26-𝐓𝐄𝐂𝐇\n`;
-    menuText += `📱 Owner Number: https://wa.me/255617155221\n\n`;
+    menuText += `📱 Owner Number: https://wa.me/255617156221\n\n`;
 
-    // Order ya categories (nimeongeza na textmaker hapa)
     const categoryOrder = ['general', 'group', 'whatsapp', 'admin', 'owner', 'ai', 'media', 'fun', 'utility', 'textmaker', 'anime'];
     const sortedCategories = [
         ...categoryOrder.filter(c => grouped[c]),
@@ -89,24 +84,23 @@ export async function execute(sock, msg, args) {
 
         const emoji = getCategoryEmoji(cat);
         menuText += `┏━━━━━━━━━━━━━━━━━\n`;
-        menuText += `┃ ${emoji} *${cat.toUpperCase()} COMMAND*\n`;
+        menuText += `┃ ${emoji} *${cat.toUpperCase()} COMMANDS*\n`;
         menuText += `┗━━━━━━━━━━━━━━━━━\n`;
 
+        // Hapa sasa tumetoa maelezo, inataja tu herufi za command kishkaji!
         for (const cmd of cmds) {
             const usage = cmd.use ? ` _${cmd.use}_` : '';
-            const cmdInfo = cmd.info || cmd.description || 'Hakuna maelezo';
-            menuText += `│ ➜ ${pfx}${cmd.name}${usage} _(${cmdInfo})_\n`;
+            menuText += `│ ➜ ${pfx}${cmd.name}${usage}\n`;
         }
         menuText += `\n`;
     }
 
     menuText += `╰━━━━━━━━━━━━━━━━━\n\n`;
-    menuText += `💡 Type ${pfx}help <command> for more info\n`;
+    menuText += `💡 Type *${pfx}help <command>* for more info\n`;
     menuText += `🌟 Bot Version: 1.0.0\n`;
     menuText += `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
 
-    // ── 4. KUTUMA MENU KWA SENDER DIRECTORY YAKO KUY ──
-    // Inatafuta picha inayoitwa bot_image.jpg iliyopo kwenye folder kuu la boti yako (sio ndani ya commands)
+    // ── 4. Kutuma picha na menu ──
     const imagePath = path.join(__dirname, '../bot_image.jpg');
 
     if (fs.existsSync(imagePath)) {
@@ -126,7 +120,6 @@ export async function execute(sock, msg, args) {
             }
         }, { quoted: msg });
     } else {
-        // Kama picha haipo, inatuma text tupu ili isilete ukimya
         await sock.sendMessage(from, {
             text: menuText,
             mentions: [sender]
