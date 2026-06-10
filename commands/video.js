@@ -1,10 +1,11 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la 26-TECH (Fixed)
+ * Download video kutoka YouTube — Toleo la 26-TECH (Thabiti)
  */
 
 import yts from 'yt-search';
-import { ytdl } from 'ruhend-scraper';
+import pkg from 'ruhend-scraper';
+const { ytdl } = pkg;
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -52,7 +53,7 @@ export async function execute(sock, msg, args) {
             videoViews = videos[0].views;
         }
 
-        // 2. Kupakua video kwa kutumia ruhend-scraper (ytdl)
+        // 2. Kupakua video kwa kutumia ruhend-scraper (ytdl) kwa usalama wa CommonJS
         const downloadData = await ytdl(videoUrl);
 
         if (!downloadData || !downloadData.video) {
@@ -64,7 +65,7 @@ export async function execute(sock, msg, args) {
         const finalTitle = videoTitle || downloadData.title || 'Video';
         const videoBufferUrl = downloadData.video;
 
-        // 3. Tuma video kwenda kwa mtumiaji ikiwa na brand yako safi ya 26-𝐓𝐄𝐂𝐇
+        // 3. Tuma video kwenda kwa mtumiaji ikiwa na brand ya 26-𝐓𝐄𝐂𝐇
         await sock.sendMessage(from, {
             video: { url: videoBufferUrl },
             mimetype: 'video/mp4',
