@@ -1,4 +1,4 @@
-// index.js - FULL FIXED VERSION (Owner + Pre-keys Loop)
+// index.js - FULL FIXED VERSION (Owner + Pre-keys Loop + Cache Cleanup)
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -40,6 +40,11 @@ global.dbPool = pool;
 // ────────────────────────────────────────────────────
 
 const aiCache = new NodeCache({ stdTTL: 10 });
+
+// ── CACHE YA KUDHIBITI UKUBWA WA MESEJI ILI BOTI ISIZIME ──
+const MAX_PER_CHAT = 20;
+const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 }); 
+// ─────────────────────────────────────────────────────────
 
 const logger       = pino({ level: 'info' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
@@ -85,28 +90,28 @@ function getUptime() {
 function getRAM() {
     const used  = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
-    return `\( {used}/ \){total} MB`;
+    return `${used}/${total} MB`;
 }
 
 function printBanner() {
     const s = bannerState;
-    const connVal = s.connection === 'ONLINE' ? `\( {C.green} \){C.bold}🟢 ONLINE\( {C.reset}` : ` \){C.yellow}\( {s.connection} \){C.reset}`;
-    const dbVal = s.database.includes('✅') ? `\( {C.green}✅ Connected \){C.reset}` : `\( {C.yellow} \){s.database}${C.reset}`;
+    const connVal = s.connection === 'ONLINE' ? `${C.green}${C.bold}🟢 ONLINE${C.reset}` : `${C.yellow}${s.connection}${C.reset}`;
+    const dbVal = s.database.includes('✅') ? `${C.green}✅ Connected ${C.reset}` : `${C.yellow}${s.database}${C.reset}`;
 
     const lines = [
-        `\( {C.cyan}┌─────────────────────────────────────────────┐ \){C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold} \){C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: \( {getUptime()} \){C.reset}`,
-        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}◈ Connection \){C.reset}  →  ${connVal}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🗄️  Database \){C.reset}   →  ${dbVal}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}⚡ Commands \){C.reset}   →  \( {C.green} \){s.commands}${C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}📨 Messages \){C.reset}   →  \( {C.white} \){s.messages}${C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}👥 Groups \){C.reset}     →  \( {C.white} \){s.groups}${C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🤖 AI \){C.reset}         →  \( {C.magenta} \){s.ai}${C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  \( {C.bold}💾 RAM \){C.reset}        →  \( {C.blue} \){getRAM()}${C.reset}`,
-        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
-        `\( {C.cyan}│ \){C.reset}  ${C.gray}Last: \( {s.lastMsg} \){C.reset}`,
-        `\( {C.cyan}└─────────────────────────────────────────────┘ \){C.reset}`,
+        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
+        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}◈ Connection ${C.reset}  →  ${connVal}`,
+        `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database ${C.reset}   →  ${dbVal}`,
+        `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands ${C.reset}   →  ${C.green}${s.commands}${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}📨 Messages ${C.reset}   →  ${C.white}${s.messages}${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}👥 Groups ${C.reset}     →  ${C.white}${s.groups}${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}🤖 AI ${C.reset}         →  ${C.magenta}${s.ai}${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.bold}💾 RAM ${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`,
+        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
+        `${C.cyan}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
+        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
     ];
     lines.forEach(line => console.log(line));
     console.log('');
@@ -135,7 +140,7 @@ global.isOwner = (jid) => {
 
     const normalize = (str) => String(str)
         .split(':')[0]
-        .replace(/@lid\( |@s.whatsapp.net \)/, '')
+        .replace(/@lid|@s.whatsapp.net/, '')
         .replace(/[^0-9]/g, '');
 
     const senderClean = normalize(jid);
@@ -341,21 +346,34 @@ async function startBot() {
             const msg = messages[0];
             if (!msg.message) return;
 
+            const jid = msg.key.remoteJid;
+            if (!jid) return;
+
+            // ── MFUMO WA KUSAFISHA MESEJI ZIKIZIDI KIKOMO (ANTI-CRASH) ──
+            let currentChatHistory = chatMessagesCache.get(jid) || [];
+            currentChatHistory.push(msg.key.id); // Tunatunza tu ID za ujumbe ili kubana memory
+
+            if (currentChatHistory.length > MAX_PER_CHAT) {
+                currentChatHistory.shift(); // Inatupa kule ID ya zamani zaidi
+            }
+            chatMessagesCache.set(jid, currentChatHistory);
+            // ──────────────────────────────────────────────────────────
+
             bannerState.messages++;
             const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
-            const isGroup = msg.key.remoteJid?.endsWith('@g.us');
+            const isGroup = jid.endsWith('@g.us');
             const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             const source = isGroup ? 'Group' : 'DM';
 
             updateBanner('messages', bannerState.messages);
-            updateBanner('lastMsg', `${time} · ${source} · \( {text.slice(0, 25)} \){text.length > 25 ? '...' : ''}`);
+            updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
 
-            console.log(`📩 ${msg.key.remoteJid}: ${text}`);
+            console.log(`📩 ${jid}: ${text}`);
 
             await handleAntiLink(sock, msg, logger);
 
             const botNumber = sock.user.id.replace(/:\d+@/, '@');
-            const sender = msg.key.participant || msg.key.remoteJid;
+            const sender = msg.key.participant || jid;
 
             const isMentioned = text.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
