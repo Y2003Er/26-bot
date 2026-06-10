@@ -27,7 +27,6 @@ import {
     deleteAllSessions
 } from './session-db.js';
 
-// ✅ IMPORT YA KIPENGELE CHA ULINZI PEKEE
 import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
 
@@ -40,7 +39,6 @@ const pool = new pg.Pool({
 global.dbPool = pool;
 // ────────────────────────────────────────────────────
 
-// 🧠 CACHE MAALUM YA KUZUIA MTU ASISPAM AI (RATE LIMITER CHENYE SEKUNDE 10 COOLDOWN)
 const aiCache = new NodeCache({ stdTTL: 10 });
 
 const logger       = pino({ level: 'info' });
@@ -263,6 +261,13 @@ async function startBot() {
                 hasEverOpened = true;
                 updateBanner('connection', 'ONLINE');
 
+                // ✅ HIFADHI OWNER LID — inatumika na eval.js kwa isOwner() check
+                const ownerLid = sock.authState?.creds?.me?.lid;
+                if (ownerLid) {
+                    global.ownerLid = ownerLid.endsWith('@lid') ? ownerLid : `${ownerLid}@lid`;
+                    log.success(`Owner LID imehifadhiwa: ${global.ownerLid}`);
+                }
+
                 try {
                     const groups = await sock.groupFetchAllParticipating();
                     updateBanner('groups', Object.keys(groups).length);
@@ -272,7 +277,6 @@ async function startBot() {
                 setupAntiViewOnce(sock);
                 setupAutoStatusViewer(sock);
 
-                // ✅ ANZA KUFUATILIA ULINZI WA KUNDI (Umeshawashwa Hapa)
                 initGroupProtection(sock, logger);
 
                 log.div();
@@ -336,21 +340,19 @@ async function startBot() {
 
             console.log(`📩 ${msg.key.remoteJid}: ${text}`);
 
-            // 🔥 CHUMA CHA ANTI-LINK: Kinafuta link ya asiye admin na kumfuata DM kimya kimya
             await handleAntiLink(sock, msg, logger);
 
-            // 🤖 MFUMO WA AI SMART-MENTION & RATE LIMITER
             const botNumber = sock.user.id.replace(/:\d+@/, '@');
             const sender = msg.key.participant || msg.key.remoteJid;
-            
-            const isMentioned = text.toLowerCase().includes('26-tech') || 
+
+            const isMentioned = text.toLowerCase().includes('26-tech') ||
                                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
             if (isMentioned && !msg.key.fromMe) {
                 if (aiCache.has(sender)) {
-                    return; // Cooldown lock ipo - kausha kulinda API key
+                    return;
                 }
-                
+
                 aiCache.set(sender, true);
 
                 if (!text.startsWith(global.prefix)) {
