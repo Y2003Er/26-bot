@@ -27,12 +27,15 @@ export async function execute(sock, msg, args) {
             }, { quoted: msg });
         }
 
+        const cmdInfo = cmd.info || cmd.description || 'Hakuna maelezo';
+        const cmdType = cmd.type || cmd.category || 'general';
+
         let info  = `╔══════════════════════╗\n`;
         info     += `║  📋 *COMMAND INFO* ║\n`;
         info     += `╚══════════════════════╝\n\n`;
         info     += `🔹 *Jina:* ${pfx}${cmd.name}\n`;
-        info     += `📝 *Maelezo:* ${cmd.info || 'Hakuna maelezo'}\n`;
-        info     += `📂 *Category:* ${cmd.type || 'general'}\n`;
+        info     += `📝 *Maelezo:* ${cmdInfo}\n`;
+        info     += `📂 *Category:* ${cmdType.toLowerCase()}\n`;
         if (cmd.use)   info += `🔧 *Matumizi:* ${pfx}${cmd.name} ${cmd.use}\n`;
         if (cmd.alias?.length) info += `🔀 *Alias:* ${cmd.alias.map(a => pfx + a).join(', ')}\n`;
 
@@ -44,18 +47,20 @@ export async function execute(sock, msg, args) {
     const userNumber = sender.split('@')[0];
 
     // 2️⃣ KUVUTA PROFILE PICTURE YA ALIYEBONYEZA .HELP
-    let profilePicUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe'; // Default image kama hana PP
+    let profilePicUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe'; // Default image
     try {
         profilePicUrl = await sock.profilePictureUrl(sender, 'image');
     } catch (e) {
-        console.log("Mtumiaji hana profile picture au kuna ulinzi wa faragha, tunatumia default image.");
+        console.log("Mtumiaji hana profile picture au kuna ulinzi, tunatumia default.");
     }
 
     // ── Gawanya commands kwa category ──
     const grouped = {};
     for (const [key, cmd] of allCmds.entries()) {
-        if (cmd.name === 'help') continue; // Itaonekana manually chini
-        const cat = (cmd.type || 'general').toLowerCase();
+        if (!cmd.name || cmd.name === 'help') continue; // Kuzuia crash kama faili halina jina
+        
+        // Hapa inasoma zote mbili: cmd.type au cmd.category
+        const cat = (cmd.type || cmd.category || 'general').toLowerCase();
         if (!grouped[cat]) grouped[cat] = [];
 
         // Epuka duplicates (aliases)
@@ -63,7 +68,7 @@ export async function execute(sock, msg, args) {
         if (!alreadyIn) grouped[cat].push(cmd);
     }
 
-    // 3️⃣ KUJENGA MUUNDO WA MENU (Kuanza na Taarifa Juu kama Screenshot yako)
+    // 3️⃣ KUJENGA MUUNDO WA MENU
     let text  = `╔═══════════════════════╗\n`;
     text     += `║   *26-𝐓𝐄𝐂𝐇 𝐌𝐄𝐍𝐔* ║\n`;
     text     += `╚═══════════════════════╝\n\n`;
@@ -80,7 +85,7 @@ export async function execute(sock, msg, args) {
 
     text     += `_Mfano: ${pfx}ping au ${pfx}ai swali lako_\n\n`;
 
-    // Order ya categories
+    // Order ya categories (Nimeongeza na textmaker hapa)
     const categoryOrder = ['general', 'group', 'whatsapp', 'admin', 'owner', 'ai', 'media', 'fun', 'utility', 'textmaker'];
     const sortedCategories = [
         ...categoryOrder.filter(c => grouped[c]),
@@ -98,8 +103,10 @@ export async function execute(sock, msg, args) {
 
         for (const cmd of cmds) {
             const usage = cmd.use ? ` _${cmd.use}_` : '';
+            const cmdInfo = cmd.info || cmd.description || 'Hakuna maelezo';
+            
             text += `▸ *${pfx}${cmd.name}*${usage}\n`;
-            text += `  └ ${cmd.info || 'Hakuna maelezo'}\n`;
+            text += `  └ ${cmdInfo}\n`;
             if (cmd.alias?.length > 0) {
                 text += `  └ 🔀 ${cmd.alias.map(a => pfx + a).join(', ')}\n`;
             }
@@ -122,8 +129,7 @@ export async function execute(sock, msg, args) {
             caption: text
         }, { quoted: msg });
     } catch (error) {
-        console.error('Error wakati wa kutuma help menu na picha:', error);
-        // Kama mtandao au picha ikizingua, boti itatuma maandishi tu kama backup ili isife
+        console.error('Error kwenye help:', error);
         await sock.sendMessage(from, { text }, { quoted: msg });
     }
 }
