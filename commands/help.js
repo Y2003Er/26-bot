@@ -1,6 +1,6 @@
 /**
  * commands/help.js
- * Orodha ya commands zote — ikiwa na Console Logs za kutafuta tatizo (Debugging)
+ * Orodha ya commands zote — ikiwa na ulinzi mkali dhidi ya makosa ya 'undefined'
  */
 
 module.exports = {
@@ -12,15 +12,16 @@ module.exports = {
     adminOnly: false,
 
     async execute(sock, msg, args) {
-        console.log("=== [HELP COMMAND] Imeshituliwa! ===");
+        console.log("=== [HELP COMMAND] Imeshituliwa kwa Ulinzi Mpya ===");
         
         const from = msg.key.remoteJid;
         const pfx = global.prefix || '.';
         const allCmds = global.allCommands || new Map();
-        const sender = msg.key.participant || msg.key.remoteJid;
-
-        console.log(`-> Inatoka kwa: ${sender}`);
-        console.log(`-> Jumla ya commands kwenye global.allCommands: ${allCmds.size}`);
+        
+        // ULINZI 1: Kupata Sender bila kuruhusu iwe undefined
+        const sender = msg.key.participant || msg.key.participantJid || msg.key.remoteJid || '';
+        
+        console.log(`-> Kikamilifu: sender ni ${sender}`);
 
         // ── Kama ametoa jina la command — toa maelezo yake peke yake ──
         if (args[0] && args[0].trim()) {
@@ -48,42 +49,29 @@ module.exports = {
             return sock.sendMessage(from, { text: info }, { quoted: msg });
         }
 
-        // 1️⃣ Kuchukua Taarifa za Mtumiaji
+        // 2️⃣ Kuchukua Taarifa za Mtumiaji kwa usalama
         const pushName = msg.pushName || 'Mtumiaji Mtanashati';
-        const userNumber = sender.split('@')[0];
-
-        // 2️⃣ Jaribio la Kuvuta DP (Hapa ndipo tunapoweka darubini ya Log)
-        let profilePicUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe'; // Picha mbadala ya mtandaoni
         
-        console.log("-> Jaribio la kuvuta Profile Picture kutoka WhatsApp...");
-        try {
-            const wpPpUrl = await sock.profilePictureUrl(sender, 'image');
-            console.log(`[SUCCESS] Picha ya DP imepatikana kwa mafanikio: ${wpPpUrl}`);
-            profilePicUrl = wpPpUrl;
-        } catch (ppError) {
-            console.log(`[WARNING] PP ya WhatsApp imegoma au ina ulinzi. Sababu: ${ppError.message}`);
-            console.log("-> Tunatumia picha mbadala (Fallback Image) ili boti isikwame.");
-        }
+        // ULINZI 2: Kuhakikisha split haileti error hata sender ikiwa tupu
+        const userNumber = sender && sender.includes('@') ? sender.split('@')[0] : 'Mtumiaji';
+
+        // 3️⃣ PICHA YA MENU: Tumeweka ya mtandaoni ili kuepuka ulinzi wa DP wa WhatsApp
+        // Unaweza kubadilisha link hii kuweka picha yoyote unayotaka mwanangu
+        const menuPosterUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe'; 
 
         // ── Gawanya commands kwa category ──
-        console.log("-> Inaanza kupanga commands kulingana na kategoria...");
         const grouped = {};
-        try {
-            for (const [key, cmd] of allCmds.entries()) {
-                if (!cmd || !cmd.name || cmd.name === 'help') continue;
-                
-                const cat = (cmd.type || cmd.category || 'general').toLowerCase();
-                if (!grouped[cat]) grouped[cat] = [];
+        for (const [key, cmd] of allCmds.entries()) {
+            if (!cmd || !cmd.name || cmd.name === 'help') continue;
+            
+            const cat = (cmd.type || cmd.category || 'general').toLowerCase();
+            if (!grouped[cat]) grouped[cat] = [];
 
-                const alreadyIn = grouped[cat].some(c => c.name === cmd.name);
-                if (!alreadyIn) grouped[cat].push(cmd);
-            }
-            console.log(`[SUCCESS] Kategoria zilizopatikana: ${Object.keys(grouped).join(', ')}`);
-        } catch (groupError) {
-            console.error("[CRITICAL ERROR] Kosa wakati wa kupanga kategoria:", groupError);
+            const alreadyIn = grouped[cat].some(c => c.name === cmd.name);
+            if (!alreadyIn) grouped[cat].push(cmd);
         }
 
-        // 3️⃣ Kujenga Maandishi ya Menu
+        // 4️⃣ KUJENGA MUUNDO WA MENU
         let text  = `╔═══════════════════════╗\n`;
         text     += `║   *26-𝐓𝐄𝐂𝐇 𝐌𝐄𝐍𝐔* ║\n`;
         text     += `╚═══════════════════════╝\n\n`;
@@ -135,27 +123,17 @@ module.exports = {
         text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
 
-        // 4️⃣ Kujaribu Kutuma Menu yenye Picha
-        console.log("-> Inajaribu kutuma ujumbe wa picha na maandishi kwenda WhatsApp...");
+        // 5️⃣ KUTUMA KETE KWA USALAMA (Kama picha ikifeli, maandishi yanatoka)
         try {
             await sock.sendMessage(from, {
-                image: { url: profilePicUrl },
+                image: { url: menuPosterUrl },
                 caption: text
             }, { quoted: msg });
-            console.log("[SUCCESS] Help Menu imetumwa kwa picha na caption!");
-        } catch (sendError) {
-            console.error("[ERROR] Kutuma picha imefeli kabisa! Sababu:", sendError);
-            
-            // Kama picha (url yake au buffer yake) ikigoma, tunatuma maandishi matupu ili boti isilete ukimya
-            console.log("-> Tunajaribu kutuma maandishi matupu (Text Only Fallback)...");
-            try {
-                await sock.sendMessage(from, { text: text }, { quoted: msg });
-                console.log("[SUCCESS] Maandishi ya help yametumwa kwa mafanikio bila picha!");
-            } catch (fallbackError) {
-                console.error("[CRITICAL] Hata maandishi yamewaka moto kushindwa kutumwa:", fallbackError);
-            }
+            console.log("[SUCCESS] Help menu imetumwa vizuri!");
+        } catch (error) {
+            console.error("[FALLBACK] Kutuma kwa picha imefeli, tunatuma kwa text tu:", error);
+            await sock.sendMessage(from, { text: text }, { quoted: msg });
         }
-        console.log("=== [HELP COMMAND] Kazi Imeisha! ===\n");
     }
 };
 
