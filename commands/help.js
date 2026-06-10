@@ -1,7 +1,7 @@
 /**
  * commands/help.js
- * Orodha ya commands zote — Toleo la Clean Menu (Yusuph Hanigomba)
- * Maelezo yameondolewa kwenye orodha ili menu iwe fupi na nadhifu!
+ * Orodha ya commands zote — Toleo la No-Channel Button (26-𝐓𝐄𝐂𝐇)
+ * Kitufe cha "View channel" kimeondolewa kabisa!
  */
 
 import fs from 'fs';
@@ -26,7 +26,7 @@ export async function execute(sock, msg, args) {
     const sender = msg.key.participant || msg.key.remoteJid || '';
     const userNumber = sender && sender.includes('@') ? sender.split('@')[0] : 'Mtumiaji';
 
-    // ── 1. Kama ametoa jina la command maalum (Mfano: .help ping) — Toa maelezo hapa ──
+    // ── 1. Kama ametoa jina la command maalum ──
     if (args[0] && args[0].trim()) {
         const target = args[0].toLowerCase().trim().replace(/^\./, '');
         const cmd    = allCmds.get(target);
@@ -64,12 +64,12 @@ export async function execute(sock, msg, args) {
         if (!alreadyIn) grouped[cat].push(cmd);
     }
 
-    // ── 3. Jenga menu (Bila maelezo ya mbele ya kila command) ──
+    // ── 3. Jenga menu ──
     let menuText = `╭━━『 *26-𝐓𝐄𝐂𝐇* 』━━╮\n\n`;
     menuText += `👋 Hello @${userNumber}!\n\n`;
     menuText += `⚡ Prefix: ${pfx}\n`;
     menuText += `📦 Total Commands: ${allCmds.size}\n`;
-    menuText += `👑 Owner: 26-𝐓𝐄𝐂𝐇\n`;
+    menuText += `👑 Owner: *26-𝐓𝐄𝐂𝐇*\n`;
     menuText += `📱 Owner Number: https://wa.me/255617156221\n\n`;
 
     const categoryOrder = ['general', 'group', 'whatsapp', 'admin', 'owner', 'ai', 'media', 'fun', 'utility', 'textmaker', 'anime'];
@@ -87,7 +87,6 @@ export async function execute(sock, msg, args) {
         menuText += `┃ ${emoji} *${cat.toUpperCase()} COMMANDS*\n`;
         menuText += `┗━━━━━━━━━━━━━━━━━\n`;
 
-        // Hapa sasa tumetoa maelezo, inataja tu herufi za command kishkaji!
         for (const cmd of cmds) {
             const usage = cmd.use ? ` _${cmd.use}_` : '';
             menuText += `│ ➜ ${pfx}${cmd.name}${usage}\n`;
@@ -100,7 +99,7 @@ export async function execute(sock, msg, args) {
     menuText += `🌟 Bot Version: 1.0.0\n`;
     menuText += `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
 
-    // ── 4. Kutuma picha na menu ──
+    // ── 4. Kutuma picha na menu (HAPA TUMEFUTA LER CONTEXT YA CHANNEL) ──
     const imagePath = path.join(__dirname, '../bot_image.jpg');
 
     if (fs.existsSync(imagePath)) {
@@ -108,17 +107,8 @@ export async function execute(sock, msg, args) {
         await sock.sendMessage(from, {
             image: imageBuffer,
             caption: menuText,
-            mentions: [sender],
-            contextInfo: {
-                forwardingScore: 1,
-                isForwarded: true,
-                forwardedNewsletterMessageInfo: {
-                    newsletterJid: '120363161513685998@newsletter',
-                    newsletterName: '26-𝐓𝐄𝐂𝐇 𝐁𝐎𝐓',
-                    serverMessageId: -1
-                }
-            }
-        }, { quoted: msg });
+            mentions: [sender]
+        }, { quoted: msg }); // Imesafishwa hapa, haina mambo ya newsletter tena!
     } else {
         await sock.sendMessage(from, {
             text: menuText,
