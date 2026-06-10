@@ -4,8 +4,7 @@
  */
 
 import yts from 'yt-search';
-// Inatoka hatua moja nyuma kwenye commands/ na kusoma api.js iliyopo root directly
-import APIs from '../api.js'; 
+import { APIs } from '../api.js'; 
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -48,7 +47,7 @@ export async function execute(sock, msg, args) {
         const finalTitle = videoTitle || 'Video';
         let downloadUrl = null;
 
-        // SERVER 1: Yupro Video API
+        // Seva ya 1
         try {
             console.log('🔄 [26-TECH] Kujaribu Yupro Video...');
             const res1 = await APIs.getYupraVideoByUrl(videoUrl);
@@ -57,7 +56,7 @@ export async function execute(sock, msg, args) {
             console.warn('⚠️ Yupro Video imefeli.');
         }
 
-        // SERVER 2: Okatsu Video API
+        // Seva ya 2
         if (!downloadUrl) {
             try {
                 console.log('🔄 [26-TECH] Kujaribu Okatsu Video...');
@@ -68,14 +67,14 @@ export async function execute(sock, msg, args) {
             }
         }
 
-        // SERVER 3: EliteProTech Video API
+        // Seva ya 3
         if (!downloadUrl) {
             try {
                 console.log('🔄 [26-TECH] Kujaribu EliteProTech Video...');
                 const res3 = await APIs.getEliteProTechVideoByUrl(videoUrl);
                 if (res3 && res3.download) downloadUrl = res3.download;
             } catch (e) {
-                console.error('❌ Seva zote za Ndani za Video zimegoma.');
+                console.error('❌ Seva zote za Video zimegoma.');
             }
         }
 
