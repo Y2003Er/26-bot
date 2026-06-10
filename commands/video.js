@@ -1,10 +1,13 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la Debug la 26-TECH
+ * Download video kutoka YouTube — Toleo la Ndani la 26-TECH (Fallback)
  */
 
 import yts from 'yt-search';
-import axios from 'axios';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+// Tunasoma faili la CommonJS kwa usalama ndani ya ES Modules
+const APIs = require('../api.js'); 
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -44,56 +47,55 @@ export async function execute(sock, msg, args) {
             videoTitle = videos[0].title;
         }
 
+        const finalTitle = videoTitle || 'Video';
         let downloadUrl = null;
-        let errorLogs = [];
 
-        // Jaribio la 1: GiftedTech
+        // SERVER 1: Yupro Video API
         try {
-            const res1 = await axios.get(`https://api.giftedtech.my.id/api/download/dlmp4?url=${encodeURIComponent(videoUrl)}`);
-            if (res1.data?.success && (res1.data?.result?.download_url || res1.data?.result?.download)) {
-                downloadUrl = res1.data.result.download_url || res1.data.result.download;
-            } else {
-                errorLogs.push(`GiftedTech: Response invalid (${JSON.stringify(res1.data)})`);
-            }
+            console.log('🔄 [26-TECH] Kujaribu Yupro Video...');
+            const res1 = await APIs.getYupraVideoByUrl(videoUrl);
+            if (res1 && res1.download) downloadUrl = res1.download;
         } catch (e) {
-            errorLogs.push(`GiftedTech Error: ${e.message}`);
+            console.warn('⚠️ Yupro Video imefeli.');
         }
 
-        // Jaribio la 2: Agatz
+        // SERVER 2: Okatsu Video API
         if (!downloadUrl) {
             try {
-                const res2 = await axios.get(`https://api.agatz.xyz/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
-                if (res2.data?.status === 200 && res2.data?.data?.url) {
-                    downloadUrl = res2.data.data.url;
-                } else {
-                    errorLogs.push(`Agatz: Response invalid (${JSON.stringify(res2.data)})`);
-                }
-            } catch (e2) {
-                errorLogs.push(`Agatz Error: ${e2.message}`);
+                console.log('🔄 [26-TECH] Kujaribu Okatsu Video...');
+                const res2 = await APIs.getOkatsuVideoByUrl(videoUrl);
+                if (res2 && res2.download) downloadUrl = res2.download;
+            } catch (e) {
+                console.warn('⚠️ Okatsu Video imefeli.');
             }
         }
 
-        // Kama zote zimegoma, tunarusha makosa halisi kule WhatsApp ili tujue nini kimefeli
+        // SERVER 3: EliteProTech Video API
         if (!downloadUrl) {
-            let debugMessage = `❌ *Kushindwa kupakua video.*\n\n*Ripoti ya Makosa (Debug Logs):*\n`;
-            errorLogs.forEach((log, index) => {
-                debugMessage += `${index + 1}. ${log}\n`;
-            });
-            debugMessage += `\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`;
-            
-            return await sock.sendMessage(from, { text: debugMessage }, { quoted: msg });
+            try {
+                console.log('🔄 [26-TECH] Kujaribu EliteProTech Video...');
+                const res3 = await APIs.getEliteProTechVideoByUrl(videoUrl);
+                if (res3 && res3.download) downloadUrl = res3.download;
+            } catch (e) {
+                console.error('❌ Seva zote za Ndani za Video zimegoma.');
+            }
         }
 
-        // 3. Tuma video ikiwa imepatikana
+        if (!downloadUrl) {
+            return await sock.sendMessage(from, { 
+                text: '❌ Imeshindwa kupakua video hii kwa sasa. Seva zote ziko bize au zimezuiwa na YouTube.' 
+            }, { quoted: msg });
+        }
+
         await sock.sendMessage(from, {
             video: { url: downloadUrl },
             mimetype: 'video/mp4',
-            fileName: `${videoTitle.replace(/[^:\w\s-]/g, '')}.mp4`,
-            caption: `🎬 *${videoTitle || 'Video'}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            fileName: `${finalTitle.replace(/[^:\w\s-]/g, '')}.mp4`,
+            caption: `🎬 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
     } catch (error) {
-        console.error('Video command fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Fatal Error: ${error.message}` }, { quoted: msg });
+        console.error('Video fatal error:', error);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
     }
 }
