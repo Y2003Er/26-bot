@@ -38,36 +38,45 @@ import fs                 from 'fs';
 import path               from 'path';
 
 // ══════════════════════════════════════════════════════════════
-//   OWNER CHECK — botNumber + fromMe + startsWith
+//   OWNER CHECK — @lid bypass FIXED
 // ══════════════════════════════════════════════════════════════
 
 const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
     .split(',')
-    .map(num => num.replace(/[^0-9]/g, ''))
-    .filter(Boolean);
+    .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
+    .filter(jid => jid !== '@s.whatsapp.net');
 
-function isOwner(msg, sock) {
-    // Namba ya bot yenyewe — inasafishwa vizuri (bila :0, bila @s.whatsapp.net)
-    const botNumber = sock.user?.id?.split(':')[0]?.split('@')[0] || '';
+// ✅ FIX: Whitelist halisi ya LID zako — weka kwenye ENV au array hapa
+// Mfano: OWNER_LID=abc123@lid,def456@lid
+const OWNER_LID_LIST = (process.env.OWNER_LID || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.endsWith('@lid'));
 
-    // Sender — participant (group) au remoteJid (DM)
-    const sender = msg.key.participant || msg.key.remoteJid || '';
+function normalizeJid(jid) {
+    if (!jid) return '';
+    return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
+}
 
-    // Njia 3 za kuthibitisha:
-    // 1. Sender ipo kwenye OWNERS_LIST (inafanya kazi na @s.whatsapp.net, @lid, yoyote)
-    // 2. fromMe === true — ujumbe kutoka kwa owner/linked device
-    // 3. sender.startsWith(botNumber) — inashughulikia @lid, :0@, formats zote
-    const result =
-        OWNERS_LIST.some(num => sender.includes(num)) ||
-        msg.key.fromMe === true ||
-        sender.startsWith(botNumber);
+function isOwner(msg) {
+    const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
+    const isFromMe = msg.key.fromMe === true;
+    const rawJid   = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
+    const sender   = normalizeJid(rawJid);
 
-    console.log('\n\uD83D\uDD0D [EVAL DEBUG] ─────────────────────');
+    // ✅ FIX: @lid sasa inahitaji iwe kwenye OWNER_LID_LIST — si yote
+    const isLidSender = rawJid.endsWith('@lid') && OWNER_LID_LIST.includes(rawJid);
+
+    const result = OWNERS_LIST.includes(sender) || (isGroup && isFromMe) || isLidSender;
+
+    console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
     console.log('  remoteJid  :', msg.key.remoteJid);
     console.log('  participant:', msg.key.participant || '(none)');
-    console.log('  fromMe     :', msg.key.fromMe);
+    console.log('  fromMe     :', isFromMe);
+    console.log('  isGroup    :', isGroup);
+    console.log('  rawJid     :', rawJid);
     console.log('  sender     :', sender);
-    console.log('  botNumber  :', botNumber);
+    console.log('  isLid      :', isLidSender);
     console.log('  OWNERS_LIST:', OWNERS_LIST);
     console.log('  isOwner ✅ :', result);
     console.log('─────────────────────────────────────\n');
@@ -1666,7 +1675,7 @@ export async function execute(sock, msg, args) {
     console.log('\n⚡ [EVAL] execute() imeitwa!');
     console.log('  from:', from);
 
-    if (!isOwner(msg, sock)) {
+    if (!isOwner(msg)) {
         console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
         return;
     }
