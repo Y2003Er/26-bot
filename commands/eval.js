@@ -2,49 +2,7 @@
  * commands/eval.js
  * ─────────────────────────────────────────────────────────────
  * PRO GRADE EVAL — Owner peke yake
- * ─────────────────────────────────────────────────────────────
- * Features:
- * ✅ JS eval (async/await + context variables)
- * ✅ Terminal commands ($)
- * ✅ Bot state inspection ($state)
- * ✅ Database queries ($db)
- * ✅ Command history + export ($history, $export)
- * ✅ Safe mode (block hatari)
- * ✅ Timeout protection (15s)
- * ✅ Multi-line code (code blocks)
- * ✅ Full error stack trace
- * ✅ $restart — restart bot
- * ✅ $update — pull GitHub + restart
- * ✅ $logs — bot logs za mwisho
- * ✅ $ping — test connection
- * ✅ $send — tuma ujumbe kwa mtu yeyote
- * ✅ $broadcast — broadcast haraka
- * ✅ $ban / $unban — block/unblock number
- * ✅ $clear — futa historia
- * ✅ $socket — WebSocket state
- * ✅ $perf — performance profiling
- * ✅ $contacts — orodha ya contacts
- * ✅ $gc — garbage collection
- * ✅ $env get/set — manage env runtime
- * ✅ $ai clear — futa AI memory ya mtu
- * ✅ $sessions — angalia sessions za DB
- * ── NEW ──────────────────────────────────────────────────────
- * ✅ $uptime — dedicated uptime + bot start time
- * ✅ $kill <pid> [signal] — kill process na safety check
- * ✅ $cron list/start/stop/stopall — manage scheduled jobs
- * ✅ $cache clear <all/messages/contacts/history> — clear cache
- * ✅ $block list — orodha ya blocked numbers
- * ✅ $groups leave/add/kick/promote/demote/info — group management
- * ✅ $msg delete <id> — delete message by ID
- * ✅ $profile <number> — profile picture + status
- * ✅ $setname <name> — badilisha jina la bot
- * ✅ $setstatus <text> — badilisha bio/status
- * ✅ $whitelist add/remove/list — manage allowed numbers
- * ✅ $ratelimit set/list/remove/clear — rate limiting per command
- * ✅ $db backup — pg_dump kwa file
- * ✅ $file ls/read/write/delete/send/stat — file system management
- * ✅ $node info/modules/argv/flags/loaded — Node.js diagnostics
- * ✅ $confirm / $cancel — confirmation system ya hatua kubwa
+ * (Full fixed version – uses global.isOwner from index.js)
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -57,119 +15,6 @@ import path        from 'path';
 // ── Bot start time (mara moja tu) ──
 const BOT_START_TIME = new Date();
 
-// ── Owner check ──
-// OWNER_NUMBER kwenye .env = namba za simu (255...)
-// global.ownerLid = LID ya owner — inawekwa na index.js wakati connection inafunguka
-//   (sock.user.lid) — LID ni tofauti na namba ya simu, haiwezi kujulikana mapema
-
-function getOwnersList() {
-    // Kusanya namba kutoka env keys zote zinazowezekana
-    const rawKeys = [
-        process.env.OWNER_NUMBER,
-        process.env.OWNER_NUMBERS,
-        process.env.PHONE_NUMBER,
-        process.env.SUDO_USERS,
-    ];
-    const all = rawKeys
-        .filter(Boolean)
-        .flatMap(val => val.split(','))
-        .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
-        .filter(jid => jid !== '@s.whatsapp.net');
-    return [...new Set(all)];
-}
-
-function getOwnerLids() {
-    // OWNER_LID kwenye .env — LID numbers za owners (e.g. 40304560349344)
-    // Zinaweza kuwa nyingi: OWNER_LID=40304560349344,12345678
-    const raw = process.env.OWNER_LID || '';
-    return raw
-        .split(',')
-        .map(s => s.trim().replace(/[^0-9]/g, ''))
-        .filter(Boolean);
-}
-
-function normalizeJid(jid) {
-    if (!jid) return '';
-    return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
-}
-
-function isOwner(msg, sock) {
-    if (!msg || !sock) return false;
-
-    const OWNER_NUMBER = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
-    const isGroup = msg.key.remoteJid?.endsWith('@g.us');
-
-    // Pata sender sahihi
-    let senderJid = isGroup
-        ? (msg.key.participant || '')
-        : (msg.key.remoteJid || '');
-
-    if (!senderJid) return false;
-
-    console.log(`[EVAL] Raw senderJid: ${senderJid}`);
-    console.log(`[EVAL] sock.user.lid: ${sock?.user?.lid || 'haipo'}`);
-    console.log(`[EVAL] OWNER_NUMBER: ${OWNER_NUMBER}`);
-
-    // ==================== NORMALIZER ====================
-    const normalize = (jid) => {
-        if (!jid) return '';
-        return String(jid)
-            .split(':')[0]
-            .replace(/@lid|@s\.whatsapp\.net/g, '')
-            .replace(/[^0-9]/g, '');
-    };
-
-    const senderClean = normalize(senderJid);
-    const ownerClean  = normalize(OWNER_NUMBER);
-
-    // 1. Normal number match
-    if (senderClean === ownerClean || senderJid.includes(OWNER_NUMBER)) {
-        console.log('✅ [EVAL] Owner match - Normal Number');
-        return true;
-    }
-
-    // 2. LID match
-    if (senderJid.endsWith('@lid') || senderJid.includes('@lid')) {
-        const senderLidClean = normalize(senderJid);
-
-        // OWNER_LID kutoka .env
-        const ownerLid = (process.env.OWNER_LID || '').toString().trim();
-        if (ownerLid) {
-            const ownerLidClean = normalize(ownerLid);
-            if (senderLidClean === ownerLidClean) {
-                console.log('✅ [EVAL] Owner match - OWNER_LID env');
-                return true;
-            }
-        }
-
-        // sock.user.lid
-        if (sock?.user?.lid) {
-            const botLidClean = normalize(sock.user.lid);
-            if (senderLidClean === botLidClean) {
-                console.log('✅ [EVAL] Owner match - sock.user.lid');
-                return true;
-            }
-        }
-
-        // global.ownerLid
-        if (global.ownerLid) {
-            const globalLidClean = normalize(global.ownerLid);
-            if (senderLidClean === globalLidClean) {
-                console.log('✅ [EVAL] Owner match - global.ownerLid');
-                return true;
-            }
-        }
-    }
-
-    // 3. fromMe (safety)
-    if (msg.key.fromMe === true) {
-        console.log('✅ [EVAL] Owner match - fromMe');
-        return true;
-    }
-
-    console.log(`❌ [EVAL] No match | senderClean: ${senderClean}`);
-    return false;
-}
 // ── History ──
 const evalHistory = [];
 const MAX_HISTORY = 20;
@@ -187,23 +32,17 @@ function addToHistory(type, input, output, timeMs = 0) {
 }
 
 // ── Whitelist (in-memory, reset kila restart) ──
-// Kwa persistence, hifadhi kwenye DB au file
 if (!global.evalWhitelist) global.evalWhitelist = new Set();
 
 // ── Rate limit store ──
 if (!global.evalRateLimits) global.evalRateLimits = new Map();
-// Format: { commandName: { maxCalls: number, windowMs: number } }
-
 if (!global.evalRateLimitCounters) global.evalRateLimitCounters = new Map();
-// Format: { "jid:commandName": [timestamps...] }
 
 // ── Confirmation store ──
 if (!global.evalPendingConfirm) global.evalPendingConfirm = new Map();
-// Format: { jid: { action: fn, description: string, timeout: NodeJS.Timeout } }
 
 // ── Cron job store ──
 if (!global.evalCronJobs) global.evalCronJobs = new Map();
-// Format: { name: { interval: NodeJS.Timeout, description: string, startedAt: Date } }
 
 // ── Safe mode ──
 const BLOCKED_PATTERNS = [
@@ -320,7 +159,6 @@ function getUptime() {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
 
-    // Exact uptime breakdown
     const d = Math.floor(upSecs / 86400);
     const h = Math.floor((upSecs % 86400) / 3600);
     const m = Math.floor((upSecs % 3600) / 60);
@@ -345,7 +183,6 @@ function killProcess(pid, signal = 'SIGTERM') {
     const pidNum = parseInt(pid);
     if (isNaN(pidNum)) return `❌ PID si nambari halali: ${pid}`;
 
-    // Safety: usikill process muhimu
     const PROTECTED_PIDS = [1, process.pid];
     if (PROTECTED_PIDS.includes(pidNum)) {
         return `🛡️ *Safety Check:* PID ${pidNum} imezuiwa (${pidNum === 1 ? 'init/PID 1' : 'bot process yenyewe'})`;
@@ -389,9 +226,7 @@ async function manageCron(subcommand, args, sock, from) {
         return out.trim();
     }
 
-    // $cron start <name> <intervalSeconds> <description>
     if (sub === 'start') {
-        // args = ["<name>", "<secs>", ...description]
         const parts = (args || '').trim().split(/\s+/);
         const name  = parts[0];
         const secs  = parseInt(parts[1]);
@@ -467,7 +302,6 @@ function manageCache(target) {
         );
     }
 
-    // Support both "$cache clear all" and "$cache all"
     const action = t === 'all' || t === 'clear all' ? 'all' : t.replace(/^clear\s+/, '');
 
     if (action === 'messages') {
@@ -514,7 +348,6 @@ async function manageBlock(sock, subcommand) {
 
     if (sub === 'list') {
         try {
-            // Baileys inahifadhi blocked contacts kwenye fetchBlocklist
             const list = await sock.fetchBlocklist();
             if (!list || list.length === 0) return '📭 Hakuna nambari zilizobaniwa.';
             const formatted = list.map((jid, i) =>
@@ -536,13 +369,11 @@ async function manageGroups(sock, subcommand, args) {
     const sub   = (subcommand || '').toLowerCase().trim();
     const parts = (args || '').trim().split(/\s+/);
 
-    // $groups info [groupJid/subject]
     if (sub === 'info') {
         const query = parts.join(' ').trim();
         if (!query) return '❓ Format: $groups info <groupJid au sehemu ya jina>';
         try {
             const allGroups = await sock.groupFetchAllParticipating();
-            // Tafuta kwa JID au kwa jina (partial match)
             const group = Object.values(allGroups).find(g =>
                 g.id === query ||
                 g.id.startsWith(query) ||
@@ -567,7 +398,6 @@ async function manageGroups(sock, subcommand, args) {
         }
     }
 
-    // $groups leave <groupJid>
     if (sub === 'leave') {
         const jid = parts[0];
         if (!jid) return '❓ Format: $groups leave <groupJid>';
@@ -580,7 +410,6 @@ async function manageGroups(sock, subcommand, args) {
         }
     }
 
-    // $groups kick <groupJid> <memberJid>
     if (sub === 'kick') {
         const [gJid, mJid] = parts;
         if (!gJid || !mJid) return '❓ Format: $groups kick <groupJid> <memberNumber>';
@@ -594,7 +423,6 @@ async function manageGroups(sock, subcommand, args) {
         }
     }
 
-    // $groups promote <groupJid> <memberJid>
     if (sub === 'promote') {
         const [gJid, mJid] = parts;
         if (!gJid || !mJid) return '❓ Format: $groups promote <groupJid> <memberNumber>';
@@ -608,7 +436,6 @@ async function manageGroups(sock, subcommand, args) {
         }
     }
 
-    // $groups demote <groupJid> <memberJid>
     if (sub === 'demote') {
         const [gJid, mJid] = parts;
         if (!gJid || !mJid) return '❓ Format: $groups demote <groupJid> <memberNumber>';
@@ -622,7 +449,6 @@ async function manageGroups(sock, subcommand, args) {
         }
     }
 
-    // $groups add <groupJid> <number>
     if (sub === 'add') {
         const [gJid, mJid] = parts;
         if (!gJid || !mJid) return '❓ Format: $groups add <groupJid> <number>';
@@ -654,12 +480,10 @@ async function manageMsg(sock, from, subcommand, args) {
     const sub = (subcommand || '').toLowerCase().trim();
 
     if (sub === 'delete') {
-        // args = "<messageId>" au "<jid> <messageId>"
         const parts = (args || '').trim().split(/\s+/);
         let targetJid, msgId;
 
         if (parts.length === 1) {
-            // DM ya sasa — delete katika chat ya sasa
             targetJid = from;
             msgId     = parts[0];
         } else {
@@ -696,20 +520,17 @@ async function getProfile(sock, from, number) {
     const jid   = `${clean}@s.whatsapp.net`;
 
     try {
-        // Profile picture
         let ppUrl = null;
         try {
             ppUrl = await sock.profilePictureUrl(jid, 'image');
         } catch { ppUrl = null; }
 
-        // Status
         let status = null;
         try {
             const s = await sock.fetchStatus(jid);
             status = s?.status || null;
         } catch { status = null; }
 
-        // WhatsApp check
         let exists = false;
         try {
             const result = await sock.onWhatsApp(clean);
@@ -723,12 +544,11 @@ async function getProfile(sock, from, number) {
 
         if (ppUrl) {
             try {
-                // Tuma picha
                 await sock.sendMessage(from, {
                     image:   { url: ppUrl },
                     caption: response
                 });
-                return null; // tayari imetumwa
+                return null;
             } catch {
                 return response + '\n_(imeshindwa kupakua picha)_';
             }
@@ -819,7 +639,6 @@ function manageRatelimit(subcommand, args) {
         return out.trim();
     }
 
-    // $ratelimit set <command> <maxCalls> <windowSeconds>
     if (sub === 'set') {
         const [cmd, maxCalls, windowSecs] = parts;
         if (!cmd || !maxCalls || !windowSecs) {
@@ -832,7 +651,6 @@ function manageRatelimit(subcommand, args) {
         return `✅ Rate limit imewekwa:\n*${cmd}:* max ${max} calls kila sekunde ${windowSecs}`;
     }
 
-    // $ratelimit remove <command>
     if (sub === 'remove') {
         const cmd = parts[0];
         if (!cmd) return '❓ Format: $ratelimit remove <command>';
@@ -841,7 +659,6 @@ function manageRatelimit(subcommand, args) {
         return `✅ Rate limit ya *${cmd}* imeondolewa`;
     }
 
-    // $ratelimit clear
     if (sub === 'clear') {
         const count = global.evalRateLimits.size;
         global.evalRateLimits.clear();
@@ -896,7 +713,6 @@ async function dbBackup(sock, from) {
     const dbUrl = process.env.DATABASE_URL;
     if (!dbUrl) return '❌ DATABASE_URL haipo kwenye ENV';
 
-    // Jaribu kupata pg_dump
     const checkPg = await runTerminal('which pg_dump');
     if (checkPg.error) {
         return (
@@ -946,7 +762,6 @@ async function manageFile(sock, from, subcommand, args) {
     const sub   = (subcommand || '').toLowerCase().trim();
     const parts = (args || '').trim();
 
-    // $file ls [path]
     if (sub === 'ls') {
         const dir = parts || process.cwd();
         try {
@@ -977,12 +792,11 @@ async function manageFile(sock, from, subcommand, args) {
         }
     }
 
-    // $file read <filepath>
     if (sub === 'read') {
         if (!parts) return '❓ Format: $file read <filepath>';
         try {
             const stat    = fs.statSync(parts);
-            const maxSize = 50 * 1024; // 50KB
+            const maxSize = 50 * 1024;
             if (stat.size > maxSize) {
                 return `❌ File kubwa sana (${formatBytes(stat.size)}). Max: 50KB\nTumia: \`$ head -n 50 ${parts}\``;
             }
@@ -993,14 +807,12 @@ async function manageFile(sock, from, subcommand, args) {
         }
     }
 
-    // $file write <filepath> <content>
     if (sub === 'write') {
         const spaceIdx = parts.indexOf(' ');
         if (spaceIdx === -1) return '❓ Format: $file write <filepath> <content>';
         const filepath = parts.slice(0, spaceIdx).trim();
         const content  = parts.slice(spaceIdx + 1);
         try {
-            // Hakikisha directory ipo
             fs.mkdirSync(path.dirname(filepath), { recursive: true });
             fs.writeFileSync(filepath, content, 'utf8');
             const stat = fs.statSync(filepath);
@@ -1010,10 +822,8 @@ async function manageFile(sock, from, subcommand, args) {
         }
     }
 
-    // $file delete <filepath>
     if (sub === 'delete') {
         if (!parts) return '❓ Format: $file delete <filepath>';
-        // Safety: kuzuia kufuta mfumo muhimu
         const DANGEROUS_PATHS = ['/', '/etc', '/usr', '/bin', '/sbin', '/var', process.cwd()];
         if (DANGEROUS_PATHS.some(dp => parts === dp)) {
             return `🛡️ Path *${parts}* imezuiwa kwa usalama`;
@@ -1032,7 +842,6 @@ async function manageFile(sock, from, subcommand, args) {
         }
     }
 
-    // $file stat <filepath>
     if (sub === 'stat') {
         if (!parts) return '❓ Format: $file stat <filepath>';
         try {
@@ -1052,7 +861,6 @@ async function manageFile(sock, from, subcommand, args) {
         }
     }
 
-    // $file send <filepath>
     if (sub === 'send') {
         if (!parts) return '❓ Format: $file send <filepath>';
         try {
@@ -1130,14 +938,10 @@ async function nodeInfo(subcommand) {
     }
 
     if (sub === 'loaded') {
-        // Angalia modules zilizopakiwa (kwa CommonJS, require.cache)
-        try {
-            // Kwa ESM, tumia alternative
-            const { output } = await runTerminal(`ls node_modules | head -30 2>/dev/null`);
-            if (output && output.length > 5) {
-                return `*📦 Node Modules (first 30):*\n\`\`\`\n${output}\n\`\`\``;
-            }
-        } catch {}
+        const { output } = await runTerminal(`ls node_modules | head -30 2>/dev/null`);
+        if (output && output.length > 5) {
+            return `*📦 Node Modules (first 30):*\n\`\`\`\n${output}\n\`\`\``;
+        }
         return `*📦 NODE VERSIONS:*\n${Object.entries(process.versions).map(([k,v]) => `• ${k}: ${v}`).join('\n')}`;
     }
 
@@ -1148,7 +952,6 @@ async function nodeInfo(subcommand) {
 //   $CONFIRM / $CANCEL — Confirmation system
 // ════════════════════════════════════════════════
 function registerConfirm(from, description, action, timeoutMs = 30000) {
-    // Futa ya zamani kama ipo
     const existing = global.evalPendingConfirm.get(from);
     if (existing) clearTimeout(existing.timeoutId);
 
@@ -1555,11 +1358,6 @@ async function banNumber(sock, number, unban = false) {
     }
 }
 
-const getMainOwnerJid = () => {
-    const owners = getOwnersList();
-    return owners[0] || `${(process.env.OWNER_NUMBER || '').split(',')[0].replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-};
-
 // ════════════════════════════════════════════════
 //   $PING — Test connection
 // ════════════════════════════════════════════════
@@ -1567,7 +1365,7 @@ async function pingTarget(sock, target) {
     if (!target) {
         const start = Date.now();
         try {
-            await sock.sendPresenceUpdate('available', getMainOwnerJid());
+            await sock.sendPresenceUpdate('available', sock.user?.id);
             const latency = Date.now() - start;
             return `🏓 *Bot Ping*\nLatency: ${latency}ms\nStatus: Online ✅`;
         } catch (e) {
@@ -1606,7 +1404,7 @@ async function restartBot(sock, from) {
 }
 
 // ════════════════════════════════════════════════
-//   $UPDATE — Smart update (Railway / Render / VPS)
+//   $UPDATE — Smart update
 // ════════════════════════════════════════════════
 async function updateBot(sock, from) {
     const isRailway = !!process.env.RAILWAY_SERVICE_ID;
@@ -1743,7 +1541,7 @@ function exportHistory() {
 }
 
 // ════════════════════════════════════════════════
-//   HELP MESSAGE (updated)
+//   HELP MESSAGE
 // ════════════════════════════════════════════════
 function getHelp() {
     return (
@@ -1820,45 +1618,48 @@ export async function execute(sock, msg, args) {
     console.log('\n⚡ [EVAL] execute() imeitwa!');
     console.log('  from:', from);
 
-    // ── Owner check (kutoka .env OWNER_NUMBER) ──
+    // Determine sender JID for owner check
     const isGroup_exec = msg.key.remoteJid?.endsWith('@g.us');
     const senderJid_exec = isGroup_exec
         ? (msg.key.participant || '')
-        : (msg.key.fromMe ? '' : (msg.key.remoteJid || ''));
+        : (msg.key.remoteJid || '');
+
     console.log('  [EVAL] senderJid:', senderJid_exec);
     console.log('  [EVAL] sock.user.lid:', sock?.user?.lid);
     console.log('  [EVAL] OWNER_NUMBER env:', process.env.OWNER_NUMBER);
 
-    if (!isOwner(msg, sock)) {
-        console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
+    // ── Use global.isOwner from index.js (robust, auto‑detects paired number) ──
+    if (!global.isOwner(senderJid_exec, sock, msg)) {
+        console.log('❌ [EVAL] global.isOwner = false — sending owner only message');
+        await sock.sendMessage(from, { text: '❌ Owner command only.' });
         return;
     }
-    console.log('✅ [EVAL] isOwner = true — inaendelea...');
+    console.log('✅ [EVAL] Owner verified');
 
-    // ── DM tu ──
+    // ── DM only ──
     if (from.endsWith('@g.us')) {
-        return sock.sendMessage(from, {
+        await sock.sendMessage(from, {
             text: '⚠️ _Eval inafanya kazi kwenye DM tu._'
         }, { quoted: msg });
+        return;
     }
 
-    // ── Pata full text (support multi-line code blocks) ──
+    // ── Get full text (support multi‑line code blocks) ──
     const fullText = (
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text || ''
     ).trim();
 
-    // Ondoa prefix (.eval / .ev / .exec)
     let text = fullText.replace(/^\.(eval|ev|exec)\s*/i, '').trim();
 
-    // Support code blocks ```...```
     const codeBlockMatch = text.match(/^```(?:js|javascript)?\n?([\s\S]*?)```$/s);
     if (codeBlockMatch) {
         text = codeBlockMatch[1].trim();
     }
 
     if (!text) {
-        return sock.sendMessage(from, { text: getHelp() }, { quoted: msg });
+        await sock.sendMessage(from, { text: getHelp() }, { quoted: msg });
+        return;
     }
 
     const reply = async (content) => {
@@ -1928,7 +1729,6 @@ export async function execute(sock, msg, args) {
 
         // ── $restart ──
         if (/^\$restart$/i.test(text)) {
-            // Tumia confirm system kwa hatua kubwa
             return reply(registerConfirm(from, 'Restart bot', () => restartBot(sock, from)));
         }
 
@@ -2175,14 +1975,7 @@ export async function execute(sock, msg, args) {
     } catch (err) {
         const timeMs = Date.now() - start;
         addToHistory('error', text, err.message, timeMs);
-
-        const stack = err.stack
-            ? truncate(err.stack, 1500)
-            : err.message;
-
-        return reply(
-            `*❌ Error* (${timeMs}ms)\n\n` +
-            `\`\`\`\n${stack}\n\`\`\``
-        );
+        const stack = err.stack ? truncate(err.stack, 1500) : err.message;
+        await reply(`*❌ Error* (${timeMs}ms)\n\n\`\`\`\n${stack}\n\`\`\``);
     }
 }
