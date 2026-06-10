@@ -178,6 +178,53 @@ function displayPairingCode(code) {
     console.log('👆 Popup itatokea yenyewe — bonyeza CONFIRM\n');
 }
 
+// ════════════════════════════════════════════════
+//   HELPER — Pata Owner LID kwa njia zote
+//   Inaitwa mara connection inafunguka
+// ════════════════════════════════════════════════
+function resolveOwnerLid(sock) {
+    // Njia 1: sock.user.lid — rahisi na ya kuaminika zaidi
+    const fromUser = sock.user?.lid;
+    if (fromUser) {
+        const lid = fromUser.endsWith('@lid') ? fromUser : `${fromUser}@lid`;
+        global.ownerLid = lid;
+        log.success(`Owner LID (sock.user.lid): ${lid}`);
+        return lid;
+    }
+
+    // Njia 2: authState creds me lid
+    const fromCreds = sock.authState?.creds?.me?.lid;
+    if (fromCreds) {
+        const lid = fromCreds.endsWith('@lid') ? fromCreds : `${fromCreds}@lid`;
+        global.ownerLid = lid;
+        log.success(`Owner LID (creds.me.lid): ${lid}`);
+        return lid;
+    }
+
+    // Njia 3: Kama LID bado haijulikani — angalia baadaye
+    log.warn('Owner LID haikupatikana mara moja — itajaribu tena...');
+
+    // Jaribu tena baada ya sekunde 3 (WhatsApp inaweza kuchelewa kidogo)
+    setTimeout(() => {
+        const retryLid = sock.user?.lid || sock.authState?.creds?.me?.lid;
+        if (retryLid) {
+            const lid = retryLid.endsWith('@lid') ? retryLid : `${retryLid}@lid`;
+            global.ownerLid = lid;
+            log.success(`Owner LID (retry): ${lid}`);
+        } else {
+            // Njia ya mwisho: tumia sock.user.id kubadilisha kuwa LID format
+            // Hii si LID halisi lakini inafanya kazi kama fallback
+            const userId = sock.user?.id;
+            if (userId) {
+                log.warn(`LID haipatikani — eval itategemea OWNER_NUMBER tu`);
+                log.warn(`(Tuma .eval sock.user kujua LID yako)`);
+            }
+        }
+    }, 3000);
+
+    return null;
+}
+
 async function startBot() {
     if (bootLock || isConnecting) return;
     if (sock?.ws?.readyState === 1) return;
@@ -261,12 +308,8 @@ async function startBot() {
                 hasEverOpened = true;
                 updateBanner('connection', 'ONLINE');
 
-                // ✅ HIFADHI OWNER LID — inatumika na eval.js kwa isOwner() check
-                const ownerLid = sock.authState?.creds?.me?.lid;
-                if (ownerLid) {
-                    global.ownerLid = ownerLid.endsWith('@lid') ? ownerLid : `${ownerLid}@lid`;
-                    log.success(`Owner LID imehifadhiwa: ${global.ownerLid}`);
-                }
+                // ✅ HIFADHI OWNER LID — kwa njia zote zinazowezekana
+                resolveOwnerLid(sock);
 
                 try {
                     const groups = await sock.groupFetchAllParticipating();
