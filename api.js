@@ -1,8 +1,8 @@
 /**
- * API Integration Utilities
+ * API Integration Utilities — Toleo la ES Modules la 26-TECH
  */
 
-const axios = require('axios');
+import axios from 'axios';
 
 const api = axios.create({
   timeout: 30000,
@@ -318,7 +318,7 @@ const APIs = {
     throw new Error('EliteProTech ytdown returned no download');
   },
   
-    getEliteProTechVideoByUrl: async (youtubeUrl) => {
+  getEliteProTechVideoByUrl: async (youtubeUrl) => {
     const AXIOS_DEFAULTS = {
       timeout: 60000,
       headers: {
@@ -473,17 +473,14 @@ const APIs = {
         }
       });
       
-      // Return the image buffer directly (API returns PNG binary)
       if (response.headers['content-type']?.includes('image')) {
         return Buffer.from(response.data);
       }
       
-      // If API returns JSON with URL, try to parse it
       try {
         const data = JSON.parse(Buffer.from(response.data).toString());
         return data.url || data.data?.url || data.image || apiUrl;
       } catch (e) {
-        // If not JSON, assume it's image data and return buffer
         return Buffer.from(response.data);
       }
     } catch (error) {
@@ -504,12 +501,10 @@ const APIs = {
       });
       
       if (response.data) {
-        // Check if response.data is a string (direct URL)
         if (typeof response.data === 'string' && (response.data.startsWith('http://') || response.data.startsWith('https://'))) {
           return response.data;
         }
         
-        // Check nested data structure
         if (response.data.data) {
           const data = response.data.data;
           if (data.URL) return data.URL;
@@ -518,7 +513,6 @@ const APIs = {
           if (data.mp3) return `https://ttsmp3.com/created_mp3_ai/${data.mp3}`;
         }
         
-        // Check top-level URL fields
         if (response.data.URL) return response.data.URL;
         if (response.data.url) return response.data.url;
         if (response.data.MP3) return `https://ttsmp3.com/created_mp3_ai/${response.data.MP3}`;
@@ -532,4 +526,4 @@ const APIs = {
   }
 };
 
-module.exports = APIs;
+export default APIs;
