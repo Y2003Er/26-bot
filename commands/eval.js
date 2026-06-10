@@ -4,40 +4,29 @@
  * PRO GRADE EVAL — Owner peke yake
  * ─────────────────────────────────────────────────────────────
  * SECURITY FIXES:
- * ✅ @lid bypass imefungwa — LID lazima iwe kwenye OWNER_LID list
+ * ✅ @lid bypass imefungwa — LID inacheckiwa dhidi ya global.ownerLid
  * ✅ Shell injection fixed — execFile badala ya exec
  * ✅ $db — SELECT-only mode + multi-statement block
  * ✅ $broadcast — confirmation step kabla ya kutuma
  * ✅ $restart — confirmation step
  * ✅ isSafe() — improved bypass detection (bracket notation, concat)
  *
- * NEW COMMANDS:
- * ✅ $uptime         — dedicated uptime display
- * ✅ $kill <pid>     — kill process by PID
- * ✅ $cron list/stop — view/stop scheduled jobs
- * ✅ $cache clear    — futa messageCache / contactCache
- * ✅ $block list     — orodha ya blocked numbers
- * ✅ $groups leave   — leave group
- * ✅ $groups add     — add member to group
- * ✅ $msg delete     — delete message by ID
- * ✅ $profile        — profile picture + status
- * ✅ $setname        — change bot display name
- * ✅ $setstatus      — change bot status/bio
- * ✅ $whitelist      — manage allowed numbers
- * ✅ $ratelimit      — set command rate limits
- * ✅ $db backup      — dump DB to file
- * ✅ $file           — file system management
- * ✅ $node           — Node.js info + loaded modules
+ * FIX: isOwner() inashughulikia @lid messages kwa kutumia global.ownerLid
+ *      Weka kwenye index.js/connection handler:
+ *        if (connection === 'open') {
+ *          const lid = sock.authState?.creds?.me?.lid;
+ *          if (lid) global.ownerLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
+ *        }
  * ─────────────────────────────────────────────────────────────
  */
 
-import { execFile, exec } from 'child_process';
-import util               from 'util';
-import os                 from 'os';
-import fs                 from 'fs';
-import path               from 'path';
+import { execFile } from 'child_process';
+import util         from 'util';
+import os           from 'os';
+import fs           from 'fs';
+import path         from 'path';
 
-// ── Owner check (Maboresho ya Multi-owner Support) ──
+// ── Owner check ──
 const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
     .split(',')
     .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
@@ -49,10 +38,28 @@ function normalizeJid(jid) {
 }
 
 function isOwner(msg) {
-    const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
-    const isFromMe = msg.key.fromMe === true;
-    const sender   = normalizeJid(isGroup ? (msg.key.participant || '') : msg.key.remoteJid);
-    return OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
+    const isGroup   = msg.key.remoteJid?.endsWith('@g.us');
+    const rawSender = isGroup
+        ? (msg.key.participant || '')
+        : (msg.key.remoteJid || '');
+
+    // 1. Group message sent BY the bot itself
+    if (isGroup && msg.key.fromMe === true) return true;
+
+    // 2. Standard phone JID check
+    if (OWNERS_LIST.includes(normalizeJid(rawSender))) return true;
+
+    // 3. LID check — global.ownerLid huwekwa index.js wakati wa connection
+    if (rawSender.endsWith('@lid')) {
+        if (global.ownerLid && rawSender === global.ownerLid) return true;
+
+        // Fallback: OWNER_LID env variable (e.g. OWNER_LID=40304560349344@lid)
+        const envLids = (process.env.OWNER_LID || '')
+            .split(',').map(s => s.trim()).filter(Boolean);
+        if (envLids.includes(rawSender)) return true;
+    }
+
+    return false;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -75,16 +82,16 @@ function addToHistory(type, input, output, timeMs = 0) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   PENDING CONFIRMATIONS — kwa $broadcast, $restart, $clearall
+//   PENDING CONFIRMATIONS
 // ══════════════════════════════════════════════════════════════
 
-const pendingConfirm = new Map(); // jid → { action, data, expiry }
+const pendingConfirm = new Map();
 
 function setPending(jid, action, data) {
     pendingConfirm.set(jid, {
         action,
         data,
-        expiry: Date.now() + 30_000 // sekunde 30
+        expiry: Date.now() + 30_000
     });
 }
 
@@ -147,9 +154,7 @@ function manageWhitelist(action, number) {
 //   RATE LIMITING
 // ══════════════════════════════════════════════════════════════
 
-// Map ya command → { maxCalls, windowMs }
 const rateLimits  = new Map();
-// Map ya `command:jid` → [timestamps]
 const rateHistory = new Map();
 
 function manageRateLimit(action, command, value) {
@@ -168,8 +173,8 @@ function manageRateLimit(action, command, value) {
         const match = String(value).match(/^(\d+)\/(\d+)$/);
         if (!match) return '❌ Format ya value lazima iwe: maxCalls/windowSeconds (mfano: 5/60)';
         rateLimits.set(command.toLowerCase(), {
-            maxCalls:  parseInt(match[1]),
-            windowMs:  parseInt(match[2]) * 1000
+            maxCalls: parseInt(match[1]),
+            windowMs: parseInt(match[2]) * 1000
         });
         return `✅ Rate limit ya *${command}*: max ${match[1]} calls kila sekunde ${match[2]}.`;
     }
@@ -191,11 +196,10 @@ function manageRateLimit(action, command, value) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   SAFE MODE — IMPROVED bypass detection
+//   SAFE MODE
 // ══════════════════════════════════════════════════════════════
 
 const BLOCKED_PATTERNS = [
-    // Basic patterns
     /process\s*(\.exit|\[\s*['"`]exit['"`]\s*\])\s*\(/i,
     /rm\s+-rf\s+[\/~]/i,
     /rm\s+-rf\s+\*/i,
@@ -211,13 +215,10 @@ const BLOCKED_PATTERNS = [
     />\s*\/etc\/passwd/i,
     /wget.*\|\s*bash/i,
     /curl.*\|\s*bash/i,
-    // ✅ NEW: bracket notation bypass
     /\[\s*['"`]exit['"`]\s*\]/i,
     /\[\s*['"`]kill['"`]\s*\]/i,
-    // ✅ NEW: string concat bypass (ex + it)
     /['"`]\s*\+\s*['"`]exit['"`]/i,
     /['"`]ex['"`]\s*\+\s*['"`]it['"`]/i,
-    // ✅ NEW: global.process bypass
     /global\s*\.\s*process\s*\.\s*exit/i,
     /globalThis\s*\.\s*process/i,
 ];
@@ -275,13 +276,11 @@ function formatUptime(seconds) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   TERMINAL — execFile (FIXED: no shell injection)
+//   TERMINAL
 // ══════════════════════════════════════════════════════════════
 
 async function runTerminal(command, cwd = process.cwd()) {
     return new Promise((resolve) => {
-        // ✅ FIX: execFile via /bin/sh prevents direct injection but still
-        //    supports pipes, redirects etc. — safer than raw exec()
         execFile('/bin/sh', ['-c', command], {
             timeout:   15000,
             maxBuffer: 2 * 1024 * 1024,
@@ -294,7 +293,7 @@ async function runTerminal(command, cwd = process.cwd()) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   JS EVAL — async + timeout + context
+//   JS EVAL
 // ══════════════════════════════════════════════════════════════
 
 async function runEval(code, context) {
@@ -314,7 +313,7 @@ async function runEval(code, context) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $STATE — Bot inspection
+//   $STATE
 // ══════════════════════════════════════════════════════════════
 
 async function getBotState(sock, query) {
@@ -330,6 +329,7 @@ async function getBotState(sock, query) {
             `🔗 *Connection:* ${wsState}\n` +
             `📱 *Bot JID:* ${sock.user?.id || '?'}\n` +
             `📛 *Bot Name:* ${sock.user?.name || '?'}\n` +
+            `🪪 *Owner LID:* ${global.ownerLid || 'haijawekwa'}\n` +
             `👥 *Groups:* ${Object.keys(groups).length}\n` +
             `⚡ *Commands:* ${global.allCommands?.size || 0}\n` +
             `⏱️ *Uptime:* ${formatUptime(process.uptime())}\n\n` +
@@ -437,7 +437,7 @@ async function getBotState(sock, query) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $UPTIME — Dedicated uptime display
+//   $UPTIME
 // ══════════════════════════════════════════════════════════════
 
 function getUptime() {
@@ -446,9 +446,7 @@ function getUptime() {
     const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
-
     const started = new Date(Date.now() - seconds * 1000);
-
     return (
         `*⏱️ BOT UPTIME*\n\n` +
         `${d}d ${h}h ${m}m ${s}s\n\n` +
@@ -458,7 +456,7 @@ function getUptime() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $KILL — Kill process by PID
+//   $KILL
 // ══════════════════════════════════════════════════════════════
 
 async function killProcess(pidStr, signal = 'SIGTERM') {
@@ -467,7 +465,6 @@ async function killProcess(pidStr, signal = 'SIGTERM') {
     const pid = parseInt(pidStr);
     if (isNaN(pid) || pid <= 0) return '❌ PID si sahihi.';
 
-    // Usiruhusu kuua process yake mwenyewe bila makusudio
     if (pid === process.pid) {
         return `⚠️ Unataka kuua process ya bot (PID ${pid})!\nTumia \`$restart\` badala yake.`;
     }
@@ -489,14 +486,11 @@ async function killProcess(pidStr, signal = 'SIGTERM') {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $CRON — View / stop scheduled jobs
+//   $CRON
 // ══════════════════════════════════════════════════════════════
 
 function manageCron(action, jobId) {
-    const act = (action || 'list').toLowerCase();
-
-    // Global cron registry — bot yako lazima isajili hapa
-    // global.cronJobs = Map<id, { name, interval, fn, timer }>
+    const act  = (action || 'list').toLowerCase();
     const jobs = global.cronJobs;
 
     if (!jobs || jobs.size === 0) {
@@ -514,10 +508,7 @@ function manageCron(action, jobId) {
         if (!jobId) return '❓ Format: $cron stop <id>';
         const job = jobs.get(jobId);
         if (!job) return `❌ Job *${jobId}* haipatikani.`;
-        if (job.timer) {
-            clearInterval(job.timer);
-            job.timer = null;
-        }
+        if (job.timer) { clearInterval(job.timer); job.timer = null; }
         return `✅ Job *${jobId}* (${job.name || 'Unnamed'}) imesimamishwa.`;
     }
 
@@ -543,7 +534,7 @@ function manageCron(action, jobId) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $CACHE — Futa messageCache / contactCache
+//   $CACHE
 // ══════════════════════════════════════════════════════════════
 
 function manageCache(target) {
@@ -586,7 +577,7 @@ function manageCache(target) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $BLOCK LIST — Orodha ya blocked numbers
+//   $BLOCK LIST
 // ══════════════════════════════════════════════════════════════
 
 async function getBlockList(sock) {
@@ -603,13 +594,12 @@ async function getBlockList(sock) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $GROUPS — Leave / Add member
+//   $GROUPS
 // ══════════════════════════════════════════════════════════════
 
 async function manageGroups(sock, action, ...args) {
     const act = (action || '').toLowerCase();
 
-    // $groups leave <groupId>
     if (act === 'leave') {
         const groupId = args[0];
         if (!groupId) return '❓ Format: $groups leave <groupId>';
@@ -622,7 +612,6 @@ async function manageGroups(sock, action, ...args) {
         }
     }
 
-    // $groups add <groupId> <number>
     if (act === 'add') {
         const [groupId, number] = args;
         if (!groupId || !number) return '❓ Format: $groups add <groupId> <number>';
@@ -640,7 +629,6 @@ async function manageGroups(sock, action, ...args) {
         }
     }
 
-    // $groups kick <groupId> <number>
     if (act === 'kick') {
         const [groupId, number] = args;
         if (!groupId || !number) return '❓ Format: $groups kick <groupId> <number>';
@@ -654,7 +642,6 @@ async function manageGroups(sock, action, ...args) {
         }
     }
 
-    // $groups promote / demote
     if (act === 'promote' || act === 'demote') {
         const [groupId, number] = args;
         if (!groupId || !number) return `❓ Format: $groups ${act} <groupId> <number>`;
@@ -668,13 +655,12 @@ async function manageGroups(sock, action, ...args) {
         }
     }
 
-    // $groups info <groupId>
     if (act === 'info') {
         const groupId = args[0];
         if (!groupId) return '❓ Format: $groups info <groupId>';
         const jid = groupId.includes('@g.us') ? groupId : `${groupId}@g.us`;
         try {
-            const meta = await sock.groupMetadata(jid);
+            const meta   = await sock.groupMetadata(jid);
             const admins = meta.participants.filter(p => p.admin).map(p => `+${p.id.split('@')[0]}`).join(', ');
             return (
                 `*ℹ️ Group Info*\n\n` +
@@ -702,18 +688,14 @@ async function manageGroups(sock, action, ...args) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $MSG DELETE — Delete message by ID
+//   $MSG DELETE
 // ══════════════════════════════════════════════════════════════
 
 async function deleteMessage(sock, from, input) {
-    // Format: $msg delete <jid> <messageId>
-    // au: $msg delete <messageId>  (kwenye same chat)
     const parts = input.trim().split(/\s+/);
-
     let targetJid, messageId;
 
     if (parts.length === 2) {
-        // jid + messageId
         targetJid = parts[0].includes('@') ? parts[0] : `${parts[0].replace(/[^0-9]/g, '')}@s.whatsapp.net`;
         messageId = parts[1];
     } else if (parts.length === 1) {
@@ -725,12 +707,7 @@ async function deleteMessage(sock, from, input) {
 
     try {
         await sock.sendMessage(targetJid, {
-            delete: {
-                remoteJid:    targetJid,
-                fromMe:       true,
-                id:           messageId,
-                participant:  undefined
-            }
+            delete: { remoteJid: targetJid, fromMe: true, id: messageId, participant: undefined }
         });
         return `✅ Ujumbe *${messageId}* umefutwa.`;
     } catch (e) {
@@ -745,7 +722,7 @@ async function manageMsg(sock, from, action, rest) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $PROFILE — Profile picture + status
+//   $PROFILE
 // ══════════════════════════════════════════════════════════════
 
 async function getProfile(sock, from, number) {
@@ -773,10 +750,7 @@ async function getProfile(sock, from, number) {
         );
 
         if (picUrl) {
-            await sock.sendMessage(from, {
-                image: { url: picUrl },
-                caption: info
-            });
+            await sock.sendMessage(from, { image: { url: picUrl }, caption: info });
             return null;
         }
 
@@ -787,7 +761,7 @@ async function getProfile(sock, from, number) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $SETNAME — Change bot display name
+//   $SETNAME / $SETSTATUS
 // ══════════════════════════════════════════════════════════════
 
 async function setBotName(sock, name) {
@@ -800,10 +774,6 @@ async function setBotName(sock, name) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-//   $SETSTATUS — Change bot status / bio
-// ══════════════════════════════════════════════════════════════
-
 async function setBotStatus(sock, status) {
     if (!status) return '❓ Format: $setstatus <maandishi>';
     try {
@@ -815,7 +785,7 @@ async function setBotStatus(sock, status) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $DB — Database queries (SELECT-only mode FIXED)
+//   $DB
 // ══════════════════════════════════════════════════════════════
 
 async function runDB(query, allowWrite = false) {
@@ -823,7 +793,6 @@ async function runDB(query, allowWrite = false) {
         const pool = global.dbPool;
         if (!pool) return '❌ Database pool haipatikani (global.dbPool)';
 
-        // ✅ FIX: Kuzuia multi-statement queries (SQL injection via ;)
         const statements = query.split(';').map(s => s.trim()).filter(Boolean);
         if (statements.length > 1) {
             return '🛡️ *Multi-statement queries haziruhusiwi.* Tumia query moja kwa wakati mmoja.';
@@ -834,7 +803,6 @@ async function runDB(query, allowWrite = false) {
             return '🛡️ *Query imezuiwa kwa usalama.*\nTumia WHERE clause kwa DELETE.';
         }
 
-        // ✅ FIX: Kwa default, ruhusu SELECT tu
         const isWrite = /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)/i.test(query);
         if (isWrite && !allowWrite) {
             return (
@@ -872,7 +840,7 @@ async function runDB(query, allowWrite = false) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $DB BACKUP — Dump DB to file
+//   $DB BACKUP
 // ══════════════════════════════════════════════════════════════
 
 async function backupDB(sock, from) {
@@ -881,16 +849,12 @@ async function backupDB(sock, from) {
 
     await sock.sendMessage(from, { text: '🗄️ *Inaunda backup ya database...*' });
 
-    const filename  = `backup_${Date.now()}.sql`;
-    const tmpPath   = path.join(os.tmpdir(), filename);
+    const filename = `backup_${Date.now()}.sql`;
+    const tmpPath  = path.join(os.tmpdir(), filename);
 
-    // Jaribu pg_dump (PostgreSQL)
-    const { output, error } = await runTerminal(
-        `pg_dump "${dbUrl}" -f "${tmpPath}" 2>&1`
-    );
+    const { output, error } = await runTerminal(`pg_dump "${dbUrl}" -f "${tmpPath}" 2>&1`);
 
     if (error && !fs.existsSync(tmpPath)) {
-        // Jaribu mysqldump kama pg_dump haifanyi kazi
         const mysqlMatch = dbUrl.match(/mysql:\/\/([^:]+):([^@]+)@([^/]+)\/(.+)/);
         if (mysqlMatch) {
             const [, user, pass, host, dbName] = mysqlMatch;
@@ -921,13 +885,12 @@ async function backupDB(sock, from) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $FILE — File system management
+//   $FILE
 // ══════════════════════════════════════════════════════════════
 
 async function manageFile(sock, from, action, ...args) {
     const act = (action || '').toLowerCase();
 
-    // $file ls [path]
     if (act === 'ls' || act === 'list') {
         const dir = args[0] || process.cwd();
         try {
@@ -949,7 +912,6 @@ async function manageFile(sock, from, action, ...args) {
         }
     }
 
-    // $file read <path>
     if (act === 'read' || act === 'cat') {
         const filePath = args[0];
         if (!filePath) return '❓ Format: $file read <path>';
@@ -961,7 +923,6 @@ async function manageFile(sock, from, action, ...args) {
         }
     }
 
-    // $file write <path> <content>
     if (act === 'write') {
         const filePath = args[0];
         const content  = args.slice(1).join(' ');
@@ -974,11 +935,9 @@ async function manageFile(sock, from, action, ...args) {
         }
     }
 
-    // $file delete <path>
     if (act === 'delete' || act === 'rm') {
         const filePath = args[0];
         if (!filePath) return '❓ Format: $file delete <path>';
-        // Safety — usiruhusu kufuta directories za mfumo
         const dangerous = ['/', '/etc', '/bin', '/usr', '/var', '/proc', '/sys'];
         if (dangerous.includes(filePath)) return '🛡️ Kufuta directory hii kumezuiwa.';
         try {
@@ -989,7 +948,6 @@ async function manageFile(sock, from, action, ...args) {
         }
     }
 
-    // $file send <path>
     if (act === 'send') {
         const filePath = args[0];
         if (!filePath) return '❓ Format: $file send <path>';
@@ -1009,7 +967,6 @@ async function manageFile(sock, from, action, ...args) {
         }
     }
 
-    // $file stat <path>
     if (act === 'stat' || act === 'info') {
         const filePath = args[0];
         if (!filePath) return '❓ Format: $file stat <path>';
@@ -1041,7 +998,7 @@ async function manageFile(sock, from, action, ...args) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $NODE — Node.js info + loaded modules
+//   $NODE
 // ══════════════════════════════════════════════════════════════
 
 async function getNodeInfo(query) {
@@ -1088,7 +1045,6 @@ async function getNodeInfo(query) {
     }
 
     if (q === 'loaded') {
-        // Loaded ES modules / require cache
         const cacheKeys = Object.keys(require?.cache || {});
         const list      = cacheKeys.slice(0, 30).map(k => `• ${path.relative(process.cwd(), k)}`).join('\n');
         return (
@@ -1102,7 +1058,7 @@ async function getNodeInfo(query) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $SEND — Tuma ujumbe kwa mtu yeyote
+//   $SEND
 // ══════════════════════════════════════════════════════════════
 
 async function sendMessage(sock, input) {
@@ -1127,7 +1083,7 @@ async function sendMessage(sock, input) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $BROADCAST — Broadcast na confirmation step (FIXED)
+//   $BROADCAST
 // ══════════════════════════════════════════════════════════════
 
 async function quickBroadcast(sock, from, text) {
@@ -1141,8 +1097,6 @@ async function quickBroadcast(sock, from, text) {
     }
 
     const ids = Object.keys(groups);
-
-    // ✅ FIX: Confirmation step
     setPending(from, 'broadcast', { text, ids });
     return (
         `⚠️ *Broadcast Confirmation*\n\n` +
@@ -1182,13 +1136,8 @@ async function banNumber(sock, number, unban = false) {
     const jid   = `${clean}@s.whatsapp.net`;
 
     try {
-        if (unban) {
-            await sock.updateBlockStatus(jid, 'unblock');
-            return `✅ *+${clean}* ameunblockiwa`;
-        } else {
-            await sock.updateBlockStatus(jid, 'block');
-            return `✅ *+${clean}* amebaniwa (blocked)`;
-        }
+        await sock.updateBlockStatus(jid, unban ? 'unblock' : 'block');
+        return `✅ *+${clean}* ${unban ? 'ameunblockiwa' : 'amebaniwa (blocked)'}`;
     } catch (e) {
         return `❌ Imeshindwa: ${e.message}`;
     }
@@ -1197,7 +1146,7 @@ async function banNumber(sock, number, unban = false) {
 const MAIN_OWNER_JID = OWNERS_LIST[0] || `${(process.env.OWNER_NUMBER || '').split(',')[0].replace(/[^0-9]/g, '')}@s.whatsapp.net`;
 
 // ══════════════════════════════════════════════════════════════
-//   $PING — Test connection
+//   $PING
 // ══════════════════════════════════════════════════════════════
 
 async function pingTarget(sock, target) {
@@ -1205,8 +1154,7 @@ async function pingTarget(sock, target) {
         const start = Date.now();
         try {
             await sock.sendPresenceUpdate('available', MAIN_OWNER_JID);
-            const latency = Date.now() - start;
-            return `🏓 *Bot Ping*\nLatency: ${latency}ms\nStatus: Online ✅`;
+            return `🏓 *Bot Ping*\nLatency: ${Date.now() - start}ms\nStatus: Online ✅`;
         } catch (e) {
             return `❌ Ping imeshindwa: ${e.message}`;
         }
@@ -1214,8 +1162,8 @@ async function pingTarget(sock, target) {
 
     const clean = target.replace(/[^0-9]/g, '');
     const jid   = target.includes('@g.us') ? target : `${clean}@s.whatsapp.net`;
-
     const start = Date.now();
+
     try {
         const result  = await sock.onWhatsApp(jid.replace('@s.whatsapp.net', ''));
         const latency = Date.now() - start;
@@ -1232,12 +1180,11 @@ async function pingTarget(sock, target) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $RESTART — na confirmation step (FIXED)
+//   $RESTART
 // ══════════════════════════════════════════════════════════════
 
 async function restartBot(sock, from, confirmed = false) {
     if (!confirmed) {
-        // ✅ FIX: Confirmation step
         setPending(from, 'restart', {});
         return (
             `⚠️ *Restart Confirmation*\n\n` +
@@ -1255,7 +1202,7 @@ async function restartBot(sock, from, confirmed = false) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $UPDATE — Smart update (Railway / Render / VPS)
+//   $UPDATE
 // ══════════════════════════════════════════════════════════════
 
 async function updateBot(sock, from) {
@@ -1270,11 +1217,7 @@ async function updateBot(sock, from) {
         const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
 
         if (!token) {
-            return (
-                `❌ *RAILWAY_TOKEN haipo!*\n\n` +
-                `Weka kwenye Railway ENV:\n` +
-                `\`RAILWAY_TOKEN=token_yako\``
-            );
+            return `❌ *RAILWAY_TOKEN haipo!*\n\nWeka kwenye Railway ENV:\n\`RAILWAY_TOKEN=token_yako\``;
         }
 
         await sock.sendMessage(from, { text: '🚂 *Inatrigger Railway redeploy...*' });
@@ -1290,21 +1233,14 @@ async function updateBot(sock, from) {
             `;
             const res  = await fetch('https://backboard.railway.app/graphql/v2', {
                 method:  'POST',
-                headers: {
-                    'Content-Type':  'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ query })
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body:    JSON.stringify({ query })
             });
             const data = await res.json();
             if (data.errors) {
                 return `❌ *Railway Error:*\n\`\`\`\n${JSON.stringify(data.errors, null, 2)}\n\`\`\``;
             }
-            return (
-                `✅ *Railway Redeploy imetriggeriwa!*\n\n` +
-                `Bot itarudi baada ya dakika 1-2\n` +
-                `Branch: ${process.env.RAILWAY_GIT_BRANCH || 'main'}`
-            );
+            return `✅ *Railway Redeploy imetriggeriwa!*\n\nBot itarudi baada ya dakika 1-2\nBranch: ${process.env.RAILWAY_GIT_BRANCH || 'main'}`;
         } catch (e) {
             return `❌ Railway imeshindwa: ${e.message}`;
         }
@@ -1313,11 +1249,7 @@ async function updateBot(sock, from) {
     if (isRender) {
         const deployHook = process.env.RENDER_DEPLOY_HOOK;
         if (!deployHook) {
-            return (
-                `❌ *RENDER_DEPLOY_HOOK haipo!*\n\n` +
-                `Render Dashboard → Service → Settings → Deploy Hook\n` +
-                `Kisha weka: \`RENDER_DEPLOY_HOOK=https://...\``
-            );
+            return `❌ *RENDER_DEPLOY_HOOK haipo!*\n\nRender Dashboard → Service → Settings → Deploy Hook\nKisha weka: \`RENDER_DEPLOY_HOOK=https://...\``;
         }
         await sock.sendMessage(from, { text: '🎨 *Inatrigger Render redeploy...*' });
         try {
@@ -1371,7 +1303,7 @@ async function getLogs(lines = 50) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $AI — AI memory management
+//   $AI
 // ══════════════════════════════════════════════════════════════
 
 async function manageAI(subcommand, target) {
@@ -1437,7 +1369,7 @@ async function manageAI(subcommand, target) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $SESSIONS — DB sessions
+//   $SESSIONS
 // ══════════════════════════════════════════════════════════════
 
 async function manageSessions(subcommand) {
@@ -1468,7 +1400,7 @@ async function manageSessions(subcommand) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $GC — Garbage Collection
+//   $GC
 // ══════════════════════════════════════════════════════════════
 
 function runGC() {
@@ -1483,7 +1415,7 @@ function runGC() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $PERF — Performance profiling
+//   $PERF
 // ══════════════════════════════════════════════════════════════
 
 async function runPerf(code, context) {
@@ -1513,7 +1445,7 @@ async function runPerf(code, context) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $ENV — Runtime env management
+//   $ENV
 // ══════════════════════════════════════════════════════════════
 
 function manageEnv(action, key, value) {
@@ -1547,7 +1479,7 @@ function manageEnv(action, key, value) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   $EXPORT — Export historia
+//   $EXPORT
 // ══════════════════════════════════════════════════════════════
 
 function exportHistory() {
@@ -1569,7 +1501,7 @@ function exportHistory() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//   HELP MESSAGE — Updated
+//   HELP
 // ══════════════════════════════════════════════════════════════
 
 function getHelp() {
@@ -1645,6 +1577,8 @@ export async function execute(sock, msg, args) {
 
     console.log('\n⚡ [EVAL] execute() imeitwa!');
     console.log('  from:', from);
+    console.log('  fromMe:', msg.key.fromMe);
+    console.log('  ownerLid:', global.ownerLid || 'haijawekwa');
 
     if (!isOwner(msg)) {
         console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
@@ -1682,7 +1616,6 @@ export async function execute(sock, msg, args) {
     const start = Date.now();
 
     try {
-        // ── $confirm ──
         if (/^\$confirm$/i.test(text)) {
             const pending = getPending(from);
             if (!pending) return reply('❌ Hakuna action inayosubiri confirmation (au imekwisha muda).');
@@ -1692,25 +1625,15 @@ export async function execute(sock, msg, args) {
             return reply('❓ Action isiyojulikana.');
         }
 
-        // ── $cancel ──
         if (/^\$cancel$/i.test(text)) {
             const had = getPending(from);
             clearPending(from);
             return reply(had ? `✅ Action *${had.action}* imefutwa.` : '❌ Hakuna action inayosubiri.');
         }
 
-        // ── $help ──
-        if (/^\$help$/i.test(text)) {
-            return reply(getHelp());
-        }
+        if (/^\$help$/i.test(text))    return reply(getHelp());
+        if (/^\$clear$/i.test(text))   { evalHistory.length = 0; return reply('🗑️ Historia imefutwa.'); }
 
-        // ── $clear ──
-        if (/^\$clear$/i.test(text)) {
-            evalHistory.length = 0;
-            return reply('🗑️ Historia imefutwa.');
-        }
-
-        // ── $history ──
         if (/^\$history$/i.test(text)) {
             if (!evalHistory.length) return reply('📭 Historia haina chochote.');
             const list = evalHistory.map((h, i) =>
@@ -1721,7 +1644,6 @@ export async function execute(sock, msg, args) {
             return reply(`*📋 EVAL HISTORY (${evalHistory.length}):*\n\n${list}`);
         }
 
-        // ── $export ──
         if (/^\$export$/i.test(text)) {
             const { text: errText, content, filename } = exportHistory();
             if (errText) return reply(errText);
@@ -1740,46 +1662,27 @@ export async function execute(sock, msg, args) {
             return;
         }
 
-        // ── $uptime ──
-        if (/^\$uptime$/i.test(text)) {
-            return reply(getUptime());
-        }
+        if (/^\$uptime$/i.test(text))  return reply(getUptime());
+        if (/^\$restart$/i.test(text)) return reply(await restartBot(sock, from, false));
+        if (/^\$update$/i.test(text))  { const r = await updateBot(sock, from); return r ? reply(r) : undefined; }
 
-        // ── $restart ──
-        if (/^\$restart$/i.test(text)) {
-            return reply(await restartBot(sock, from, false));
-        }
-
-        // ── $update ──
-        if (/^\$update$/i.test(text)) {
-            const res = await updateBot(sock, from);
-            return res ? reply(res) : undefined;
-        }
-
-        // ── $logs [lines] ──
         if (/^\$logs(\s+\d+)?$/i.test(text)) {
             const lines = parseInt(text.split(/\s+/)[1]) || 50;
             return reply(await getLogs(lines));
         }
 
-        // ── $gc ──
-        if (/^\$gc$/i.test(text)) {
-            return reply(runGC());
-        }
+        if (/^\$gc$/i.test(text)) return reply(runGC());
 
-        // ── $kill <pid> [signal] ──
         if (/^\$kill\s+/i.test(text)) {
-            const parts  = text.replace(/^\$kill\s+/i, '').trim().split(/\s+/);
+            const parts = text.replace(/^\$kill\s+/i, '').trim().split(/\s+/);
             return reply(await killProcess(parts[0], parts[1] || 'SIGTERM'));
         }
 
-        // ── $ping [target] ──
         if (/^\$ping/i.test(text)) {
             const target = text.replace(/^\$ping\s*/i, '').trim() || null;
             return reply(await pingTarget(sock, target));
         }
 
-        // ── $send <num> <msg> ──
         if (/^\$send\s+/i.test(text)) {
             const input = text.replace(/^\$send\s+/i, '');
             const res   = await sendMessage(sock, input);
@@ -1787,41 +1690,28 @@ export async function execute(sock, msg, args) {
             return reply(res);
         }
 
-        // ── $broadcast <msg> ──
         if (/^\$broadcast\s*/i.test(text)) {
             const msg2 = text.replace(/^\$broadcast\s*/i, '').trim();
             return reply(await quickBroadcast(sock, from, msg2));
         }
 
-        // ── $ban <num> ──
         if (/^\$ban\s+/i.test(text)) {
-            const num = text.replace(/^\$ban\s+/i, '').trim();
-            return reply(await banNumber(sock, num, false));
+            return reply(await banNumber(sock, text.replace(/^\$ban\s+/i, '').trim(), false));
         }
 
-        // ── $unban <num> ──
         if (/^\$unban\s+/i.test(text)) {
-            const num = text.replace(/^\$unban\s+/i, '').trim();
-            return reply(await banNumber(sock, num, true));
+            return reply(await banNumber(sock, text.replace(/^\$unban\s+/i, '').trim(), true));
         }
 
-        // ── $block list ──
-        if (/^\$block\s+list$/i.test(text)) {
-            return reply(await getBlockList(sock));
-        }
+        if (/^\$block\s+list$/i.test(text)) return reply(await getBlockList(sock));
 
-        // ── $state [query] ──
         if (/^\$state/i.test(text)) {
             const query = text.replace(/^\$state\s*/i, '').trim() || 'all';
             return reply(await getBotState(sock, query));
         }
 
-        // ── $db backup ──
-        if (/^\$db\s+backup$/i.test(text)) {
-            return backupDB(sock, from);
-        }
+        if (/^\$db\s+backup$/i.test(text)) return backupDB(sock, from);
 
-        // ── $db <SQL> — SELECT only ──
         if (/^\$db\s+/i.test(text)) {
             const sql = text.replace(/^\$db\s+/i, '').trim();
             const res = await runDB(sql, false);
@@ -1829,7 +1719,6 @@ export async function execute(sock, msg, args) {
             return reply(res);
         }
 
-        // ── $dbw <SQL> — Write queries ──
         if (/^\$dbw\s+/i.test(text)) {
             const sql = text.replace(/^\$dbw\s+/i, '').trim();
             const res = await runDB(sql, true);
@@ -1837,113 +1726,82 @@ export async function execute(sock, msg, args) {
             return reply(res);
         }
 
-        // ── $sessions [sub] ──
         if (/^\$sessions/i.test(text)) {
             const sub = text.replace(/^\$sessions\s*/i, '').trim() || 'list';
             return reply(await manageSessions(sub));
         }
 
-        // ── $ai <sub> [target] ──
         if (/^\$ai/i.test(text)) {
             const parts = text.replace(/^\$ai\s*/i, '').trim().split(/\s+/);
             return reply(await manageAI(parts[0], parts[1]));
         }
 
-        // ── $env <action> [key] [value] ──
         if (/^\$env/i.test(text)) {
             const parts = text.replace(/^\$env\s*/i, '').trim().split(/\s+/);
             return reply(manageEnv(parts[0], parts[1], parts.slice(2).join(' ')));
         }
 
-        // ── $contacts ──
-        if (/^\$contacts$/i.test(text)) {
-            return reply(getContactsList());
-        }
+        if (/^\$contacts$/i.test(text)) return reply(getContactsList());
+        if (/^\$(socket|ws)$/i.test(text)) return reply(await getBotState(sock, 'socket'));
 
-        // ── $socket / $ws ──
-        if (/^\$(socket|ws)$/i.test(text)) {
-            return reply(await getBotState(sock, 'socket'));
-        }
-
-        // ── $perf <code> ──
         if (/^\$perf\s+/i.test(text)) {
             const code = text.replace(/^\$perf\s+/i, '').trim();
             return reply(await runPerf(code, { sock, msg, from }));
         }
 
-        // ── $profile <number> ──
         if (/^\$profile\s+/i.test(text)) {
-            const number = text.replace(/^\$profile\s+/i, '').trim();
-            return reply(await getProfile(sock, from, number));
+            return reply(await getProfile(sock, from, text.replace(/^\$profile\s+/i, '').trim()));
         }
 
-        // ── $setname <name> ──
         if (/^\$setname\s+/i.test(text)) {
-            const name = text.replace(/^\$setname\s+/i, '').trim();
-            return reply(await setBotName(sock, name));
+            return reply(await setBotName(sock, text.replace(/^\$setname\s+/i, '').trim()));
         }
 
-        // ── $setstatus <text> ──
         if (/^\$setstatus\s+/i.test(text)) {
-            const statusText = text.replace(/^\$setstatus\s+/i, '').trim();
-            return reply(await setBotStatus(sock, statusText));
+            return reply(await setBotStatus(sock, text.replace(/^\$setstatus\s+/i, '').trim()));
         }
 
-        // ── $groups <action> [args] ──
         if (/^\$groups/i.test(text)) {
-            const parts  = text.replace(/^\$groups\s*/i, '').trim().split(/\s+/);
+            const parts = text.replace(/^\$groups\s*/i, '').trim().split(/\s+/);
             return reply(await manageGroups(sock, parts[0], ...parts.slice(1)));
         }
 
-        // ── $msg <action> [args] ──
         if (/^\$msg\s+/i.test(text)) {
             const parts  = text.replace(/^\$msg\s+/i, '').trim().split(/\s+/);
-            const action = parts[0];
-            const rest   = parts.slice(1).join(' ');
-            return reply(await manageMsg(sock, from, action, rest));
+            return reply(await manageMsg(sock, from, parts[0], parts.slice(1).join(' ')));
         }
 
-        // ── $whitelist ──
         if (/^\$whitelist/i.test(text)) {
             const parts = text.replace(/^\$whitelist\s*/i, '').trim().split(/\s+/);
             return reply(manageWhitelist(parts[0], parts[1]));
         }
 
-        // ── $ratelimit ──
         if (/^\$ratelimit/i.test(text)) {
             const parts = text.replace(/^\$ratelimit\s*/i, '').trim().split(/\s+/);
             return reply(manageRateLimit(parts[0], parts[1], parts[2]));
         }
 
-        // ── $cron ──
         if (/^\$cron/i.test(text)) {
             const parts = text.replace(/^\$cron\s*/i, '').trim().split(/\s+/);
             return reply(manageCron(parts[0], parts[1]));
         }
 
-        // ── $cache ──
         if (/^\$cache/i.test(text)) {
-            const target = text.replace(/^\$cache\s*/i, '').trim() || 'all';
-            return reply(manageCache(target));
+            return reply(manageCache(text.replace(/^\$cache\s*/i, '').trim() || 'all'));
         }
 
-        // ── $file ──
         if (/^\$file/i.test(text)) {
             const parts = text.replace(/^\$file\s*/i, '').trim().split(/\s+/);
             return reply(await manageFile(sock, from, parts[0], ...parts.slice(1)));
         }
 
-        // ── $node ──
         if (/^\$node/i.test(text)) {
-            const query = text.replace(/^\$node\s*/i, '').trim() || 'info';
-            return reply(await getNodeInfo(query));
+            return reply(await getNodeInfo(text.replace(/^\$node\s*/i, '').trim() || 'info'));
         }
 
-        // ── $ <terminal command> ──
         if (/^\$\s+/.test(text) || text.startsWith('$ ')) {
             const cmd = text.replace(/^\$\s+/, '').trim();
             if (!cmd) return reply('❓ Format: $ <command>');
-
             const { output, error } = await runTerminal(cmd);
             const res = `*💻 Terminal:*\n\`\`\`\n${output}\n\`\`\`${error ? '\n⚠️ (stderr/error)' : ''}`;
             addToHistory('terminal', cmd, output.slice(0, 100), Date.now() - start);
@@ -1966,8 +1824,8 @@ export async function execute(sock, msg, args) {
             }
         }
 
-        const output  = formatOutput(result);
-        const timeMs  = Date.now() - start;
+        const output = formatOutput(result);
+        const timeMs = Date.now() - start;
 
         addToHistory('eval', text, output, timeMs);
 
