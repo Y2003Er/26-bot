@@ -72,19 +72,39 @@ function normalizeJid(jid) {
 
 function isOwner(msg) {
     const OWNERS_LIST = getOwnersList();
-    const isGroup   = msg.key.remoteJid?.endsWith('@g.us');
-    const rawSender = isGroup
-        ? (msg.key.participant || '')
-        : (msg.key.remoteJid || '');
+    const isGroup = msg.key.remoteJid?.endsWith('@g.us');
 
-    // 1. Group message sent BY the bot itself
-    if (isGroup && msg.key.fromMe === true) return true;
+    // ── Pata JID halisi ya mtumaji ──
+    // DM:    sender = remoteJid (namba ya mtu anayeandika)
+    // Group: sender = participant
+    // fromMe=true means the BOT sent it — si mtu
+    let senderJid = '';
 
-    // 2. Standard phone JID check (from .env OWNER_NUMBER)
-    if (OWNERS_LIST.includes(normalizeJid(rawSender))) return true;
+    if (isGroup) {
+        senderJid = msg.key.participant || '';
+    } else {
+        // DM kutoka bot yenyewe — siyo owner check
+        if (msg.key.fromMe === true) return false;
+        senderJid = msg.key.remoteJid || '';
+    }
 
-    // 3. LID check — @lid ni WhatsApp Linked Device ID
-    if (rawSender.endsWith('@lid') && !isGroup) return true;
+    if (!senderJid) return false;
+
+    // Normalize: ondoa device suffix (:0, :1) na domain
+    const normalized = normalizeJid(senderJid);
+
+    // Check dhidi ya OWNER_NUMBER zilizo kwenye .env
+    if (OWNERS_LIST.includes(normalized)) return true;
+
+    // @lid support — Baileys inaweza kutuma @lid kwa linked devices
+    // LAZIMA namba ilingane na owner iliyosajiliwa kwenye .env
+    if (senderJid.endsWith('@lid')) {
+        const lidNumber = senderJid.split('@')[0].split(':')[0];
+        return OWNERS_LIST.some(ownerJid => {
+            const ownerNumber = ownerJid.split('@')[0];
+            return ownerNumber === lidNumber;
+        });
+    }
 
     return false;
 }
