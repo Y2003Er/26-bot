@@ -4,10 +4,12 @@
  */
 
 import yts from 'yt-search';
+import path from 'path';
 import { createRequire } from 'module';
+
 const require = createRequire(import.meta.url);
-// Tunasoma faili la CommonJS kwa usalama ndani ya ES Modules
-const APIs = require('../api.js'); 
+// Hapa tunaiambia itoke kwenye folder la command iende root folder kwa usahihi
+const APIs = require(path.resolve(process.cwd(), './api.js')); 
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
