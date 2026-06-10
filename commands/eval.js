@@ -37,21 +37,11 @@ import os                 from 'os';
 import fs                 from 'fs';
 import path               from 'path';
 
-// ══════════════════════════════════════════════════════════════
-//   OWNER CHECK — @lid bypass FIXED
-// ══════════════════════════════════════════════════════════════
-
+// ── Owner check (Maboresho ya Multi-owner Support) ──
 const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
     .split(',')
     .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
     .filter(jid => jid !== '@s.whatsapp.net');
-
-// ✅ FIX: Whitelist halisi ya LID zako — weka kwenye ENV au array hapa
-// Mfano: OWNER_LID=abc123@lid,def456@lid
-const OWNER_LID_LIST = (process.env.OWNER_LID || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.endsWith('@lid'));
 
 function normalizeJid(jid) {
     if (!jid) return '';
@@ -61,27 +51,8 @@ function normalizeJid(jid) {
 function isOwner(msg) {
     const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
     const isFromMe = msg.key.fromMe === true;
-    const rawJid   = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
-    const sender   = normalizeJid(rawJid);
-
-    // ✅ FIX: @lid sasa inahitaji iwe kwenye OWNER_LID_LIST — si yote
-    const isLidSender = rawJid.endsWith('@lid') && OWNER_LID_LIST.includes(rawJid);
-
-    const result = OWNERS_LIST.includes(sender) || (isGroup && isFromMe) || isLidSender;
-
-    console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
-    console.log('  remoteJid  :', msg.key.remoteJid);
-    console.log('  participant:', msg.key.participant || '(none)');
-    console.log('  fromMe     :', isFromMe);
-    console.log('  isGroup    :', isGroup);
-    console.log('  rawJid     :', rawJid);
-    console.log('  sender     :', sender);
-    console.log('  isLid      :', isLidSender);
-    console.log('  OWNERS_LIST:', OWNERS_LIST);
-    console.log('  isOwner ✅ :', result);
-    console.log('─────────────────────────────────────\n');
-
-    return result;
+    const sender   = normalizeJid(isGroup ? (msg.key.participant || '') : msg.key.remoteJid);
+    return OWNERS_LIST.includes(sender) || (isGroup && isFromMe);
 }
 
 // ══════════════════════════════════════════════════════════════
