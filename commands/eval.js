@@ -57,7 +57,11 @@ import path        from 'path';
 // ── Bot start time (mara moja tu) ──
 const BOT_START_TIME = new Date();
 
-// ── Owner check (env-based, multi-owner) ──
+// ── Owner check ──
+// OWNER_NUMBER kwenye .env = namba za simu (255...)
+// global.ownerLid = LID ya owner — inawekwa na index.js wakati connection inafunguka
+//   (sock.user.lid) — LID ni tofauti na namba ya simu, haiwezi kujulikana mapema
+
 function getOwnersList() {
     return (process.env.OWNER_NUMBER || '')
         .split(',')
@@ -74,41 +78,42 @@ function isOwner(msg) {
     const OWNERS_LIST = getOwnersList();
     const isGroup = msg.key.remoteJid?.endsWith('@g.us');
 
-    // ── Pata JID halisi ya mtumaji ──
-    // DM:    sender = remoteJid (namba ya mtu anayeandika)
-    // Group: sender = participant
-    // fromMe=true means the BOT sent it — si mtu
     let senderJid = '';
-
     if (isGroup) {
         senderJid = msg.key.participant || '';
     } else {
-        // DM kutoka bot yenyewe — siyo owner check
         if (msg.key.fromMe === true) return false;
         senderJid = msg.key.remoteJid || '';
     }
-
     if (!senderJid) return false;
 
-    // Normalize: ondoa device suffix (:0, :1) na domain
-    const normalized = normalizeJid(senderJid);
+    // 1. Namba ya simu — check dhidi ya OWNER_NUMBER kwenye .env
+    if (OWNERS_LIST.includes(normalizeJid(senderJid))) return true;
 
-    // Check dhidi ya OWNER_NUMBER zilizo kwenye .env
-    if (OWNERS_LIST.includes(normalized)) return true;
-
-    // @lid support — Baileys inaweza kutuma @lid kwa linked devices
-    // LAZIMA namba ilingane na owner iliyosajiliwa kwenye .env
+    // 2. LID check — LID ya owner imehifadhiwa kwenye global.ownerLid
+    //    wakati bot inaunganika (sock.user.lid) au kwenye global.ownerLids (Set)
+    //    LID haihusiani na namba ya simu — ni ID tofauti ya WhatsApp
     if (senderJid.endsWith('@lid')) {
-        const lidNumber = senderJid.split('@')[0].split(':')[0];
-        return OWNERS_LIST.some(ownerJid => {
-            const ownerNumber = ownerJid.split('@')[0];
-            return ownerNumber === lidNumber;
-        });
+        // Normalize LID: ondoa device suffix (:26, :0, n.k.)
+        const senderLidBase = senderJid.split(':')[0].split('@')[0];
+
+        // Angalia global.ownerLids (Set ya LID bases)
+        if (global.ownerLids instanceof Set) {
+            for (const lid of global.ownerLids) {
+                const lidBase = String(lid).split(':')[0].split('@')[0];
+                if (lidBase === senderLidBase) return true;
+            }
+        }
+
+        // Angalia global.ownerLid (string moja — compat na code ya zamani)
+        if (global.ownerLid) {
+            const ownerLidBase = String(global.ownerLid).split(':')[0].split('@')[0];
+            if (ownerLidBase === senderLidBase) return true;
+        }
     }
 
     return false;
 }
-
 // ── History ──
 const evalHistory = [];
 const MAX_HISTORY = 20;
