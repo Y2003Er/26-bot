@@ -1,4 +1,4 @@
-// index.js - FULL FIXED VERSION
+// index.js - FULL FIXED VERSION (Owner + Pre-keys Loop)
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -30,7 +30,7 @@ import {
 import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
 
-// ── Maboresho kwa ajili ya Eval SQL Commands ($db) ──
+// ── Database Pool kwa $db commands ──
 import pg from 'pg';
 const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
@@ -68,11 +68,7 @@ const bannerState = {
     messages:   0,
     groups:     0,
     lastMsg:    '—',
-    ai:         process.env.GROQ_API_KEY
-                    ? 'Groq + Gemini'
-                    : process.env.GEMINI_API_KEY
-                    ? 'Gemini'
-                    : '—',
+    ai:         process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime:  Date.now(),
 };
 
@@ -94,20 +90,8 @@ function getRAM() {
 
 function printBanner() {
     const s = bannerState;
-
-    const connVal = s.connection === 'ONLINE'
-        ? `\( {C.green} \){C.bold}🟢 ONLINE${C.reset}`
-        : s.connection === 'connecting'
-        ? `\( {C.yellow}⏳ Connecting... \){C.reset}`
-        : s.connection === 'OFFLINE'
-        ? `\( {C.red}🔴 OFFLINE \){C.reset}`
-        : `\( {C.yellow} \){s.connection}${C.reset}`;
-
-    const dbVal = s.database.includes('✅')
-        ? `\( {C.green}✅ Connected \){C.reset}`
-        : s.database.includes('❌')
-        ? `\( {C.red}❌ Error \){C.reset}`
-        : `\( {C.yellow} \){s.database}${C.reset}`;
+    const connVal = s.connection === 'ONLINE' ? `\( {C.green} \){C.bold}🟢 ONLINE\( {C.reset}` : ` \){C.yellow}\( {s.connection} \){C.reset}`;
+    const dbVal = s.database.includes('✅') ? `\( {C.green}✅ Connected \){C.reset}` : `\( {C.yellow} \){s.database}${C.reset}`;
 
     const lines = [
         `\( {C.cyan}┌─────────────────────────────────────────────┐ \){C.reset}`,
@@ -124,7 +108,6 @@ function printBanner() {
         `\( {C.cyan}│ \){C.reset}  ${C.gray}Last: \( {s.lastMsg} \){C.reset}`,
         `\( {C.cyan}└─────────────────────────────────────────────┘ \){C.reset}`,
     ];
-
     lines.forEach(line => console.log(line));
     console.log('');
 }
@@ -145,7 +128,7 @@ const log = {
     blank:   ()    => console.log(''),
 };
 
-// ====================== GLOBAL IS OWNER - FIXED ======================
+// ====================== GLOBAL IS OWNER (FIXED) ======================
 global.isOwner = (jid) => {
     if (!jid) return false;
     const ownerNum = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
@@ -160,35 +143,22 @@ global.isOwner = (jid) => {
 
     if (senderClean === ownerClean || String(jid).includes(ownerNum)) return true;
 
-    // LID Check
     if (String(jid).endsWith('@lid') && global.ownerLid) {
         if (normalize(jid) === normalize(global.ownerLid)) return true;
     }
-
     return false;
 };
 // =====================================================================
 
 function resolveOwnerLid(sock) {
-    // Njia 1: sock.user.lid
-    let lid = sock.user?.lid;
+    let lid = sock.user?.lid || sock.authState?.creds?.me?.lid;
     if (lid) {
         const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
         global.ownerLid = fullLid;
-        log.success(`Owner LID (sock.user.lid): ${fullLid}`);
+        log.success(`Owner LID imesetiwa: ${fullLid}`);
         return fullLid;
     }
-
-    // Njia 2: creds
-    lid = sock.authState?.creds?.me?.lid;
-    if (lid) {
-        const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
-        global.ownerLid = fullLid;
-        log.success(`Owner LID (creds.me.lid): ${fullLid}`);
-        return fullLid;
-    }
-
-    log.warn('Owner LID haikupatikana — itajaribu tena baadaye');
+    log.warn('Owner LID haikupatikana mara moja');
     return null;
 }
 
@@ -266,10 +236,26 @@ async function startBot() {
             patchMessageBeforeSending:      (msg) => msg,
             retryRequestDelayMs:            2000,
             maxRetries:                     5,
+
+            // ── PRE-KEYS LOOP FIX ──
+            syncFullHistory:                false,
+            shouldSyncHistory:              () => false,
+            markOnlineOnConnect:            true,
+            emitOwnEvents:                  false,
+            // ───────────────────────
         });
 
         sock.ev.on('creds.update', saveCreds);
         setupContactListener(sock);
+
+        // Anti Pre-key Spam
+        let preKeyCount = 0;
+        sock.ev.on('creds.update', () => {
+            preKeyCount++;
+            if (preKeyCount % 5 === 0) {
+                console.log(`⚠️ Pre-keys upload count: ${preKeyCount} (inazuiliwa spam)`);
+            }
+        });
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
@@ -283,18 +269,14 @@ async function startBot() {
                 const isRegistered = !!(state.creds?.me || state.creds?.account);
                 if (!isRegistered) {
                     pairingRequested = true;
-                    log.info(`Subiri sekunde ${PAIRING_DELAY / 1000} kabla ya kuomba pairing code...`);
+                    log.info(`Subiri sekunde ${PAIRING_DELAY / 1000}...`);
                     setTimeout(async () => {
                         try {
-                            if (state.creds?.me || state.creds?.account) {
-                                log.success('Session imeshaingia kabla ya pairing — skip.');
-                                return;
-                            }
-                            log.info(`📱 Inaomba pairing code kwa: ${PHONE_NUMBER}`);
+                            if (state.creds?.me || state.creds?.account) return;
                             const code = await sock.requestPairingCode(PHONE_NUMBER);
                             displayPairingCode(code);
                         } catch (err) {
-                            log.error(`Pairing code imeshindwa: ${err.message}`);
+                            log.error(`Pairing error: ${err.message}`);
                             pairingRequested = false;
                         }
                     }, PAIRING_DELAY);
@@ -308,11 +290,11 @@ async function startBot() {
                 hasEverOpened = true;
                 updateBanner('connection', 'ONLINE');
 
-                // ✅ FIXED OWNER SETUP
+                // Owner Setup
                 resolveOwnerLid(sock);
                 global.owner = process.env.OWNER_NUMBER || "255753495142";
 
-                console.log(`🔑 GLOBAL OWNER SETUP COMPLETE`);
+                console.log(`🔑 GLOBAL OWNER SETUP`);
                 console.log(`   • OWNER_NUMBER : ${global.owner}`);
                 console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
 
@@ -324,43 +306,31 @@ async function startBot() {
                 setupAntiDelete(sock);
                 setupAntiViewOnce(sock);
                 setupAutoStatusViewer(sock);
-
                 initGroupProtection(sock, logger);
 
                 log.div();
                 log.success('BOT IMEUNGANIKA ✔');
-                log.success('Session imehifadhiwa kwenye PostgreSQL (JSONB)');
+                log.success('Session imehifadhiwa kwenye PostgreSQL');
                 log.div();
                 printBanner();
+
                 isConnecting = false;
-                bootLock     = false;
+                bootLock = false;
             }
 
             if (connection === 'close') {
                 clearOpenTimer();
                 const code = lastDisconnect?.error?.output?.statusCode;
                 isConnecting = false;
-                bootLock     = false;
+                bootLock = false;
                 updateBanner('connection', 'OFFLINE');
 
                 log.div();
                 log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
-                if (code === 515) {
-                    log.info('Pairing restart (515) — restarting in 2s...');
-                    setTimeout(startBot, 2000);
-                } else if (code === 440) {
-                    log.warn('Connection replaced (440) — restarting in 15s...');
-                    setTimeout(startBot, 15000);
-                } else if (code === DisconnectReason.loggedOut || code === 401) {
-                    log.warn('Code 401 — restarting bila kufuta session...');
-                    log.warn('(Kama unataka fresh login: weka CLEAN_SESSIONS=true kwenye Railway)');
-                    setTimeout(startBot, 10000);
-                } else if (!hasEverOpened) {
-                    log.warn('Haijaunganika kabla — restarting in 15s...');
-                    setTimeout(startBot, 15000);
+                if (code === 515 || code === 440 || code === 401 || !hasEverOpened) {
+                    setTimeout(startBot, code === 515 ? 2000 : 7000);
                 } else {
-                    log.warn('Disconnect baada ya open — restarting in 7s...');
                     setTimeout(startBot, 7000);
                 }
             }
@@ -372,19 +342,13 @@ async function startBot() {
             if (!msg.message) return;
 
             bannerState.messages++;
-            const text =
-                msg.message?.conversation ||
-                msg.message?.extendedTextMessage?.text || '[media]';
+            const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
             const isGroup = msg.key.remoteJid?.endsWith('@g.us');
-            const time    = new Date().toLocaleTimeString('en-GB', {
-                hour: '2-digit', minute: '2-digit'
-            });
+            const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             const source = isGroup ? 'Group' : 'DM';
 
             updateBanner('messages', bannerState.messages);
-            updateBanner('lastMsg',
-                `${time} · ${source} · \( {text.slice(0, 25)} \){text.length > 25 ? '...' : ''}`
-            );
+            updateBanner('lastMsg', `${time} · ${source} · \( {text.slice(0, 25)} \){text.length > 25 ? '...' : ''}`);
 
             console.log(`📩 ${msg.key.remoteJid}: ${text}`);
 
@@ -394,20 +358,14 @@ async function startBot() {
             const sender = msg.key.participant || msg.key.remoteJid;
 
             const isMentioned = text.toLowerCase().includes('26-tech') ||
-                                msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
+                msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
             if (isMentioned && !msg.key.fromMe) {
-                if (aiCache.has(sender)) {
-                    return;
-                }
-
-                aiCache.set(sender, true);
-
-                if (!text.startsWith(global.prefix)) {
-                    if (msg.message.conversation) {
-                        msg.message.conversation = `${global.prefix}ai ${text}`;
-                    } else if (msg.message.extendedTextMessage) {
-                        msg.message.extendedTextMessage.text = `${global.prefix}ai ${text}`;
+                if (!aiCache.has(sender)) {
+                    aiCache.set(sender, true);
+                    if (!text.startsWith(global.prefix)) {
+                        if (msg.message.conversation) msg.message.conversation = `${global.prefix}ai ${text}`;
+                        else if (msg.message.extendedTextMessage) msg.message.extendedTextMessage.text = `${global.prefix}ai ${text}`;
                     }
                 }
             }
@@ -416,23 +374,21 @@ async function startBot() {
         });
 
         openTimer = setTimeout(() => {
-            log.warn('Timeout — restart...');
+            log.warn('Timeout — restarting...');
             isConnecting = false;
-            bootLock     = false;
-            try { sock?.ev?.removeAllListeners(); sock?.ws?.close(); } catch {}
+            bootLock = false;
+            try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 7000);
         }, 180000);
 
         if (state.creds?.me || state.creds?.account) {
             log.success('Session ipo PostgreSQL — Inaunganika...');
-        } else {
-            log.info('Session mpya — inasubiri pairing...');
         }
 
     } catch (err) {
         log.error(`HITILAFU → ${err.message}`);
         isConnecting = false;
-        bootLock     = false;
+        bootLock = false;
         setTimeout(startBot, 7000);
     }
 }
@@ -444,14 +400,13 @@ async function startBot() {
         updateBanner('database', '✅ Connected');
 
         if (process.env.CLEAN_SESSIONS === 'true') {
-            log.warn('🧹 CLEAN_SESSIONS=true — Inafuta session zote...');
+            log.warn('CLEAN_SESSIONS=true — Inafuta session zote...');
             await deleteAllSessions();
-            log.success('Session zote zimefutwa. Sasa itafanya pairing mpya.');
+            log.success('Session zote zimefutwa.');
         }
 
         await startBot();
     } catch (err) {
-        updateBanner('database', '❌ Error');
         log.error(`DB error: ${err.message}`);
         process.exit(1);
     }
