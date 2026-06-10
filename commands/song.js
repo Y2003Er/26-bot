@@ -1,10 +1,5 @@
-/**
- * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la ES Modules la 26-TECH
- */
-
 import yts from 'yt-search';
-import { APIs } from '../api.js'; 
+import APIs from '../api.js'; 
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube';
@@ -52,7 +47,7 @@ export async function execute(sock, msg, args) {
             console.log('🔄 [26-TECH] Kujaribu Yupro Audio...');
             const res1 = await APIs.getYupraDownloadByUrl(videoUrl);
             if (res1 && res1.download) downloadUrl = res1.download;
-        } catch (e) {
+        } catch (error) {
             console.warn('⚠️ Yupro Audio imefeli.');
         }
 
@@ -62,7 +57,7 @@ export async function execute(sock, msg, args) {
                 console.log('🔄 [26-TECH] Kujaribu Izumi Audio...');
                 const res2 = await APIs.getIzumiDownloadByUrl(videoUrl);
                 if (res2 && res2.download) downloadUrl = res2.download;
-            } catch (e) {
+            } catch (error) {
                 console.warn('⚠️ Izumi Audio imefeli.');
             }
         }
@@ -73,7 +68,7 @@ export async function execute(sock, msg, args) {
                 console.log('🔄 [26-TECH] Kujaribu Okatsu Audio...');
                 const res3 = await APIs.getOkatsuDownloadByUrl(videoUrl);
                 if (res3 && res3.download) downloadUrl = res3.download;
-            } catch (e) {
+            } catch (error) {
                 console.warn('⚠️ Okatsu Audio imefeli.');
             }
         }
@@ -84,7 +79,7 @@ export async function execute(sock, msg, args) {
                 console.log('🔄 [26-TECH] Kujaribu EliteProTech Audio...');
                 const res4 = await APIs.getEliteProTechDownloadByUrl(videoUrl);
                 if (res4 && res4.download) downloadUrl = res4.download;
-            } catch (e) {
+            } catch (error) {
                 console.error('❌ Seva zote za Audio zimegoma.');
             }
         }
@@ -102,8 +97,8 @@ export async function execute(sock, msg, args) {
             caption: `🎵 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
-    } catch (error) {
-        console.error('Song fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
+    } catch (err) {
+        console.error('Song fatal error:', err);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${err.message}` }, { quoted: msg });
     }
 }
