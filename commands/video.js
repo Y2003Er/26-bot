@@ -1,6 +1,6 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la 26-TECH (Bypass Mode)
+ * Download video kutoka YouTube — Toleo la Debug la 26-TECH
  */
 
 import yts from 'yt-search';
@@ -24,22 +24,16 @@ export async function execute(sock, msg, args) {
     }
 
     try {
-        // Tuma ujumbe wa kuanza kupakua
         await sock.sendMessage(from, { text: '⏳ *Napakua video yako kutoka YouTube, subiri sekunde chache...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
-        let videoDuration = '';
-        let videoViews = '';
 
-        // 1. Tafuta video kwenye YouTube kwa yt-search
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
             const searchLink = await yts(text);
             if (searchLink && searchLink.videos.length > 0) {
                 videoTitle = searchLink.videos[0].title;
-                videoDuration = searchLink.videos[0].timestamp;
-                videoViews = searchLink.videos[0].views;
             }
         } else {
             const { videos } = await yts(text);
@@ -48,50 +42,58 @@ export async function execute(sock, msg, args) {
             }
             videoUrl = videos[0].url;
             videoTitle = videos[0].title;
-            videoDuration = videos[0].timestamp;
-            videoViews = videos[0].views;
         }
 
-        const finalTitle = videoTitle || 'Video';
         let downloadUrl = null;
+        let errorLogs = [];
 
-        // TUNAPIGA API YA DIRECT BYPASS AMBACHO HAIKWAMI RAILWAY
+        // Jaribio la 1: GiftedTech
         try {
-            const apiRes = await axios.get(`https://api.giftedtech.my.id/api/download/dlmp4?url=${encodeURIComponent(videoUrl)}`);
-            if (apiRes.data && apiRes.data.success && apiRes.data.result && apiRes.data.result.download_url) {
-                downloadUrl = apiRes.data.result.download_url;
-            } else if (apiRes.data && apiRes.data.result && apiRes.data.result.download) {
-                downloadUrl = apiRes.data.result.download;
+            const res1 = await axios.get(`https://api.giftedtech.my.id/api/download/dlmp4?url=${encodeURIComponent(videoUrl)}`);
+            if (res1.data?.success && (res1.data?.result?.download_url || res1.data?.result?.download)) {
+                downloadUrl = res1.data.result.download_url || res1.data.result.download;
+            } else {
+                errorLogs.push(`GiftedTech: Response invalid (${JSON.stringify(res1.data)})`);
             }
         } catch (e) {
-            console.warn('⚠️ Bypass API 1 imefeli, tunajaribu API 2...');
+            errorLogs.push(`GiftedTech Error: ${e.message}`);
+        }
+
+        // Jaribio la 2: Agatz
+        if (!downloadUrl) {
             try {
-                const apiRes2 = await axios.get(`https://api.agatz.xyz/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
-                if (apiRes2.data && apiRes2.data.status === 200 && apiRes2.data.data.url) {
-                    downloadUrl = apiRes2.data.data.url;
+                const res2 = await axios.get(`https://api.agatz.xyz/api/ytmp4?url=${encodeURIComponent(videoUrl)}`);
+                if (res2.data?.status === 200 && res2.data?.data?.url) {
+                    downloadUrl = res2.data.data.url;
+                } else {
+                    errorLogs.push(`Agatz: Response invalid (${JSON.stringify(res2.data)})`);
                 }
             } catch (e2) {
-                console.error('❌ API zote zimegoma kupenya.');
+                errorLogs.push(`Agatz Error: ${e2.message}`);
             }
         }
 
-        // Kama bado zote zimegoma kupata link ya download
+        // Kama zote zimegoma, tunarusha makosa halisi kule WhatsApp ili tujue nini kimefeli
         if (!downloadUrl) {
-            return await sock.sendMessage(from, { 
-                text: '❌ Kushindwa kupakua video. Mfumo wa YouTube umeweka ulinzi mkali sana kwenye seva za Railway kwa sasa. Jaribu tena baadae kidogo.' 
-            }, { quoted: msg });
+            let debugMessage = `❌ *Kushindwa kupakua video.*\n\n*Ripoti ya Makosa (Debug Logs):*\n`;
+            errorLogs.forEach((log, index) => {
+                debugMessage += `${index + 1}. ${log}\n`;
+            });
+            debugMessage += `\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`;
+            
+            return await sock.sendMessage(from, { text: debugMessage }, { quoted: msg });
         }
 
-        // 3. Tuma video ikiwa imekamilika kwenda kwa mteja ikiwa na brand ya 26-𝐓𝐄𝐂𝐇
+        // 3. Tuma video ikiwa imepatikana
         await sock.sendMessage(from, {
             video: { url: downloadUrl },
             mimetype: 'video/mp4',
-            fileName: `${finalTitle.replace(/[^:\w\s-]/g, '')}.mp4`,
-            caption: `🎬 *${finalTitle}*\n\n⏱️ *Muda:* ${videoDuration || 'Haufahamiki'}\n👀 *Views:* ${videoViews || '0'}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            fileName: `${videoTitle.replace(/[^:\w\s-]/g, '')}.mp4`,
+            caption: `🎬 *${videoTitle || 'Video'}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
     } catch (error) {
         console.error('Video command fatal error:', error);
-        await sock.sendMessage(from, { text: '❌ Kushindwa kupakua video, mfumo una fujo kwa sasa.' }, { quoted: msg });
+        await sock.sendMessage(from, { text: `❌ Fatal Error: ${error.message}` }, { quoted: msg });
     }
 }
