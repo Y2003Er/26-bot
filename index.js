@@ -46,7 +46,10 @@ const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 }); 
 // ─────────────────────────────────────────────────────────
 
-const logger       = pino({ level: 'info' });
+// Cache ya kuzuia meseji kujirudia (Duplicate Messages Prevention)
+const processedMessages = new Set();
+
+const logger       = pino({ level: 'silent' }); // Imewekwa 'silent' kuzuia pino spamming kule Railway
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID   = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
@@ -265,8 +268,7 @@ async function startBot() {
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
 
-            if (connection) {
-                updateBanner('connection', connection === 'open' ? 'ONLINE' : connection);
+            if (connection) { updateBanner('connection', connection === 'open' ? 'ONLINE' : connection);
                 log.state(`Connection  →  ${connection}`);
             }
 
@@ -346,6 +348,11 @@ async function startBot() {
             const msg = messages[0];
             if (!msg.message) return;
 
+            // Kuzuia usindikaji wa meseji ile ile mara mbili (Duplicate Fix)
+            if (processedMessages.has(msg.key.id)) return;
+            processedMessages.add(msg.key.id);
+            setTimeout(() => processedMessages.delete(msg.key.id), 5 * 60 * 1000); // Futa baada ya dkk 5
+
             const jid = msg.key.remoteJid;
             if (!jid) return;
 
@@ -388,7 +395,17 @@ async function startBot() {
                 }
             }
 
-            await handleMessage(sock, msg);
+            // ── UTEKELEZAJI WA PARAMETER YA EXTRA KWA AJILI YA MODERN COMMANDS ──
+            const extra = {
+                from: jid,
+                sender: sender,
+                prefix: global.prefix,
+                reply: async (txt) => {
+                    return await sock.sendMessage(jid, { text: txt }, { quoted: msg });
+                }
+            };
+
+            await handleMessage(sock, msg, extra);
         });
 
         openTimer = setTimeout(() => {
