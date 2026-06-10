@@ -1,4 +1,4 @@
-// index.js
+// index.js - FULL FIXED VERSION
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -89,40 +89,40 @@ function getUptime() {
 function getRAM() {
     const used  = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
-    return `${used}/${total} MB`;
+    return `\( {used}/ \){total} MB`;
 }
 
 function printBanner() {
     const s = bannerState;
 
     const connVal = s.connection === 'ONLINE'
-        ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
+        ? `\( {C.green} \){C.bold}🟢 ONLINE${C.reset}`
         : s.connection === 'connecting'
-        ? `${C.yellow}⏳ Connecting...${C.reset}`
+        ? `\( {C.yellow}⏳ Connecting... \){C.reset}`
         : s.connection === 'OFFLINE'
-        ? `${C.red}🔴 OFFLINE${C.reset}`
-        : `${C.yellow}${s.connection}${C.reset}`;
+        ? `\( {C.red}🔴 OFFLINE \){C.reset}`
+        : `\( {C.yellow} \){s.connection}${C.reset}`;
 
     const dbVal = s.database.includes('✅')
-        ? `${C.green}✅ Connected${C.reset}`
+        ? `\( {C.green}✅ Connected \){C.reset}`
         : s.database.includes('❌')
-        ? `${C.red}❌ Error${C.reset}`
-        : `${C.yellow}${s.database}${C.reset}`;
+        ? `\( {C.red}❌ Error \){C.reset}`
+        : `\( {C.yellow} \){s.database}${C.reset}`;
 
     const lines = [
-        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}◈ Connection${C.reset}  →  ${connVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database${C.reset}   →  ${dbVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands${C.reset}   →  ${C.green}${s.commands}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}📨 Messages${C.reset}   →  ${C.white}${s.messages}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}👥 Groups${C.reset}     →  ${C.white}${s.groups}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🤖 AI${C.reset}         →  ${C.magenta}${s.ai}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}💾 RAM${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
-        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
+        `\( {C.cyan}┌─────────────────────────────────────────────┐ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold} \){C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: \( {getUptime()} \){C.reset}`,
+        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}◈ Connection \){C.reset}  →  ${connVal}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🗄️  Database \){C.reset}   →  ${dbVal}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}⚡ Commands \){C.reset}   →  \( {C.green} \){s.commands}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}📨 Messages \){C.reset}   →  \( {C.white} \){s.messages}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}👥 Groups \){C.reset}     →  \( {C.white} \){s.groups}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🤖 AI \){C.reset}         →  \( {C.magenta} \){s.ai}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}💾 RAM \){C.reset}        →  \( {C.blue} \){getRAM()}${C.reset}`,
+        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  ${C.gray}Last: \( {s.lastMsg} \){C.reset}`,
+        `\( {C.cyan}└─────────────────────────────────────────────┘ \){C.reset}`,
     ];
 
     lines.forEach(line => console.log(line));
@@ -145,12 +145,59 @@ const log = {
     blank:   ()    => console.log(''),
 };
 
+// ====================== GLOBAL IS OWNER - FIXED ======================
+global.isOwner = (jid) => {
+    if (!jid) return false;
+    const ownerNum = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
+
+    const normalize = (str) => String(str)
+        .split(':')[0]
+        .replace(/@lid\( |@s.whatsapp.net \)/, '')
+        .replace(/[^0-9]/g, '');
+
+    const senderClean = normalize(jid);
+    const ownerClean  = normalize(ownerNum);
+
+    if (senderClean === ownerClean || String(jid).includes(ownerNum)) return true;
+
+    // LID Check
+    if (String(jid).endsWith('@lid') && global.ownerLid) {
+        if (normalize(jid) === normalize(global.ownerLid)) return true;
+    }
+
+    return false;
+};
+// =====================================================================
+
+function resolveOwnerLid(sock) {
+    // Njia 1: sock.user.lid
+    let lid = sock.user?.lid;
+    if (lid) {
+        const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
+        global.ownerLid = fullLid;
+        log.success(`Owner LID (sock.user.lid): ${fullLid}`);
+        return fullLid;
+    }
+
+    // Njia 2: creds
+    lid = sock.authState?.creds?.me?.lid;
+    if (lid) {
+        const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
+        global.ownerLid = fullLid;
+        log.success(`Owner LID (creds.me.lid): ${fullLid}`);
+        return fullLid;
+    }
+
+    log.warn('Owner LID haikupatikana — itajaribu tena baadaye');
+    return null;
+}
+
 if (!process.env.DATABASE_URL) {
     log.error('DATABASE_URL haipo — Bot imesimama.');
     process.exit(1);
 }
 if (!PHONE_NUMBER || !/^\d{10,15}$/.test(PHONE_NUMBER)) {
-    log.error('PHONE_NUMBER si sahihi (mfano: 255753595142)');
+    log.error('PHONE_NUMBER si sahihi (mfano: 255753495142)');
     process.exit(1);
 }
 
@@ -176,53 +223,6 @@ function displayPairingCode(code) {
     console.log('👆 WhatsApp → Linked Devices → Link a Device');
     console.log('👆 Link with phone number → Weka namba yako');
     console.log('👆 Popup itatokea yenyewe — bonyeza CONFIRM\n');
-}
-
-// ════════════════════════════════════════════════
-//   HELPER — Pata Owner LID kwa njia zote
-//   Inaitwa mara connection inafunguka
-// ════════════════════════════════════════════════
-function resolveOwnerLid(sock) {
-    // Njia 1: sock.user.lid — rahisi na ya kuaminika zaidi
-    const fromUser = sock.user?.lid;
-    if (fromUser) {
-        const lid = fromUser.endsWith('@lid') ? fromUser : `${fromUser}@lid`;
-        global.ownerLid = lid;
-        log.success(`Owner LID (sock.user.lid): ${lid}`);
-        return lid;
-    }
-
-    // Njia 2: authState creds me lid
-    const fromCreds = sock.authState?.creds?.me?.lid;
-    if (fromCreds) {
-        const lid = fromCreds.endsWith('@lid') ? fromCreds : `${fromCreds}@lid`;
-        global.ownerLid = lid;
-        log.success(`Owner LID (creds.me.lid): ${lid}`);
-        return lid;
-    }
-
-    // Njia 3: Kama LID bado haijulikani — angalia baadaye
-    log.warn('Owner LID haikupatikana mara moja — itajaribu tena...');
-
-    // Jaribu tena baada ya sekunde 3 (WhatsApp inaweza kuchelewa kidogo)
-    setTimeout(() => {
-        const retryLid = sock.user?.lid || sock.authState?.creds?.me?.lid;
-        if (retryLid) {
-            const lid = retryLid.endsWith('@lid') ? retryLid : `${retryLid}@lid`;
-            global.ownerLid = lid;
-            log.success(`Owner LID (retry): ${lid}`);
-        } else {
-            // Njia ya mwisho: tumia sock.user.id kubadilisha kuwa LID format
-            // Hii si LID halisi lakini inafanya kazi kama fallback
-            const userId = sock.user?.id;
-            if (userId) {
-                log.warn(`LID haipatikani — eval itategemea OWNER_NUMBER tu`);
-                log.warn(`(Tuma .eval sock.user kujua LID yako)`);
-            }
-        }
-    }, 3000);
-
-    return null;
 }
 
 async function startBot() {
@@ -308,8 +308,13 @@ async function startBot() {
                 hasEverOpened = true;
                 updateBanner('connection', 'ONLINE');
 
-                // ✅ HIFADHI OWNER LID — kwa njia zote zinazowezekana
+                // ✅ FIXED OWNER SETUP
                 resolveOwnerLid(sock);
+                global.owner = process.env.OWNER_NUMBER || "255753495142";
+
+                console.log(`🔑 GLOBAL OWNER SETUP COMPLETE`);
+                console.log(`   • OWNER_NUMBER : ${global.owner}`);
+                console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
 
                 try {
                     const groups = await sock.groupFetchAllParticipating();
@@ -378,7 +383,7 @@ async function startBot() {
 
             updateBanner('messages', bannerState.messages);
             updateBanner('lastMsg',
-                `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`
+                `${time} · ${source} · \( {text.slice(0, 25)} \){text.length > 25 ? '...' : ''}`
             );
 
             console.log(`📩 ${msg.key.remoteJid}: ${text}`);
