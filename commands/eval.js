@@ -74,7 +74,7 @@ function normalizeJid(jid) {
     return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
 }
 
-function isOwner(msg) {
+function isOwner(msg, sock) {
     const OWNERS_LIST = getOwnersList();
     const isGroup = msg.key.remoteJid?.endsWith('@g.us');
 
@@ -90,14 +90,17 @@ function isOwner(msg) {
     // 1. Namba ya simu — check dhidi ya OWNER_NUMBER kwenye .env
     if (OWNERS_LIST.includes(normalizeJid(senderJid))) return true;
 
-    // 2. LID check — LID ya owner imehifadhiwa kwenye global.ownerLid
-    //    wakati bot inaunganika (sock.user.lid) au kwenye global.ownerLids (Set)
-    //    LID haihusiani na namba ya simu — ni ID tofauti ya WhatsApp
+    // 2. LID check — sender ni @lid (WhatsApp Linked Device ID)
     if (senderJid.endsWith('@lid')) {
-        // Normalize LID: ondoa device suffix (:26, :0, n.k.)
         const senderLidBase = senderJid.split(':')[0].split('@')[0];
 
-        // Angalia global.ownerLids (Set ya LID bases)
+        // 2a. Linganisha na sock.user.lid moja kwa moja (hakuna haja ya global)
+        if (sock?.user?.lid) {
+            const ownerLidBase = String(sock.user.lid).split(':')[0].split('@')[0];
+            if (ownerLidBase === senderLidBase) return true;
+        }
+
+        // 2b. global.ownerLids (Set) — kwa multi-owner au linked devices
         if (global.ownerLids instanceof Set) {
             for (const lid of global.ownerLids) {
                 const lidBase = String(lid).split(':')[0].split('@')[0];
@@ -105,7 +108,7 @@ function isOwner(msg) {
             }
         }
 
-        // Angalia global.ownerLid (string moja — compat na code ya zamani)
+        // 2c. global.ownerLid (string fallback)
         if (global.ownerLid) {
             const ownerLidBase = String(global.ownerLid).split(':')[0].split('@')[0];
             if (ownerLidBase === senderLidBase) return true;
@@ -1765,7 +1768,7 @@ export async function execute(sock, msg, args) {
     console.log('  from:', from);
 
     // ── Owner check (kutoka .env OWNER_NUMBER) ──
-    if (!isOwner(msg)) {
+    if (!isOwner(msg, sock)) {
         console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
         return;
     }
