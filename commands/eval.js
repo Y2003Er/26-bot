@@ -38,7 +38,7 @@ import fs                 from 'fs';
 import path               from 'path';
 
 // ══════════════════════════════════════════════════════════════
-//   OWNER CHECK — @lid bypass FIXED
+//   OWNER CHECK — @lid FIXED (kutumia sock.authState)
 // ══════════════════════════════════════════════════════════════
 
 const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
@@ -46,9 +46,10 @@ const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
     .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
     .filter(jid => jid !== '@s.whatsapp.net');
 
-// ✅ FIX: Whitelist halisi ya LID zako — weka kwenye ENV au array hapa
-// Mfano: OWNER_LID=abc123@lid,def456@lid
-const OWNER_LID_LIST = (process.env.OWNER_LID || '')
+// OWNER_LID_LIST — inajazwa automatically wakati wa runtime
+// kutoka sock.authState au inaweza kuwekwa manually kwenye ENV
+// Mfano manual: OWNER_LID=40304560349344@lid,xyz@lid
+const OWNER_LID_LIST_ENV = (process.env.OWNER_LID || '')
     .split(',')
     .map(s => s.trim())
     .filter(s => s.endsWith('@lid'));
@@ -58,16 +59,40 @@ function normalizeJid(jid) {
     return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
 }
 
-function isOwner(msg) {
+function isOwner(msg, sock) {
     const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
     const isFromMe = msg.key.fromMe === true;
     const rawJid   = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
     const sender   = normalizeJid(rawJid);
 
-    // ✅ FIX: @lid sasa inahitaji iwe kwenye OWNER_LID_LIST — si yote
-    const isLidSender = rawJid.endsWith('@lid') && OWNER_LID_LIST.includes(rawJid);
+    // ── Njia 1: @s.whatsapp.net kawaida ──
+    const isNormalOwner = OWNERS_LIST.includes(sender);
 
-    const result = OWNERS_LIST.includes(sender) || (isGroup && isFromMe) || isLidSender;
+    // ── Njia 2: fromMe kwenye group (linked device) ──
+    const isGroupFromMe = isGroup && isFromMe;
+
+    // ── Njia 3: @lid — Linked Device ID ──
+    // Tunachukua LID ya bot yenyewe kutoka sock.authState (reliable zaidi)
+    // na tunalinganisha na rawJid
+    let isLidOwner = false;
+    if (rawJid.endsWith('@lid')) {
+        // Angalia kwenye ENV kwanza
+        if (OWNER_LID_LIST_ENV.includes(rawJid)) {
+            isLidOwner = true;
+        }
+        // Angalia kwenye sock — WhatsApp hutoa LID ya account yako
+        // sock.authState.creds.me?.lid au sock.user?.lid
+        else {
+            const myLid = sock?.authState?.creds?.me?.lid
+                       || sock?.user?.lid
+                       || null;
+            if (myLid && rawJid === myLid) {
+                isLidOwner = true;
+            }
+        }
+    }
+
+    const result = isNormalOwner || isGroupFromMe || isLidOwner;
 
     console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
     console.log('  remoteJid  :', msg.key.remoteJid);
@@ -76,7 +101,8 @@ function isOwner(msg) {
     console.log('  isGroup    :', isGroup);
     console.log('  rawJid     :', rawJid);
     console.log('  sender     :', sender);
-    console.log('  isLid      :', isLidSender);
+    console.log('  myLid      :', sock?.authState?.creds?.me?.lid || sock?.user?.lid || '(haipo)');
+    console.log('  isLidOwner :', isLidOwner);
     console.log('  OWNERS_LIST:', OWNERS_LIST);
     console.log('  isOwner ✅ :', result);
     console.log('─────────────────────────────────────\n');
@@ -1675,7 +1701,7 @@ export async function execute(sock, msg, args) {
     console.log('\n⚡ [EVAL] execute() imeitwa!');
     console.log('  from:', from);
 
-    if (!isOwner(msg)) {
+    if (!isOwner(msg, sock)) {
         console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
         return;
     }
