@@ -85,28 +85,28 @@ function getUptime() {
 function getRAM() {
     const used  = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
-    return `${used}/${total} MB`;
+    return `\( {used}/ \){total} MB`;
 }
 
 function printBanner() {
     const s = bannerState;
-    const connVal = s.connection === 'ONLINE' ? `${C.green}${C.bold}🟢 ONLINE${C.reset}` : `${C.yellow}${s.connection}${C.reset}`;
-    const dbVal = s.database.includes('✅') ? `${C.green}✅ Connected${C.reset}` : `${C.yellow}${s.database}${C.reset}`;
+    const connVal = s.connection === 'ONLINE' ? `\( {C.green} \){C.bold}🟢 ONLINE\( {C.reset}` : ` \){C.yellow}\( {s.connection} \){C.reset}`;
+    const dbVal = s.database.includes('✅') ? `\( {C.green}✅ Connected \){C.reset}` : `\( {C.yellow} \){s.database}${C.reset}`;
 
     const lines = [
-        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}◈ Connection${C.reset}  →  ${connVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database${C.reset}   →  ${dbVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands${C.reset}   →  ${C.green}${s.commands}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}📨 Messages${C.reset}   →  ${C.white}${s.messages}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}👥 Groups${C.reset}     →  ${C.white}${s.groups}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🤖 AI${C.reset}         →  ${C.magenta}${s.ai}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}💾 RAM${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
-        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
+        `\( {C.cyan}┌─────────────────────────────────────────────┐ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold} \){C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: \( {getUptime()} \){C.reset}`,
+        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}◈ Connection \){C.reset}  →  ${connVal}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🗄️  Database \){C.reset}   →  ${dbVal}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}⚡ Commands \){C.reset}   →  \( {C.green} \){s.commands}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}📨 Messages \){C.reset}   →  \( {C.white} \){s.messages}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}👥 Groups \){C.reset}     →  \( {C.white} \){s.groups}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}🤖 AI \){C.reset}         →  \( {C.magenta} \){s.ai}${C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  \( {C.bold}💾 RAM \){C.reset}        →  \( {C.blue} \){getRAM()}${C.reset}`,
+        `\( {C.cyan}├─────────────────────────────────────────────┤ \){C.reset}`,
+        `\( {C.cyan}│ \){C.reset}  ${C.gray}Last: \( {s.lastMsg} \){C.reset}`,
+        `\( {C.cyan}└─────────────────────────────────────────────┘ \){C.reset}`,
     ];
     lines.forEach(line => console.log(line));
     console.log('');
@@ -128,56 +128,24 @@ const log = {
     blank:   ()    => console.log(''),
 };
 
-// ====================== GLOBAL IS OWNER (ROBUST – AUTO-DETECTS PAIRED NUMBER) ======================
-global.isOwner = (jid, sock = null, msg = null) => {
+// ====================== GLOBAL IS OWNER (FIXED) ======================
+global.isOwner = (jid) => {
     if (!jid) return false;
+    const ownerNum = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
 
-    // Normalise: remove EVERYTHING except digits
-    const normalize = (str) => String(str).replace(/[^0-9]/g, '');
-
-    // Collect all possible owner numbers
-    let ownerNumbers = new Set();
-
-    // 1. From OWNER_NUMBER env (comma separated)
-    if (process.env.OWNER_NUMBER) {
-        process.env.OWNER_NUMBER.split(',').forEach(n => {
-            const clean = normalize(n);
-            if (clean) ownerNumbers.add(clean);
-        });
-    }
-
-    // 2. From PHONE_NUMBER (the number used for pairing)
-    if (process.env.PHONE_NUMBER) {
-        ownerNumbers.add(normalize(process.env.PHONE_NUMBER));
-    }
-
-    // 3. From bot's own ID (sock.user.id) – this makes the paired number owner automatically
-    if (sock && sock.user && sock.user.id) {
-        ownerNumbers.add(normalize(sock.user.id));
-    }
-
-    // 4. LID support
-    let ownerLids = new Set();
-    if (global.ownerLid) ownerLids.add(normalize(global.ownerLid));
-    if (process.env.OWNER_LID) {
-        process.env.OWNER_LID.split(',').forEach(l => ownerLids.add(normalize(l)));
-    }
+    const normalize = (str) => String(str)
+        .split(':')[0]
+        .replace(/@lid\( |@s.whatsapp.net \)/, '')
+        .replace(/[^0-9]/g, '');
 
     const senderClean = normalize(jid);
+    const ownerClean  = normalize(ownerNum);
 
-    // Compare numbers
-    if (ownerNumbers.has(senderClean)) return true;
+    if (senderClean === ownerClean || String(jid).includes(ownerNum)) return true;
 
-    // Compare LIDs
-    if (jid.includes('@lid')) {
-        const senderLidClean = normalize(jid);
-        if (ownerLids.has(senderLidClean)) return true;
+    if (String(jid).endsWith('@lid') && global.ownerLid) {
+        if (normalize(jid) === normalize(global.ownerLid)) return true;
     }
-
-    // fromMe (message sent by the bot itself)
-    if (msg && msg.key && msg.key.fromMe === true) return true;
-
-    console.log(`[OWNER CHECK] senderClean=${senderClean} | ownerNumbers=[${[...ownerNumbers].join(',')}]`);
     return false;
 };
 // =====================================================================
@@ -324,10 +292,10 @@ async function startBot() {
 
                 // Owner Setup
                 resolveOwnerLid(sock);
-                global.owner = process.env.OWNER_NUMBER || null;
+                global.owner = process.env.OWNER_NUMBER || "255753495142";
 
                 console.log(`🔑 GLOBAL OWNER SETUP`);
-                console.log(`   • OWNER_NUMBER : ${global.owner || 'auto-detect from paired number'}`);
+                console.log(`   • OWNER_NUMBER : ${global.owner}`);
                 console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
 
                 try {
@@ -380,7 +348,7 @@ async function startBot() {
             const source = isGroup ? 'Group' : 'DM';
 
             updateBanner('messages', bannerState.messages);
-            updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
+            updateBanner('lastMsg', `${time} · ${source} · \( {text.slice(0, 25)} \){text.length > 25 ? '...' : ''}`);
 
             console.log(`📩 ${msg.key.remoteJid}: ${text}`);
 
