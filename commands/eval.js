@@ -1778,6 +1778,14 @@ export async function execute(sock, msg, args) {
     console.log('  from:', from);
 
     // ── Owner check (kutoka .env OWNER_NUMBER) ──
+    const isGroup_exec = msg.key.remoteJid?.endsWith('@g.us');
+    const senderJid_exec = isGroup_exec
+        ? (msg.key.participant || '')
+        : (msg.key.fromMe ? '' : (msg.key.remoteJid || ''));
+    console.log('  [EVAL] senderJid:', senderJid_exec);
+    console.log('  [EVAL] sock.user.lid:', sock?.user?.lid);
+    console.log('  [EVAL] OWNER_NUMBER env:', process.env.OWNER_NUMBER);
+
     if (!isOwner(msg, sock)) {
         console.log('❌ [EVAL] isOwner = false — inarejea bila kujibu');
         return;
