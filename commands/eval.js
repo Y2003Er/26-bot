@@ -63,10 +63,20 @@ const BOT_START_TIME = new Date();
 //   (sock.user.lid) — LID ni tofauti na namba ya simu, haiwezi kujulikana mapema
 
 function getOwnersList() {
-    return (process.env.OWNER_NUMBER || '')
-        .split(',')
+    // Kusanya namba kutoka env keys zote zinazowezekana
+    const rawKeys = [
+        process.env.OWNER_NUMBER,
+        process.env.OWNER_NUMBERS,
+        process.env.PHONE_NUMBER,
+        process.env.SUDO_USERS,
+    ];
+    const all = rawKeys
+        .filter(Boolean)
+        .flatMap(val => val.split(','))
         .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
         .filter(jid => jid !== '@s.whatsapp.net');
+    // Ondoa duplicates
+    return [...new Set(all)];
 }
 
 function normalizeJid(jid) {
