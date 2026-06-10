@@ -1,15 +1,11 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la Ndani la 26-TECH (Fallback)
+ * Download video kutoka YouTube — Toleo la ES Modules la 26-TECH
  */
 
 import yts from 'yt-search';
-import path from 'path';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-// Hapa tunaiambia itoke kwenye folder la command iende root folder kwa usahihi
-const APIs = require(path.resolve(process.cwd(), './api.js')); 
+// Inatoka hatua moja nyuma kwenye commands/ na kusoma api.js iliyopo root directly
+import APIs from '../api.js'; 
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
