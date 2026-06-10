@@ -4,7 +4,7 @@
  */
 
 import yts from 'yt-search';
-import { APIs } from '../api.js'; 
+import APIs from '../api.js'; 
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -52,7 +52,7 @@ export async function execute(sock, msg, args) {
             console.log('🔄 [26-TECH] Kujaribu Yupro Video...');
             const res1 = await APIs.getYupraVideoByUrl(videoUrl);
             if (res1 && res1.download) downloadUrl = res1.download;
-        } catch (e) {
+        } catch (error) {
             console.warn('⚠️ Yupro Video imefeli.');
         }
 
@@ -62,7 +62,7 @@ export async function execute(sock, msg, args) {
                 console.log('🔄 [26-TECH] Kujaribu Okatsu Video...');
                 const res2 = await APIs.getOkatsuVideoByUrl(videoUrl);
                 if (res2 && res2.download) downloadUrl = res2.download;
-            } catch (e) {
+            } catch (error) {
                 console.warn('⚠️ Okatsu Video imefeli.');
             }
         }
@@ -73,7 +73,7 @@ export async function execute(sock, msg, args) {
                 console.log('🔄 [26-TECH] Kujaribu EliteProTech Video...');
                 const res3 = await APIs.getEliteProTechVideoByUrl(videoUrl);
                 if (res3 && res3.download) downloadUrl = res3.download;
-            } catch (e) {
+            } catch (error) {
                 console.error('❌ Seva zote za Video zimegoma.');
             }
         }
@@ -91,8 +91,8 @@ export async function execute(sock, msg, args) {
             caption: `🎬 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
-    } catch (error) {
-        console.error('Video fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
+    } catch (err) {
+        console.error('Video fatal error:', err);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${err.message}` }, { quoted: msg });
     }
 }
