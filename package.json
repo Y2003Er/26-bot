@@ -1,5 +1,5 @@
 {
-  "name": "26-𝐓𝐄𝐂𝐇",
+  "name": "26-tech-suite",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
@@ -16,7 +16,7 @@
     "node-cache": "^5.1.2",
     "pg": "^8.11.5",
     "pino": "^8.17.2",
-    "ruhend-scraper": "^8.9.1",
+    "ruhend-scraper": "^8.0.3",
     "sharp": "^0.34.5",
     "yt-search": "^2.12.1"
   }
