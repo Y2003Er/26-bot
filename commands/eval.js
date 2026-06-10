@@ -75,8 +75,17 @@ function getOwnersList() {
         .flatMap(val => val.split(','))
         .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
         .filter(jid => jid !== '@s.whatsapp.net');
-    // Ondoa duplicates
     return [...new Set(all)];
+}
+
+function getOwnerLids() {
+    // OWNER_LID kwenye .env — LID numbers za owners (e.g. 40304560349344)
+    // Zinaweza kuwa nyingi: OWNER_LID=40304560349344,12345678
+    const raw = process.env.OWNER_LID || '';
+    return raw
+        .split(',')
+        .map(s => s.trim().replace(/[^0-9]/g, ''))
+        .filter(Boolean);
 }
 
 function normalizeJid(jid) {
@@ -85,46 +94,80 @@ function normalizeJid(jid) {
 }
 
 function isOwner(msg, sock) {
-    const OWNERS_LIST = getOwnersList();
+    if (!msg || !sock) return false;
+
+    const OWNER_NUMBER = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
     const isGroup = msg.key.remoteJid?.endsWith('@g.us');
 
-    let senderJid = '';
-    if (isGroup) {
-        senderJid = msg.key.participant || '';
-    } else {
-        if (msg.key.fromMe === true) return false;
-        senderJid = msg.key.remoteJid || '';
-    }
+    // Pata sender sahihi
+    let senderJid = isGroup
+        ? (msg.key.participant || '')
+        : (msg.key.remoteJid || '');
+
     if (!senderJid) return false;
 
-    // 1. Namba ya simu — check dhidi ya OWNER_NUMBER kwenye .env
-    if (OWNERS_LIST.includes(normalizeJid(senderJid))) return true;
+    console.log(`[EVAL] Raw senderJid: ${senderJid}`);
+    console.log(`[EVAL] sock.user.lid: ${sock?.user?.lid || 'haipo'}`);
+    console.log(`[EVAL] OWNER_NUMBER: ${OWNER_NUMBER}`);
 
-    // 2. LID check — sender ni @lid (WhatsApp Linked Device ID)
-    if (senderJid.endsWith('@lid')) {
-        const senderLidBase = senderJid.split(':')[0].split('@')[0];
+    // ==================== NORMALIZER ====================
+    const normalize = (jid) => {
+        if (!jid) return '';
+        return String(jid)
+            .split(':')[0]
+            .replace(/@lid|@s\.whatsapp\.net/g, '')
+            .replace(/[^0-9]/g, '');
+    };
 
-        // 2a. Linganisha na sock.user.lid moja kwa moja (hakuna haja ya global)
-        if (sock?.user?.lid) {
-            const ownerLidBase = String(sock.user.lid).split(':')[0].split('@')[0];
-            if (ownerLidBase === senderLidBase) return true;
-        }
+    const senderClean = normalize(senderJid);
+    const ownerClean  = normalize(OWNER_NUMBER);
 
-        // 2b. global.ownerLids (Set) — kwa multi-owner au linked devices
-        if (global.ownerLids instanceof Set) {
-            for (const lid of global.ownerLids) {
-                const lidBase = String(lid).split(':')[0].split('@')[0];
-                if (lidBase === senderLidBase) return true;
+    // 1. Normal number match
+    if (senderClean === ownerClean || senderJid.includes(OWNER_NUMBER)) {
+        console.log('✅ [EVAL] Owner match - Normal Number');
+        return true;
+    }
+
+    // 2. LID match
+    if (senderJid.endsWith('@lid') || senderJid.includes('@lid')) {
+        const senderLidClean = normalize(senderJid);
+
+        // OWNER_LID kutoka .env
+        const ownerLid = (process.env.OWNER_LID || '').toString().trim();
+        if (ownerLid) {
+            const ownerLidClean = normalize(ownerLid);
+            if (senderLidClean === ownerLidClean) {
+                console.log('✅ [EVAL] Owner match - OWNER_LID env');
+                return true;
             }
         }
 
-        // 2c. global.ownerLid (string fallback)
+        // sock.user.lid
+        if (sock?.user?.lid) {
+            const botLidClean = normalize(sock.user.lid);
+            if (senderLidClean === botLidClean) {
+                console.log('✅ [EVAL] Owner match - sock.user.lid');
+                return true;
+            }
+        }
+
+        // global.ownerLid
         if (global.ownerLid) {
-            const ownerLidBase = String(global.ownerLid).split(':')[0].split('@')[0];
-            if (ownerLidBase === senderLidBase) return true;
+            const globalLidClean = normalize(global.ownerLid);
+            if (senderLidClean === globalLidClean) {
+                console.log('✅ [EVAL] Owner match - global.ownerLid');
+                return true;
+            }
         }
     }
 
+    // 3. fromMe (safety)
+    if (msg.key.fromMe === true) {
+        console.log('✅ [EVAL] Owner match - fromMe');
+        return true;
+    }
+
+    console.log(`❌ [EVAL] No match | senderClean: ${senderClean}`);
     return false;
 }
 // ── History ──
