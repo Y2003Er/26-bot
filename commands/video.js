@@ -1,10 +1,10 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la 26-TECH
+ * Download video kutoka YouTube — Toleo la 26-TECH (Fixed)
  */
 
 import yts from 'yt-search';
-import axios from 'axios';
+import { ytdl } from 'ruhend-scraper';
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -24,13 +24,23 @@ export async function execute(sock, msg, args) {
     }
 
     try {
+        // Tuma ujumbe wa kuanza kupakua
         await sock.sendMessage(from, { text: '⏳ *Napakua video yako kutoka YouTube, subiri sekunde chache...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
+        let videoDuration = '';
+        let videoViews = '';
 
+        // 1. Kuchuja kama mtumiaji ameweka link au jina la kutafuta
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
+            const searchLink = await yts(text);
+            if (searchLink && searchLink.videos.length > 0) {
+                videoTitle = searchLink.videos[0].title;
+                videoDuration = searchLink.videos[0].timestamp;
+                videoViews = searchLink.videos[0].views;
+            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -38,28 +48,32 @@ export async function execute(sock, msg, args) {
             }
             videoUrl = videos[0].url;
             videoTitle = videos[0].title;
+            videoDuration = videos[0].timestamp;
+            videoViews = videos[0].views;
         }
 
-        // Kuchota video kwa kutumia API yetu
-        const apiUrl = `https://api.eliteprotech.my.id/api/download/ytmp4?url=${encodeURIComponent(videoUrl)}`;
-        const response = await axios.get(apiUrl);
-        
-        if (!response.data || !response.data.result || !response.data.result.download) {
-            throw new Error('Download link missing');
+        // 2. Kupakua video kwa kutumia ruhend-scraper (ytdl)
+        const downloadData = await ytdl(videoUrl);
+
+        if (!downloadData || !downloadData.video) {
+            return await sock.sendMessage(from, { 
+                text: '❌ Imeshindwa kupakua video hii kwa sasa kutokana na hitilafu ya YouTube server. Jaribu tena baadae.' 
+            }, { quoted: msg });
         }
 
-        const downloadUrl = response.data.result.download;
-        const finalTitle = response.data.result.title || videoTitle || 'Video';
+        const finalTitle = videoTitle || downloadData.title || 'Video';
+        const videoBufferUrl = downloadData.video;
 
+        // 3. Tuma video kwenda kwa mtumiaji ikiwa na brand yako safi ya 26-𝐓𝐄𝐂𝐇
         await sock.sendMessage(from, {
-            video: { url: downloadUrl },
+            video: { url: videoBufferUrl },
             mimetype: 'video/mp4',
             fileName: `${finalTitle.replace(/[^:\w\s-]/g, '')}.mp4`,
-            caption: `*🎬 ${finalTitle}*\n\n_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`
+            caption: `🎬 *${finalTitle}*\n\n⏱️ *Muda:* ${videoDuration || 'Haufahamiki'}\n👀 *Views:* ${videoViews || '0'}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
     } catch (error) {
         console.error('Video downloader error:', error);
-        await sock.sendMessage(from, { text: '❌ Kushindwa kupakua video, mfumo una fujo kwa sasa.' }, { quoted: msg });
+        await sock.sendMessage(from, { text: '❌ Kushindwa kupakua video, mfumo una fujo kwa sasa au faili ni kubwa mno.' }, { quoted: msg });
     }
 }
