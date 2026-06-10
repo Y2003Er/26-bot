@@ -477,25 +477,105 @@ async function restartBot(sock, from) {
 }
 
 // ════════════════════════════════════════════════
-//   $UPDATE — Pull GitHub + restart
+//   $UPDATE — Smart update (Railway / Render / VPS)
 // ════════════════════════════════════════════════
 async function updateBot(sock, from) {
-    await sock.sendMessage(from, {
-        text: '⬆️ *Inafetch updates kutoka GitHub...*'
-    });
 
-    const { output: pullOutput, error: pullError } = await runTerminal('git pull');
+    // ── Detect environment ──
+    const isRailway = !!process.env.RAILWAY_SERVICE_ID;
+    const isRender  = !!process.env.RENDER_SERVICE_ID || !!process.env.RENDER;
+    const hasGit    = await runTerminal('git rev-parse --is-inside-work-tree')
+                        .then(r => !r.error).catch(() => false);
 
-    if (pullError && !pullOutput.includes('Already up to date')) {
-        return `❌ *Git pull imeshindwa:*\n\`\`\`\n${pullOutput}\n\`\`\``;
+    // ══ RAILWAY ══
+    if (isRailway) {
+        const token         = process.env.RAILWAY_TOKEN;
+        const serviceId     = process.env.RAILWAY_SERVICE_ID;
+        const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+
+        if (!token) {
+            return (
+                `❌ *RAILWAY_TOKEN haipo!*\n\n` +
+                `Weka kwenye Railway ENV:\n` +
+                `\`RAILWAY_TOKEN=token_yako\``
+            );
+        }
+
+        await sock.sendMessage(from, { text: '🚂 *Inatrigger Railway redeploy...*' });
+
+        try {
+            const query = `
+                mutation {
+                    serviceInstanceRedeploy(
+                        serviceId: "${serviceId}",
+                        environmentId: "${environmentId}"
+                    )
+                }
+            `;
+            const res  = await fetch('https://backboard.railway.app/graphql/v2', {
+                method:  'POST',
+                headers: {
+                    'Content-Type':  'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ query })
+            });
+            const data = await res.json();
+            if (data.errors) {
+                return `❌ *Railway Error:*\n\`\`\`\n${JSON.stringify(data.errors, null, 2)}\n\`\`\``;
+            }
+            return (
+                `✅ *Railway Redeploy imetriggeriwa!*\n\n` +
+                `Bot itarudi baada ya dakika 1-2\n` +
+                `Branch: ${process.env.RAILWAY_GIT_BRANCH || 'main'}`
+            );
+        } catch (e) {
+            return `❌ Railway imeshindwa: ${e.message}`;
+        }
     }
 
-    await sock.sendMessage(from, {
-        text: `✅ *Git pull:*\n\`\`\`\n${pullOutput}\n\`\`\`\n\n🔄 _Inarestart..._`
-    });
+    // ══ RENDER ══
+    if (isRender) {
+        const deployHook = process.env.RENDER_DEPLOY_HOOK;
+        if (!deployHook) {
+            return (
+                `❌ *RENDER_DEPLOY_HOOK haipo!*\n\n` +
+                `Pata deploy hook kwenye:\n` +
+                `Render Dashboard → Service → Settings → Deploy Hook\n` +
+                `Kisha weka: \`RENDER_DEPLOY_HOOK=https://...\``
+            );
+        }
+        await sock.sendMessage(from, { text: '🎨 *Inatrigger Render redeploy...*' });
+        try {
+            await fetch(deployHook, { method: 'POST' });
+            return `✅ *Render Redeploy imetriggeriwa!*\nBot itarudi baada ya dakika 2-3`;
+        } catch (e) {
+            return `❌ Render imeshindwa: ${e.message}`;
+        }
+    }
 
-    setTimeout(() => process.exit(0), 3000);
-    return null;
+    // ══ VPS / GIT ══
+    if (hasGit) {
+        await sock.sendMessage(from, { text: '⬆️ *Inafetch updates kutoka GitHub...*' });
+        const { output: pullOutput, error: pullError } = await runTerminal('git pull');
+        if (pullError && !pullOutput.includes('Already up to date')) {
+            return `❌ *Git pull imeshindwa:*\n\`\`\`\n${pullOutput}\n\`\`\``;
+        }
+        await sock.sendMessage(from, {
+            text: `✅ *Git pull:*\n\`\`\`\n${pullOutput}\n\`\`\`\n\n🔄 _Inarestart..._`
+        });
+        setTimeout(() => process.exit(0), 3000);
+        return null;
+    }
+
+    // ══ Hakuna njia ══
+    return (
+        `❓ *Update haiwezekani automatically*\n\n` +
+        `Environment haikutambuliwa.\n` +
+        `Weka moja ya hizi kwenye ENV:\n` +
+        `• \`RAILWAY_TOKEN\` — kwa Railway\n` +
+        `• \`RENDER_DEPLOY_HOOK\` — kwa Render`
+    );
 }
 
 // ════════════════════════════════════════════════
