@@ -38,71 +38,36 @@ import fs                 from 'fs';
 import path               from 'path';
 
 // ══════════════════════════════════════════════════════════════
-//   OWNER CHECK — @lid FIXED (kutumia sock.authState)
+//   OWNER CHECK — botNumber + fromMe + startsWith
 // ══════════════════════════════════════════════════════════════
 
 const OWNERS_LIST = (process.env.OWNER_NUMBER || '')
     .split(',')
-    .map(num => `${num.replace(/[^0-9]/g, '')}@s.whatsapp.net`)
-    .filter(jid => jid !== '@s.whatsapp.net');
-
-// OWNER_LID_LIST — inajazwa automatically wakati wa runtime
-// kutoka sock.authState au inaweza kuwekwa manually kwenye ENV
-// Mfano manual: OWNER_LID=40304560349344@lid,xyz@lid
-const OWNER_LID_LIST_ENV = (process.env.OWNER_LID || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.endsWith('@lid'));
-
-function normalizeJid(jid) {
-    if (!jid) return '';
-    return jid.split(':')[0].split('@')[0] + '@s.whatsapp.net';
-}
+    .map(num => num.replace(/[^0-9]/g, ''))
+    .filter(Boolean);
 
 function isOwner(msg, sock) {
-    const isGroup  = msg.key.remoteJid?.endsWith('@g.us');
-    const isFromMe = msg.key.fromMe === true;
-    const rawJid   = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
-    const sender   = normalizeJid(rawJid);
+    // Namba ya bot yenyewe — inasafishwa vizuri (bila :0, bila @s.whatsapp.net)
+    const botNumber = sock.user?.id?.split(':')[0]?.split('@')[0] || '';
 
-    // ── Njia 1: @s.whatsapp.net kawaida ──
-    const isNormalOwner = OWNERS_LIST.includes(sender);
+    // Sender — participant (group) au remoteJid (DM)
+    const sender = msg.key.participant || msg.key.remoteJid || '';
 
-    // ── Njia 2: fromMe kwenye group (linked device) ──
-    const isGroupFromMe = isGroup && isFromMe;
+    // Njia 3 za kuthibitisha:
+    // 1. Sender ipo kwenye OWNERS_LIST (inafanya kazi na @s.whatsapp.net, @lid, yoyote)
+    // 2. fromMe === true — ujumbe kutoka kwa owner/linked device
+    // 3. sender.startsWith(botNumber) — inashughulikia @lid, :0@, formats zote
+    const result =
+        OWNERS_LIST.some(num => sender.includes(num)) ||
+        msg.key.fromMe === true ||
+        sender.startsWith(botNumber);
 
-    // ── Njia 3: @lid — Linked Device ID ──
-    // Tunachukua LID ya bot yenyewe kutoka sock.authState (reliable zaidi)
-    // na tunalinganisha na rawJid
-    let isLidOwner = false;
-    if (rawJid.endsWith('@lid')) {
-        // Angalia kwenye ENV kwanza
-        if (OWNER_LID_LIST_ENV.includes(rawJid)) {
-            isLidOwner = true;
-        }
-        // Angalia kwenye sock — WhatsApp hutoa LID ya account yako
-        // sock.authState.creds.me?.lid au sock.user?.lid
-        else {
-            const myLid = sock?.authState?.creds?.me?.lid
-                       || sock?.user?.lid
-                       || null;
-            if (myLid && rawJid === myLid) {
-                isLidOwner = true;
-            }
-        }
-    }
-
-    const result = isNormalOwner || isGroupFromMe || isLidOwner;
-
-    console.log('\n🔍 [EVAL DEBUG] ─────────────────────');
+    console.log('\n\uD83D\uDD0D [EVAL DEBUG] ─────────────────────');
     console.log('  remoteJid  :', msg.key.remoteJid);
     console.log('  participant:', msg.key.participant || '(none)');
-    console.log('  fromMe     :', isFromMe);
-    console.log('  isGroup    :', isGroup);
-    console.log('  rawJid     :', rawJid);
+    console.log('  fromMe     :', msg.key.fromMe);
     console.log('  sender     :', sender);
-    console.log('  myLid      :', sock?.authState?.creds?.me?.lid || sock?.user?.lid || '(haipo)');
-    console.log('  isLidOwner :', isLidOwner);
+    console.log('  botNumber  :', botNumber);
     console.log('  OWNERS_LIST:', OWNERS_LIST);
     console.log('  isOwner ✅ :', result);
     console.log('─────────────────────────────────────\n');
