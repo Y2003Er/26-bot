@@ -1,6 +1,6 @@
 /**
  * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la Kasi ya Mwanga la YT-DLP [26-TECH]
+ * Download wimbo (Audio MP3) kutoka YouTube — Fixed Version [26-TECH]
  */
 
 import yts from 'yt-search';
@@ -122,6 +122,7 @@ export async function execute(sock, msg, args) {
         const uniqueId       = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}`);
 
+        // ✅ FIXED: Removed preferFreeFormats conflict, added format: bestaudio/best
         const ytDlpArgs = {
             extractAudio:        true,
             audioFormat:         'mp3',
@@ -129,7 +130,11 @@ export async function execute(sock, msg, args) {
             output:              outputTemplate,
             noCheckCertificates: true,
             noWarnings:          true,
-            preferFreeFormats:   true,
+            format:              'bestaudio/best',
+            addHeader:           [
+                'referer:youtube.com',
+                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ],
         };
 
         if (fs.existsSync(cookiesTxt)) {
@@ -166,10 +171,19 @@ export async function execute(sock, msg, args) {
 
         let errMsg = '❌ Hitilafu ya YT-DLP: Imeshindwa kukamilisha maombi.';
         const stderr = error?.stderr || '';
-        if (stderr.includes('Sign in') || stderr.includes('bot')) {
+        const stdout = error?.stdout || '';
+        const allOutput = stderr + stdout;
+
+        if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
             errMsg = '❌ YouTube inahitaji uthibitisho. Cookies zimekwisha muda au hazipo.';
-        } else if (stderr.includes('Cookies file must be Netscape')) {
+        } else if (allOutput.includes('Cookies file must be Netscape') || allOutput.includes('Netscape')) {
             errMsg = '❌ Cookies ziko katika muundo mbaya. Zinahitaji kuwa Netscape format.';
+        } else if (allOutput.includes('Requested format is not available')) {
+            errMsg = '❌ Format haipatikani kwa wimbo huu. Jaribu tena au tafuta wimbo mwingine.';
+        } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
+            errMsg = '❌ Video hii haipatikani au imefungwa.';
+        } else if (allOutput.includes('ffmpeg') || allOutput.includes('ffprobe')) {
+            errMsg = '❌ ffmpeg haipo kwenye server. Wasiliana na admin.';
         } else if (error?.code === 'ENOENT') {
             errMsg = '❌ YT-DLP binary haipatikani. Rejesha container upya.';
         }
