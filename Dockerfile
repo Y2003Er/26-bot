@@ -2,9 +2,11 @@ FROM node:20-bookworm
 
 WORKDIR /app
 
-# Weka FFmpeg na updates za mfumo kwanza
+# Weka FFmpeg, Python 3, na zana za mfumo zinazohitajika na yt-dlp-exec
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    python3 \
+    python3-pip \
     && rm -rf /lib/apt/lists/*
 
 COPY package*.json ./
