@@ -4,7 +4,7 @@
  */
 
 import yts from 'yt-search';
-import APIs from '../api.js'; // Imerekebishwa: Inasoma bila mabano ili ilingane na api.js yako
+import APIs from '../api.js';
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube';
@@ -26,34 +26,47 @@ export async function execute(sock, msg, args) {
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako, subiri kidogo...*' }, { quoted: msg });
 
-        let videoUrl = '';
-        let videoTitle = '';
+        let videoUrl    = '';
+        let videoTitle  = '';
+        let videoAuthor = '';
+        let videoDuration = '';
+        let videoThumb  = '';
 
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
             const searchLink = await yts(text);
             if (searchLink && searchLink.videos.length > 0) {
-                videoTitle = searchLink.videos[0].title;
+                const v = searchLink.videos[0];
+                videoTitle    = v.title;
+                videoAuthor   = v.author?.name || v.author || '';
+                videoDuration = v.timestamp || '';
+                videoThumb    = v.thumbnail || v.image || '';
             }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
                 return await sock.sendMessage(from, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
             }
-            videoUrl = videos[0].url;
-            videoTitle = videos[0].title;
+            const v = videos[0];
+            videoUrl      = v.url;
+            videoTitle    = v.title;
+            videoAuthor   = v.author?.name || v.author || '';
+            videoDuration = v.timestamp || '';
+            videoThumb    = v.thumbnail || v.image || '';
         }
 
-        const finalTitle = videoTitle || 'Audio';
+        const finalTitle    = videoTitle  || 'Audio';
+        const finalAuthor   = videoAuthor || 'Haijulikani';
+        const finalDuration = videoDuration || '--:--';
         let downloadUrl = null;
 
         // Seva ya 1
         try {
-            console.log('🔄 [26-TECH] Kujaribu Yupro Audio...');
+            console.log('🔄 [26-TECH] Kujaribu Yupra Audio...');
             const res1 = await APIs.getYupraDownloadByUrl(videoUrl);
             if (res1 && res1.download) downloadUrl = res1.download;
         } catch (error) {
-            console.warn('⚠️ Yupro Audio imefeli.');
+            console.warn('⚠️ Yupra Audio imefeli.');
         }
 
         // Seva ya 2
@@ -95,11 +108,20 @@ export async function execute(sock, msg, args) {
             }, { quoted: msg });
         }
 
+        // ✅ Tuma picha ya thumbnail na maelezo kwanza
+        if (videoThumb) {
+            await sock.sendMessage(from, {
+                image: { url: videoThumb },
+                caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            }, { quoted: msg });
+        }
+
+        // ✅ Tuma audio kwa mimetype sahihi
         await sock.sendMessage(from, {
             audio: { url: downloadUrl },
-            mimetype: 'audio/mp4',
-            fileName: `${finalTitle.replace(/[^:\w\s-]/g, '')}.mp3`,
-            caption: `🎵 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            mimetype: 'audio/mpeg',
+            ptt: false,
+            fileName: `${finalTitle.replace(/[^\w\s-]/g, '')}.mp3`,
         }, { quoted: msg });
 
     } catch (error) {
