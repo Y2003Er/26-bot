@@ -122,9 +122,20 @@ export async function execute(sock, msg, args) {
         const uniqueId       = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}.%(ext)s`);
 
-        // ✅ Hakuna extractAudio/audioFormat — inachukua audio yoyote bila ffmpeg
-        const ytDlpArgs = {
-            format:              'bestaudio/best',
+        // Hakuna formats — yt-dlp itachagua default yenyewe
+        const formatList = [undefined];
+
+        const cookiesArg = fs.existsSync(cookiesTxt)
+            ? { cookies: cookiesTxt }
+            : {};
+
+        if (fs.existsSync(cookiesTxt)) {
+            console.log(`✅ [26-TECH] cookies.txt imepachikwa (${cookiesTxt})`);
+        } else {
+            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani — inaendelea bila cookies.`);
+        }
+
+        const baseArgs = {
             output:              outputTemplate,
             noCheckCertificates: true,
             noWarnings:          true,
@@ -132,28 +143,41 @@ export async function execute(sock, msg, args) {
                 'referer:youtube.com',
                 'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             ],
+            ...cookiesArg,
         };
 
-        if (fs.existsSync(cookiesTxt)) {
-            ytDlpArgs.cookies = cookiesTxt;
-            console.log(`✅ [26-TECH] YT-DLP: cookies.txt imepachikwa (${cookiesTxt})`);
-        } else {
-            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani — inaendelea bila cookies.`);
+        let downloaded = false;
+
+        for (const fmt of formatList) {
+            try {
+                console.log(`🔄 [26-TECH] Kujaribu format: ${fmt || 'default'} — ${videoUrl}`);
+                const args = fmt ? { ...baseArgs, format: fmt } : { ...baseArgs };
+                await ytDlp(videoUrl, args);
+
+                const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
+                if (tmpFiles.length > 0) {
+                    tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
+                    const sz = fs.statSync(tempFilePath).size;
+                    if (sz > 0) {
+                        downloaded = true;
+                        console.log(`✅ [26-TECH] Format ${fmt || 'default'} imefanikiwa!`);
+                        break;
+                    }
+                }
+            } catch (e) {
+                const msg2 = (e?.stderr || '') + (e?.stdout || '');
+                console.warn(`⚠️ Format ${fmt || 'default'} imeshindwa: ${msg2.slice(0, 120)}`);
+                // Endelea kujaribu format inayofuata
+            }
         }
 
-        console.log(`🔄 [26-TECH] YT-DLP inapakua: ${videoUrl}`);
-        await ytDlp(videoUrl, ytDlpArgs);
-
-        // Tafuta faili halisi lililoundwa (extension yoyote: .webm, .m4a, .opus, n.k.)
-        const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
-        if (tmpFiles.length === 0) throw new Error('Faili la audio halijaundwa na yt-dlp');
-        tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
+        if (!downloaded || !tempFilePath) {
+            throw new Error('ALLFAILED: Formats zote zimeshindwa');
+        }
 
         const fileExt  = path.extname(tempFilePath).replace('.', '') || 'webm';
         const fileSize = fs.statSync(tempFilePath).size;
-        if (fileSize === 0) throw new Error('Faili la audio lipo lakini ni tupu');
 
-        // Chagua mimetype kulingana na extension
         const mimeMap = {
             mp3:  'audio/mpeg',
             m4a:  'audio/mp4',
@@ -162,10 +186,11 @@ export async function execute(sock, msg, args) {
             ogg:  'audio/ogg',
             wav:  'audio/wav',
             aac:  'audio/aac',
+            mp4:  'audio/mp4',
         };
         const mimetype = mimeMap[fileExt] || 'audio/webm';
 
-        console.log(`✅ [26-TECH] Faili lipo: ${tempFilePath} | ext: ${fileExt} | size: ${(fileSize / 1024 / 1024).toFixed(2)} MB — linatumwa...`);
+        console.log(`✅ [26-TECH] Linatumwa: ${tempFilePath} | ${fileExt} | ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
 
         await sock.sendMessage(from, {
             audio:    { url: tempFilePath },
@@ -179,19 +204,17 @@ export async function execute(sock, msg, args) {
     } catch (error) {
         console.error('YT-DLP Fatal Error:', error);
 
-        let errMsg = '❌ Hitilafu ya YT-DLP: Imeshindwa kukamilisha maombi.';
-        const stderr = error?.stderr || '';
-        const stdout = error?.stdout || '';
-        const allOutput = stderr + stdout;
+        let errMsg = '❌ Hitilafu: Imeshindwa kupakua wimbo huu.';
+        const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
 
         if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
             errMsg = '❌ YouTube inahitaji uthibitisho. Cookies zimekwisha muda au hazipo.';
-        } else if (allOutput.includes('Cookies file must be Netscape') || allOutput.includes('Netscape')) {
+        } else if (allOutput.includes('Netscape')) {
             errMsg = '❌ Cookies ziko katika muundo mbaya. Zinahitaji kuwa Netscape format.';
-        } else if (allOutput.includes('Requested format is not available')) {
-            errMsg = '❌ Format haipatikani kwa wimbo huu. Jaribu tena au tafuta wimbo mwingine.';
         } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
             errMsg = '❌ Video hii haipatikani au imefungwa.';
+        } else if (allOutput.includes('ALLFAILED')) {
+            errMsg = '❌ Imeshindwa kupakua. Jaribu tena baadaye au tuma link moja kwa moja.';
         } else if (error?.code === 'ENOENT') {
             errMsg = '❌ YT-DLP binary haipatikani. Rejesha container upya.';
         }
