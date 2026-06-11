@@ -37,6 +37,12 @@ const pool = new pg.Pool({
     ssl: { rejectUnauthorized: false }
 });
 global.dbPool = pool;
+
+// ── Fix MaxListeners Warning ──
+import { EventEmitter } from 'events';
+EventEmitter.defaultMaxListeners = 20;
+pool.setMaxListeners(20);
+// ────────────────────────────
 // ────────────────────────────────────────────────────
 
 const aiCache = new NodeCache({ stdTTL: 10 });
