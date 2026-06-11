@@ -141,7 +141,7 @@ export async function execute(sock, msg, args) {
                 audio: { url: downloadUrl },
                 mimetype: 'audio/mpeg', // FIXED: Imerekebishwa kuwa audio/mpeg ili WhatsApp icheze MP3 moja kwa moja
                 fileName: `${safeFileName}.mp3`,
-                ptt: false
+                ptt: true
             }, { quoted: msg });
 
             console.log('✅ Audio imetumwa na inacheza!');
