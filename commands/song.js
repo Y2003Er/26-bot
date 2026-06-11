@@ -134,20 +134,20 @@ export async function execute(sock, msg, args) {
 
         // 2. Tuma kama Audio Message inayoplay moja kwa moja (Streaming Method)
         const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
-        
+
         try {
             console.log(`🔄 [26-TECH] Kujaribu kutuma kama audio stream: ${downloadUrl}`);
             await sock.sendMessage(from, {
                 audio: { url: downloadUrl },
-                mimetype: 'audio/mp4', // Muundo wa mp4/m4a unakubalika na kuplay vizuri sana WhatsApp
+                mimetype: 'audio/mpeg', // FIXED: Imerekebishwa kuwa audio/mpeg ili WhatsApp icheze MP3 moja kwa moja
                 fileName: `${safeFileName}.mp3`,
                 ptt: false
             }, { quoted: msg });
-            
+
             console.log('✅ Audio imetumwa na inacheza!');
         } catch (audioErr) {
             console.warn('⚠️ Audio stream imefeli, tunageukia njia ya Document:', audioErr.message);
-            
+
             // Fallback: Kama boti inagoma kutuma kama audio, inatupia kama Document (Hapa haifeli kamwe)
             await sock.sendMessage(from, {
                 document: { url: downloadUrl },
