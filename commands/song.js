@@ -37,6 +37,7 @@ export async function execute(sock, msg, args) {
         let videoDuration = '';
         let videoThumb    = '';
 
+        // Helper: chagua thumbnail bora kutoka object au string
         const getThumb = (v) => {
             if (!v) return '';
             if (typeof v.thumbnail === 'string' && v.thumbnail.startsWith('http')) return v.thumbnail;
@@ -44,6 +45,11 @@ export async function execute(sock, msg, args) {
                 return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
             }
             if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
+            // Fallback: jenga URL ya YouTube thumbnail kwa video ID
+            try {
+                const id = new URL(v.url).searchParams.get('v');
+                if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+            } catch (_) {}
             return '';
         };
 
@@ -60,6 +66,13 @@ export async function execute(sock, msg, args) {
                     videoThumb    = getThumb(v);
                 }
             } catch (_) {}
+            // Fallback thumbnail kwa URL moja kwa moja
+            if (!videoThumb) {
+                try {
+                    const id = new URL(videoUrl).searchParams.get('v');
+                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+                } catch (_) {}
+            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -77,83 +90,89 @@ export async function execute(sock, msg, args) {
         const finalAuthor   = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        // Kikomo cha urefu kulinda RAM ya Railway
-        if (finalDuration.split(':').length > 2) {
-            return await sock.sendMessage(from, { 
-                text: '❌ Wimbo mrefu sana. Tafadhali weka wimbo chini ya dakika 12.' 
-            }, { quoted: msg });
-        }
-        
-        const mins = parseInt(finalDuration.split(':')[0]);
-        if (mins > 12) {
-            return await sock.sendMessage(from, { 
-                text: '❌ Wimbo unazidi dakika 12. Tafadhali omba wimbo mfupi.' 
-            }, { quoted: msg });
+        // Kikomo cha urefu kulinda RAM
+        if (finalDuration && finalDuration !== '--:--') {
+            const parts = finalDuration.split(':');
+            if (parts.length > 2) {
+                return await sock.sendMessage(from, {
+                    text: '❌ Wimbo mrefu sana. Tafadhali weka wimbo chini ya dakika 12.'
+                }, { quoted: msg });
+            }
+            const mins = parseInt(parts[0]);
+            if (!isNaN(mins) && mins > 12) {
+                return await sock.sendMessage(from, {
+                    text: '❌ Wimbo unazidi dakika 12. Tafadhali omba wimbo mfupi.'
+                }, { quoted: msg });
+            }
         }
 
         // Tuma Thumbnail
-        if (videoThumb && videoThumb.startsWith('http')) {
+        if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP Engaged]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
-        // Kutengeneza sehemu na jina la faili la muda
-        const uniqueId = Date.now();
+        // Kutengeneza jina la faili la muda
+        const uniqueId       = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}`);
-        tempFilePath = `${outputTemplate}.mp3`; // Hili ndilo faili litakalotengenezwa na FFmpeg post-processor
 
-        // Kuandaa maelekezo (Arguments) ya YT-DLP
-        let ytDlpArgs = {
-            extractAudio: true,
-            audioFormat: 'mp3',
-            audioQuality: '0', // Ubora wa juu kabisa (VBR 0)
-            output: outputTemplate,
+        // Maelekezo ya YT-DLP — cookies HAZITUMIWI (zilikuwa JSON, yt-dlp inataka Netscape)
+        const ytDlpArgs = {
+            extractAudio:       true,
+            audioFormat:        'mp3',
+            audioQuality:       '0',
+            output:             outputTemplate,
             noCheckCertificates: true,
-            noWarnings: true,
-            preferFreeFormats: true
+            noWarnings:         true,
+            preferFreeFormats:  true,
         };
 
-        // Kama kuna faili la cookies.json, lipitishe lifanye kazi yake
-        const cookiesPath = path.resolve('./cookies.json');
-        if (fs.existsSync(cookiesPath)) {
-            ytDlpArgs.cookies = cookiesPath;
-            console.log('✅ [26-TECH] YT-DLP: Cookies zimepachikwa kama parameter.');
+        // Tumia cookies.txt KAMA ipo na ni Netscape format (.txt si .json)
+        const cookiesTxt = path.resolve('./cookies.txt');
+        if (fs.existsSync(cookiesTxt)) {
+            ytDlpArgs.cookies = cookiesTxt;
+            console.log('✅ [26-TECH] YT-DLP: cookies.txt imepachikwa.');
+        } else {
+            console.log('ℹ️ [26-TECH] YT-DLP: Hakuna cookies — inaendelea bila cookies.');
         }
 
-        console.log(`🔄 [26-TECH] YT-DLP inapakua na ku-convert: ${videoUrl}`);
-
-        // Kuendesha binary ya YT-DLP
+        console.log(`🔄 [26-TECH] YT-DLP inapakua: ${videoUrl}`);
         await ytDlp(videoUrl, ytDlpArgs);
 
-        console.log('✅ YT-DLP imemaliza kazi! Faili lipo tayari kwenye diski, linatumwa WhatsApp...');
+        // Tafuta faili halisi lililoundwa (yt-dlp inaweza kuongeza extension mara mbili)
+        const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
+        if (tmpFiles.length === 0) throw new Error('Faili la MP3 halijaundwa na yt-dlp');
+        tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
 
-        // Tuma faili sasa kwenda WhatsApp
+        console.log(`✅ [26-TECH] Faili lipo: ${tempFilePath} — linatumwa WhatsApp...`);
+
+        // Tuma audio WhatsApp
         await sock.sendMessage(from, {
-            audio: { url: tempFilePath },
+            audio:    { url: tempFilePath },
             mimetype: 'audio/mpeg',
             fileName: `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.mp3`,
-            ptt: false
+            ptt:      false
         }, { quoted: msg });
 
-        console.log('✅ 26-TECH YT-DLP: Kazi imekamilika vizuri!');
-
-        // Futa faili kuzuia memory leak kwenye seva ya Railway
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-            console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
-        }
+        console.log('✅ [26-TECH] Kazi imekamilika!');
 
     } catch (error) {
         console.error('YT-DLP Fatal Error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya YT-DLP: Imeshindwa kukamilisha maombi.` }, { quoted: msg });
-        
-        // Futa faili likifeli katikati kuzuia space kujaa
+        await sock.sendMessage(from, {
+            text: `❌ Hitilafu ya YT-DLP: Imeshindwa kukamilisha maombi.`
+        }, { quoted: msg });
+
+    } finally {
+        // Futa faili la muda daima — hata kama kuna hitilafu
         if (tempFilePath && fs.existsSync(tempFilePath)) {
-            try { fs.unlinkSync(tempFilePath); } catch (_) {}
+            try {
+                fs.unlinkSync(tempFilePath);
+                console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
+            } catch (_) {}
         }
     }
 }
