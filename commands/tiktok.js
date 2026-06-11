@@ -1,9 +1,9 @@
 /**
  * commands/tiktok.js
- * Download video kutoka TikTok bila watermark — Toleo la 26-TECH
+ * Download video kutoka TikTok bila watermark — Toleo la ES Modules la 26-TECH
  */
 
-import axios from 'javascript';
+import APIs from '../api.js';
 
 export const name        = 'tiktok';
 export const description = 'Download video kutoka TikTok bila watermark';
@@ -17,32 +17,34 @@ export async function execute(sock, msg, args) {
     const text = args.join(' ').trim();
 
     if (!text) {
-        return await sock.sendMessage(from, { 
-            text: `❌ Tafadhali weka link halali ya TikTok video.\nMfano: .tiktok https://vm.tiktok.com/xxxx/` 
+        return await sock.sendMessage(from, {
+            text: `❌ Tafadhali weka link halali ya TikTok video.\nMfano: .tiktok https://vm.tiktok.com/xxxx/`
         }, { quoted: msg });
     }
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Nainyonya video kutoka TikTok, tulia kiongozi...*' }, { quoted: msg });
 
-        // Kuchemsha video kwa kutumia API ya kuaminika ya ttdl
-        const response = await axios.get(`https://api.vreden.my.id/api/tiktok?url=${encodeURIComponent(text)}`);
-        
-        if (!response.data || !response.data.result || !response.data.result.video) {
-            throw new Error('TikTok result not found');
+        const result = await APIs.getTikTokDownload(text);
+
+        if (!result || !result.videoUrl) {
+            return await sock.sendMessage(from, {
+                text: '❌ TikTok video haijapatikana. Hakikisha link yako ni sahihi.'
+            }, { quoted: msg });
         }
 
-        const videoUrl = response.data.result.video;
-        const title = response.data.result.title || 'TikTok Video';
+        const { videoUrl, title } = result;
 
         await sock.sendMessage(from, {
             video: { url: videoUrl },
             mimetype: 'video/mp4',
-            caption: `*📝 Title:* ${title}\n\n_⚡ Downloaded by 26-𝚃𝙴𝙲𝙷_`
+            caption: `🎵 *${title || 'TikTok Video'}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
     } catch (error) {
         console.error('TikTok downloader error:', error);
-        await sock.sendMessage(from, { text: '❌ Imeshindwa kupakua video hiyo. Hakikisha link yako ni sahihi.' }, { quoted: msg });
+        await sock.sendMessage(from, {
+            text: '❌ Imeshindwa kupakua video hiyo. Hakikisha link yako ni sahihi.'
+        }, { quoted: msg });
     }
 }
