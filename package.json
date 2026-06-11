@@ -19,7 +19,6 @@
     "ruhend-scraper": "^8.0.3",
     "sharp": "^0.34.5",
     "yt-search": "^2.12.1",
-    "@distube/ytdl-core": "4.16.12",
-    "yt-dlp-exec": "^1.0.2"
+    "youtube-dl-exec": "^3.0.1"
   }
 }
