@@ -1,5 +1,5 @@
-// index.js - OPTIMIZED VERSION by 26-TECH
-// Changes: parallel execution, no aiCache flush, single printBanner, faster reconnect
+// index.js - FIXED v2 by 26-TECH
+// Fixes: 440 loop, health check false restart, connection check kabla ya kutuma
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -45,14 +45,9 @@ EventEmitter.defaultMaxListeners = 20;
 pool.setMaxListeners(20);
 
 // ── Caches ──
-// aiCache: TTL ya 60s (si 10s) — punguza DB hits
 const aiCache = new NodeCache({ stdTTL: 60 });
-
-// chatMessagesCache: kuhifadhi history ya chats
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
-
-// processedMessages: kuzuia duplicate
 const processedMessages = new Set();
 
 const logger        = pino({ level: 'silent' });
@@ -161,6 +156,10 @@ global.isOwner = (jid) => {
     }
     return false;
 };
+
+// ── Global sock accessor kwa commands (video.js n.k) ──
+// Commands zinaweza kutumia: if (!global.isSockReady()) return;
+global.isSockReady = () => sock?.ws?.readyState === 1;
 // =============================================================
 
 function resolveOwnerLid(sock) {
@@ -190,6 +189,10 @@ let pairingRequested = false;
 let bootLock         = false;
 let openTimer        = null;
 let hasEverOpened    = false;
+
+// ── FIX: Track 440 conflicts ili tusifanye loop ──
+let consecutiveConflicts = 0;
+const MAX_CONFLICTS      = 3; // Baada ya conflicts 3 — subiri muda mrefu
 
 let healthCheckTimer  = null;
 let keepaliveTimer    = null;
@@ -221,16 +224,12 @@ function displayPairingCode(code) {
 
 // ════════════════════════════════════════════════
 //   AUTO CACHE CLEAR — Kila dakika 10
-//   FIX: Hatufuti aiCache — inahifadhi AI context
 // ════════════════════════════════════════════════
 function startCacheCleanup() {
     if (cacheCleanTimer) clearInterval(cacheCleanTimer);
     cacheCleanTimer = setInterval(() => {
         try {
             const msgsBefore = processedMessages.size;
-            // ✅ FIX: Futa tu processedMessages zilizokaa — si aiCache!
-            // chatMessagesCache inajisafisha yenyewe (TTL=3600)
-            // aiCache HAIFUTWI — inahifadhi context ya AI conversations
             if (processedMessages.size > 500) {
                 processedMessages.clear();
                 log.info(`🧹 processedMessages imesafishwa (ilikuwa ${msgsBefore})`);
@@ -238,25 +237,31 @@ function startCacheCleanup() {
         } catch (e) {
             log.warn(`Cache cleanup error: ${e.message}`);
         }
-    }, 10 * 60 * 1000); // Kila dakika 10 (ilikuwa 5)
+    }, 10 * 60 * 1000);
 }
 
 // ════════════════════════════════════════════════
-//   HEALTH CHECK — Kila dakika 2
+//   HEALTH CHECK — Kila dakika 3
+//   FIX: Angalia readyState 0 au 2 tu (si undefined)
+//   undefined = bado haijaunganika, si hitilafu
 // ════════════════════════════════════════════════
 function startHealthCheck() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     healthCheckTimer = setInterval(async () => {
         const ws = sock?.ws?.readyState;
-        if (ws !== 1) {
+
+        // ✅ FIX: undefined = socket mpya bado inaungana — usifanye restart
+        // 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
+        // Restart tu kama 2 (CLOSING) au 3 (CLOSED)
+        if (ws === 2 || ws === 3) {
             log.warn(`⚠️ Health Check: WebSocket imekufa (state: ${ws}) — inarestart...`);
             clearBackgroundTimers();
             isConnecting = false;
             bootLock = false;
             try { sock?.ws?.close(); } catch {}
-            setTimeout(startBot, 3000);
+            setTimeout(startBot, 5000);
         }
-    }, 2 * 60 * 1000);
+    }, 3 * 60 * 1000); // ✅ FIX: Kila dakika 3 (ilikuwa 2)
 }
 
 // ════════════════════════════════════════════════
@@ -289,7 +294,6 @@ async function startBot() {
         await loadCommands();
         const cmdCount = global.allCommands?.size || 0;
         updateBanner('commands', `${cmdCount} loaded`);
-        // ✅ FIX: printBanner mara moja tu hapa — si tena baadaye
         printBanner();
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
@@ -366,7 +370,8 @@ async function startBot() {
 
             if (connection === 'open') {
                 clearOpenTimer();
-                hasEverOpened = true;
+                hasEverOpened        = true;
+                consecutiveConflicts = 0; // ✅ FIX: Reset conflict counter
                 updateBanner('connection', 'ONLINE');
 
                 resolveOwnerLid(sock);
@@ -376,7 +381,6 @@ async function startBot() {
                 console.log(`   • OWNER_NUMBER : ${global.owner}`);
                 console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
 
-                // ✅ FIX: Parallel — groups fetch + setup handlers pamoja
                 await Promise.allSettled([
                     sock.groupFetchAllParticipating().then(groups => {
                         updateBanner('groups', Object.keys(groups).length);
@@ -387,7 +391,6 @@ async function startBot() {
                     Promise.resolve(initGroupProtection(sock, logger)),
                 ]);
 
-                // Anza background timers
                 startHealthCheck();
                 startKeepalive();
                 startCacheCleanup();
@@ -397,11 +400,10 @@ async function startBot() {
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL');
                 log.div();
-                // ✅ FIX: Moja tu — printBanner hapa (imetolewa ya juu katika startBot)
                 printBanner();
 
                 isConnecting = false;
-                bootLock = false;
+                bootLock     = false;
             }
 
             if (connection === 'close') {
@@ -409,14 +411,42 @@ async function startBot() {
                 clearBackgroundTimers();
                 const code = lastDisconnect?.error?.output?.statusCode;
                 isConnecting = false;
-                bootLock = false;
+                bootLock     = false;
                 updateBanner('connection', 'OFFLINE');
 
                 log.div();
                 log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
-                if (code === 515 || code === 440 || code === 401 || !hasEverOpened) {
-                    setTimeout(startBot, code === 515 ? 2000 : 7000);
+                // ════════════════════════════════════════════════
+                //   FIX: 440 Session Conflict — Logic Mpya
+                //   440 = WhatsApp imeona sessions mbili
+                //   Suluhisho: subiri muda mrefu zaidi ili
+                //   session ya zamani ifungwe kabla ya mpya
+                // ════════════════════════════════════════════════
+                if (code === 440) {
+                    consecutiveConflicts++;
+                    if (consecutiveConflicts >= MAX_CONFLICTS) {
+                        // Conflicts nyingi mfululizo — subiri dakika 1
+                        const waitMs = 60000;
+                        log.warn(`⚠️ Conflicts ${consecutiveConflicts} mfululizo — kusubiri dakika 1...`);
+                        consecutiveConflicts = 0;
+                        setTimeout(startBot, waitMs);
+                    } else {
+                        // Conflict ya kawaida — subiri sekunde 15
+                        log.warn(`⚠️ Session conflict (${consecutiveConflicts}/${MAX_CONFLICTS}) — kusubiri sekunde 15...`);
+                        setTimeout(startBot, 15000);
+                    }
+                } else if (code === 515) {
+                    // 515 = restart haraka
+                    setTimeout(startBot, 2000);
+                } else if (code === 401) {
+                    // 401 = session batili — restart
+                    setTimeout(startBot, 7000);
+                } else if (code === 428) {
+                    // 428 = connection ilivunjika wakati wa kazi
+                    // Subiri kidogo zaidi ili socket ifungwe vizuri
+                    log.warn('Connection ilivunjika wakati wa kazi (428) — kusubiri sekunde 10...');
+                    setTimeout(startBot, 10000);
                 } else {
                     setTimeout(startBot, 7000);
                 }
@@ -424,7 +454,7 @@ async function startBot() {
         });
 
         // ════════════════════════════════════════════════
-        //   MESSAGES HANDLER — OPTIMIZED
+        //   MESSAGES HANDLER
         // ════════════════════════════════════════════════
         sock.ev.on('messages.upsert', async ({ messages, type }) => {
             if (type !== 'notify') return;
@@ -479,8 +509,6 @@ async function startBot() {
                 reply:  async (txt) => sock.sendMessage(jid, { text: txt }, { quoted: msg }),
             };
 
-            // ✅ FIX: AntiLink + handleMessage zinaendesha PARALLEL
-            // Hii inapunguza latency — hazingojani
             await Promise.allSettled([
                 handleAntiLink(sock, msg, logger),
                 handleMessage(sock, msg, extra),
@@ -490,7 +518,7 @@ async function startBot() {
         openTimer = setTimeout(() => {
             log.warn('Timeout — restarting...');
             isConnecting = false;
-            bootLock = false;
+            bootLock     = false;
             try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 7000);
         }, 180000);
@@ -502,7 +530,7 @@ async function startBot() {
     } catch (err) {
         log.error(`HITILAFU → ${err.message}`);
         isConnecting = false;
-        bootLock = false;
+        bootLock     = false;
         clearBackgroundTimers();
         setTimeout(startBot, 7000);
     }
