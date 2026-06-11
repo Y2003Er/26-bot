@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
     python3-pip \
-    && rm -rf /lib/apt/lists/*
+    python-is-python3 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 
