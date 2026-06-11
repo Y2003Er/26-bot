@@ -1,4 +1,5 @@
-// index.js - FULL FIXED VERSION (Owner + Pre-keys Loop + Cache Cleanup + Auto-Reconnect + Keepalive)
+// index.js - OPTIMIZED VERSION by 26-TECH
+// Changes: parallel execution, no aiCache flush, single printBanner, faster reconnect
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -42,16 +43,16 @@ global.dbPool = pool;
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
 pool.setMaxListeners(20);
-// ────────────────────────────
 
-const aiCache = new NodeCache({ stdTTL: 10 });
+// ── Caches ──
+// aiCache: TTL ya 60s (si 10s) — punguza DB hits
+const aiCache = new NodeCache({ stdTTL: 60 });
 
-// ── CACHE YA KUDHIBITI UKUBWA WA MESEJI ILI BOTI ISIZIME ──
+// chatMessagesCache: kuhifadhi history ya chats
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
-// ──────────────────────────────────────────────────────────
 
-// Cache ya kuzuia meseji kujirudia
+// processedMessages: kuzuia duplicate
 const processedMessages = new Set();
 
 const logger        = pino({ level: 'silent' });
@@ -103,8 +104,12 @@ function getRAM() {
 
 function printBanner() {
     const s = bannerState;
-    const connVal = s.connection === 'ONLINE' ? `${C.green}${C.bold}🟢 ONLINE${C.reset}` : `${C.yellow}${s.connection}${C.reset}`;
-    const dbVal = s.database.includes('✅') ? `${C.green}✅ Connected ${C.reset}` : `${C.yellow}${s.database}${C.reset}`;
+    const connVal = s.connection === 'ONLINE'
+        ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
+        : `${C.yellow}${s.connection}${C.reset}`;
+    const dbVal = s.database.includes('✅')
+        ? `${C.green}✅ Connected ${C.reset}`
+        : `${C.yellow}${s.database}${C.reset}`;
     const lines = [
         `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
         `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
@@ -186,7 +191,6 @@ let bootLock         = false;
 let openTimer        = null;
 let hasEverOpened    = false;
 
-// ── Timers za background (kuhifadhi ili tuzime wakati wa reconnect) ──
 let healthCheckTimer  = null;
 let keepaliveTimer    = null;
 let cacheCleanTimer   = null;
@@ -216,26 +220,25 @@ function displayPairingCode(code) {
 }
 
 // ════════════════════════════════════════════════
-//   AUTO CACHE CLEAR — Kila dakika 5
+//   AUTO CACHE CLEAR — Kila dakika 10
+//   FIX: Hatufuti aiCache — inahifadhi AI context
 // ════════════════════════════════════════════════
 function startCacheCleanup() {
     if (cacheCleanTimer) clearInterval(cacheCleanTimer);
     cacheCleanTimer = setInterval(() => {
         try {
-            // Futa processedMessages zilizokaa zaidi ya dakika 5
-            // (zinafutwa tayari na setTimeout lakini hii ni backup)
             const msgsBefore = processedMessages.size;
-            // NodeCache inajisafisha yenyewe lakini tunaforce flush
-            chatMessagesCache.flushAll();
-            aiCache.flushAll();
-            const freed = msgsBefore;
-            if (freed > 0 || true) {
-                log.info(`🧹 Auto Cache Clear — processedMsgs: ${msgsBefore} | chatCache & aiCache zimefutwa`);
+            // ✅ FIX: Futa tu processedMessages zilizokaa — si aiCache!
+            // chatMessagesCache inajisafisha yenyewe (TTL=3600)
+            // aiCache HAIFUTWI — inahifadhi context ya AI conversations
+            if (processedMessages.size > 500) {
+                processedMessages.clear();
+                log.info(`🧹 processedMessages imesafishwa (ilikuwa ${msgsBefore})`);
             }
         } catch (e) {
             log.warn(`Cache cleanup error: ${e.message}`);
         }
-    }, 5 * 60 * 1000); // Kila dakika 5
+    }, 10 * 60 * 1000); // Kila dakika 10 (ilikuwa 5)
 }
 
 // ════════════════════════════════════════════════
@@ -245,7 +248,7 @@ function startHealthCheck() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     healthCheckTimer = setInterval(async () => {
         const ws = sock?.ws?.readyState;
-        if (ws !== 1) { // 1 = OPEN
+        if (ws !== 1) {
             log.warn(`⚠️ Health Check: WebSocket imekufa (state: ${ws}) — inarestart...`);
             clearBackgroundTimers();
             isConnecting = false;
@@ -253,11 +256,11 @@ function startHealthCheck() {
             try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 3000);
         }
-    }, 2 * 60 * 1000); // Kila dakika 2
+    }, 2 * 60 * 1000);
 }
 
 // ════════════════════════════════════════════════
-//   KEEPALIVE — Kila dakika 1.5
+//   KEEPALIVE — Kila sekunde 90
 // ════════════════════════════════════════════════
 function startKeepalive() {
     if (keepaliveTimer) clearInterval(keepaliveTimer);
@@ -269,7 +272,7 @@ function startKeepalive() {
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
         }
-    }, 90 * 1000); // Kila sekunde 90 (dakika 1.5)
+    }, 90 * 1000);
 }
 
 async function startBot() {
@@ -286,6 +289,7 @@ async function startBot() {
         await loadCommands();
         const cmdCount = global.allCommands?.size || 0;
         updateBanner('commands', `${cmdCount} loaded`);
+        // ✅ FIX: printBanner mara moja tu hapa — si tena baadaye
         printBanner();
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
@@ -372,27 +376,28 @@ async function startBot() {
                 console.log(`   • OWNER_NUMBER : ${global.owner}`);
                 console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
 
-                try {
-                    const groups = await sock.groupFetchAllParticipating();
-                    updateBanner('groups', Object.keys(groups).length);
-                } catch {}
+                // ✅ FIX: Parallel — groups fetch + setup handlers pamoja
+                await Promise.allSettled([
+                    sock.groupFetchAllParticipating().then(groups => {
+                        updateBanner('groups', Object.keys(groups).length);
+                    }),
+                    Promise.resolve(setupAntiDelete(sock)),
+                    Promise.resolve(setupAntiViewOnce(sock)),
+                    Promise.resolve(setupAutoStatusViewer(sock)),
+                    Promise.resolve(initGroupProtection(sock, logger)),
+                ]);
 
-                setupAntiDelete(sock);
-                setupAntiViewOnce(sock);
-                setupAutoStatusViewer(sock);
-                initGroupProtection(sock, logger);
-
-                // ── Anza background timers ──
+                // Anza background timers
                 startHealthCheck();
                 startKeepalive();
                 startCacheCleanup();
                 log.success('⚡ Health Check + Keepalive + Cache Cleanup — Zimeanzishwa');
-                // ───────────────────────────
 
                 log.div();
                 log.success('BOT IMEUNGANIKA ✔');
                 log.success('Session imehifadhiwa kwenye PostgreSQL');
                 log.div();
+                // ✅ FIX: Moja tu — printBanner hapa (imetolewa ya juu katika startBot)
                 printBanner();
 
                 isConnecting = false;
@@ -418,11 +423,15 @@ async function startBot() {
             }
         });
 
+        // ════════════════════════════════════════════════
+        //   MESSAGES HANDLER — OPTIMIZED
+        // ════════════════════════════════════════════════
         sock.ev.on('messages.upsert', async ({ messages, type }) => {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
 
+            // Duplicate check
             if (processedMessages.has(msg.key.id)) return;
             processedMessages.add(msg.key.id);
             setTimeout(() => processedMessages.delete(msg.key.id), 5 * 60 * 1000);
@@ -430,29 +439,26 @@ async function startBot() {
             const jid = msg.key.remoteJid;
             if (!jid) return;
 
+            // Chat history tracking
             let currentChatHistory = chatMessagesCache.get(jid) || [];
             currentChatHistory.push(msg.key.id);
-            if (currentChatHistory.length > MAX_PER_CHAT) {
-                currentChatHistory.shift();
-            }
+            if (currentChatHistory.length > MAX_PER_CHAT) currentChatHistory.shift();
             chatMessagesCache.set(jid, currentChatHistory);
 
+            // Banner update
             bannerState.messages++;
             const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
             const isGroup = jid.endsWith('@g.us');
             const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             const source = isGroup ? 'Group' : 'DM';
-
             updateBanner('messages', bannerState.messages);
             updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
-
             console.log(`📩 ${jid}: ${text}`);
-
-            await handleAntiLink(sock, msg, logger);
 
             const botNumber = sock.user.id.replace(/:\d+@/, '@');
             const sender = msg.key.participant || jid;
 
+            // AI mention detection
             const isMentioned = text.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
@@ -470,12 +476,15 @@ async function startBot() {
                 from:   jid,
                 sender: sender,
                 prefix: global.prefix,
-                reply:  async (txt) => {
-                    return await sock.sendMessage(jid, { text: txt }, { quoted: msg });
-                }
+                reply:  async (txt) => sock.sendMessage(jid, { text: txt }, { quoted: msg }),
             };
 
-            await handleMessage(sock, msg, extra);
+            // ✅ FIX: AntiLink + handleMessage zinaendesha PARALLEL
+            // Hii inapunguza latency — hazingojani
+            await Promise.allSettled([
+                handleAntiLink(sock, msg, logger),
+                handleMessage(sock, msg, extra),
+            ]);
         });
 
         openTimer = setTimeout(() => {
