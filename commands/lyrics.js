@@ -1,155 +1,152 @@
 /**
- * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la ES Modules la 26-TECH
+ * commands/lyrics.js
+ * Tafuta mashairi ya nyimbo — Toleo la 26-TECH
+ * FIXED: vreden API imekufa — APIs 3 za backup
  */
 
-import yts from 'yt-search';
-import APIs from '../api.js';
-
-export const name        = 'song';
-export const description = 'Download wimbo (MP3) kutoka YouTube';
+export const name        = 'lyrics';
+export const description = 'Tafuta mashairi (lyrics) ya wimbo wowote';
 export const category    = 'media';
-export const use         = '<jina la wimbo au link>';
-export const alias       = ['play', 'music', 'mp3'];
+export const use         = '<msanii> - <wimbo> au <wimbo> peke yake';
+export const alias       = ['lyric', 'lirik'];
 export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
-    const from = msg.key.remoteJid;
-    const text = args.join(' ').trim();
+    const from  = msg.key.remoteJid;
+    const query = args.join(' ').trim();
 
-    if (!text) {
-        return await sock.sendMessage(from, { 
-            text: `❌ Tafadhali andika jina la wimbo au uweke link.\nMfano: .song Mbosso Amepotea` 
+    if (!query) {
+        return await sock.sendMessage(from, {
+            text: `❌ Tafadhali andika jina la wimbo.\n` +
+                  `Mfano: .lyrics Diamond Platnumz Jeje\n` +
+                  `Au: .lyrics Mbosso Natamani`
         }, { quoted: msg });
     }
 
-    try {
-        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako, subiri kidogo...*' }, { quoted: msg });
+    const { default: axios } = await import('axios');
 
-        let videoUrl    = '';
-        let videoTitle  = '';
-        let videoAuthor = '';
-        let videoDuration = '';
-        let videoThumb  = '';
+    await sock.sendMessage(from, { text: '⏳ *Natafuta mashairi, subiri kidogo...*' }, { quoted: msg });
 
-        // Helper: chagua thumbnail bora kutoka object au string
-        const getThumb = (v) => {
-            if (!v) return '';
-            // yts inaleta thumbnail kama string au object {hqDefault, mqDefault, ...}
-            if (typeof v.thumbnail === 'string' && v.thumbnail.startsWith('http')) return v.thumbnail;
-            if (typeof v.thumbnail === 'object' && v.thumbnail !== null) {
-                return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
-            }
-            if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
-            // Fallback: jenga URL ya YouTube thumbnail kwa video ID
-            try {
-                const id = new URL(v.url).searchParams.get('v');
-                if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-            } catch (_) {}
-            return '';
-        };
+    // Gawanya query kuwa artist na title kama kuna " - "
+    let artist = '';
+    let title  = query;
+    if (query.includes(' - ')) {
+        const parts = query.split(' - ');
+        artist = parts[0].trim();
+        title  = parts.slice(1).join(' - ').trim();
+    }
 
-        if (text.startsWith('http://') || text.startsWith('https://')) {
-            videoUrl = text;
-            const searchLink = await yts(text);
-            if (searchLink && searchLink.videos.length > 0) {
-                const v = searchLink.videos[0];
-                videoTitle    = v.title;
-                videoAuthor   = v.author?.name || v.author || '';
-                videoDuration = v.timestamp || '';
-                videoThumb    = getThumb(v);
-            }
-            // Fallback thumbnail kwa URL moja kwa moja
-            if (!videoThumb) {
-                try {
-                    const id = new URL(videoUrl).searchParams.get('v');
-                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-                } catch (_) {}
-            }
-        } else {
-            const { videos } = await yts(text);
-            if (!videos || videos.length === 0) {
-                return await sock.sendMessage(from, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
-            }
-            const v = videos[0];
-            videoUrl      = v.url;
-            videoTitle    = v.title;
-            videoAuthor   = v.author?.name || v.author || '';
-            videoDuration = v.timestamp || '';
-            videoThumb    = getThumb(v);
-        }
+    const HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    };
 
-        const finalTitle    = videoTitle  || 'Audio';
-        const finalAuthor   = videoAuthor || 'Haijulikani';
-        const finalDuration = videoDuration || '--:--';
-        let downloadUrl = null;
+    let lyrics      = null;
+    let songTitle   = query;
+    let songArtist  = '';
+    let thumbnail   = '';
+    let usedSource  = '';
 
-        // Seva ya 1
+    // ══════════════════════════════════════════
+    // API 1 — some-random-api.com (inahitaji title tu)
+    // ══════════════════════════════════════════
+    if (!lyrics) {
         try {
-            console.log('🔄 [26-TECH] Kujaribu Yupra Audio...');
-            const res1 = await APIs.getYupraDownloadByUrl(videoUrl);
-            if (res1 && res1.download) downloadUrl = res1.download;
-        } catch (error) {
-            console.warn('⚠️ Yupra Audio imefeli.');
-        }
-
-        // Seva ya 2
-        if (!downloadUrl) {
-            try {
-                console.log('🔄 [26-TECH] Kujaribu Izumi Audio...');
-                const res2 = await APIs.getIzumiDownloadByUrl(videoUrl);
-                if (res2 && res2.download) downloadUrl = res2.download;
-            } catch (error) {
-                console.warn('⚠️ Izumi Audio imefeli.');
+            const res = await axios.get(
+                `https://some-random-api.com/lyrics?title=${encodeURIComponent(query)}`,
+                { timeout: 15000, headers: HEADERS }
+            );
+            if (res.data?.lyrics) {
+                lyrics     = res.data.lyrics;
+                songTitle  = res.data.title  || query;
+                songArtist = res.data.author || '';
+                thumbnail  = res.data.thumbnail?.genius || '';
+                usedSource = 'some-random-api';
             }
+        } catch {
+            console.warn('⚠️ some-random-api imefeli');
         }
-
-        // Seva ya 3
-        if (!downloadUrl) {
-            try {
-                console.log('🔄 [26-TECH] Kujaribu Okatsu Audio...');
-                const res3 = await APIs.getOkatsuDownloadByUrl(videoUrl);
-                if (res3 && res3.download) downloadUrl = res3.download;
-            } catch (error) {
-                console.warn('⚠️ Okatsu Audio imefeli.');
-            }
-        }
-
-        // Seva ya 4
-        if (!downloadUrl) {
-            try {
-                console.log('🔄 [26-TECH] Kujaribu EliteProTech Audio...');
-                const res4 = await APIs.getEliteProTechDownloadByUrl(videoUrl);
-                if (res4 && res4.download) downloadUrl = res4.download;
-            } catch (error) {
-                console.error('❌ Seva zote za Audio zimegoma.');
-            }
-        }
-
-        if (!downloadUrl) {
-            return await sock.sendMessage(from, { 
-                text: '❌ Imeshindwa kupakua wimbo huu kwa sasa. Seva zote za audio zimejaa au ziko chini.' 
-            }, { quoted: msg });
-        }
-
-        // ✅ Tuma picha ya thumbnail na maelezo kwanza
-        if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
-            await sock.sendMessage(from, {
-                image: { url: videoThumb },
-                caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
-            }, { quoted: msg });
-        }
-
-        // ✅ Tuma audio kwa mimetype sahihi
-        await sock.sendMessage(from, {
-            audio: { url: downloadUrl },
-            mimetype: 'audio/mpeg',
-            ptt: false,
-            fileName: `${finalTitle.replace(/[^\w\s-]/g, '')}.mp3`,
-        }, { quoted: msg });
-
-    } catch (error) {
-        console.error('Song fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
     }
+
+    // ══════════════════════════════════════════
+    // API 2 — lyrics.ovh (inahitaji artist + title)
+    // ══════════════════════════════════════════
+    if (!lyrics && artist) {
+        try {
+            const res = await axios.get(
+                `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`,
+                { timeout: 15000, headers: HEADERS }
+            );
+            if (res.data?.lyrics) {
+                lyrics     = res.data.lyrics;
+                songTitle  = title;
+                songArtist = artist;
+                usedSource = 'lyrics.ovh';
+            }
+        } catch {
+            console.warn('⚠️ lyrics.ovh imefeli');
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // API 3 — lyrics.ovh mirror (kama artist hayupo, tumia query yote)
+    // ══════════════════════════════════════════
+    if (!lyrics && !artist) {
+        try {
+            // Jaribu kugawanya query — neno la kwanza = artist, mengine = title
+            const words  = query.split(' ');
+            const a      = words[0];
+            const t      = words.slice(1).join(' ') || query;
+            const res = await axios.get(
+                `https://api.lyrics.ovh/v1/${encodeURIComponent(a)}/${encodeURIComponent(t)}`,
+                { timeout: 15000, headers: HEADERS }
+            );
+            if (res.data?.lyrics) {
+                lyrics     = res.data.lyrics;
+                songTitle  = t;
+                songArtist = a;
+                usedSource = 'lyrics.ovh (auto-split)';
+            }
+        } catch {
+            console.warn('⚠️ lyrics.ovh mirror imefeli');
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // Hakuna API iliyofaulu
+    // ══════════════════════════════════════════
+    if (!lyrics) {
+        return await sock.sendMessage(from, {
+            text: `❌ *Mashairi hayajapatikana kwa:* _${query}_\n\n` +
+                  `💡 Jaribu:\n` +
+                  `• Andika vizuri: *msanii - wimbo*\n` +
+                  `• Mfano: *.lyrics Diamond Platnumz - Jeje*\n` +
+                  `• Tumia jina la Kiingereza kama lipo`
+        }, { quoted: msg });
+    }
+
+    // Kata kama ni ndefu sana
+    if (lyrics.length > 4000) {
+        lyrics = lyrics.substring(0, 4000) + '\n\n_(Yaliyobaki yamekatwa kwa sababu ya urefu...)_';
+    }
+
+    console.log(`✅ Lyrics found via ${usedSource}`);
+
+    const caption =
+        `🎵 *${songTitle}*\n` +
+        `👤 *Msanii:* ${songArtist || 'Haijulikani'}\n` +
+        `━━━━━━━━━━━━━━━━\n\n` +
+        `📝 *MASHAIRI:*\n\n${lyrics}\n\n` +
+        `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
+
+    if (thumbnail && thumbnail.startsWith('http')) {
+        try {
+            await sock.sendMessage(from, {
+                image:   { url: thumbnail },
+                caption: caption
+            }, { quoted: msg });
+            return;
+        } catch { /* thumbnail imeshindwa — tuma text */ }
+    }
+
+    await sock.sendMessage(from, { text: caption }, { quoted: msg });
 }
