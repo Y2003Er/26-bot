@@ -100,20 +100,18 @@ export async function execute(sock, msg, args) {
 
         const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
 
-        // Pakia na kusoma Cookies za YouTube zilizowekwa
+        // Mfumo Mnyumbufu wa Kuchagua Format (Flexible Format Picker)
         let ytdlOptions = {
-            filter: 'audioonly',
-            quality: 'highestaudio',
-            highWaterMark: 1 << 25
+            filter: format => format.hasAudio, // Inachukua faili lolote lililo na sauti (Inazuia "No playable formats")
+            highWaterMark: 1 << 25 // 32MB buffer kulinda RAM ya Railway
         };
 
         try {
             const cookiesPath = path.resolve('./cookies.json');
             if (fs.existsSync(cookiesPath)) {
                 const cookiesData = JSON.parse(fs.readFileSync(cookiesPath, 'utf-8'));
-                // ytdl-core inahitaji cookies katika muundo wa Agent
                 ytdlOptions.agent = ytdl.createAgent(cookiesData);
-                console.log('✅ [26-TECH] Cookies zimesomwa na kuwekwa kwenye YTDL Agent!');
+                console.log('✅ [26-TECH] Cookies zimesomwa kwenye Flexible Agent!');
             } else {
                 console.warn('⚠️ [26-TECH] Faili la cookies.json halijapatikana, inajaribu bila cookies...');
             }
