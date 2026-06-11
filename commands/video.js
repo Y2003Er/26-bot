@@ -4,7 +4,7 @@
  */
 
 import yts from 'yt-search';
-import APIs from '../api.js'; 
+import APIs from '../api.js'; // Imerekebishwa: Hakuna mabano ya {} hapa kwa sababu ni export default
 
 export const name        = 'video';
 export const description = 'Download video kutoka YouTube';
@@ -91,8 +91,8 @@ export async function execute(sock, msg, args) {
             caption: `🎬 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
-    } catch (err) {
-        console.error('Video fatal error:', err);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${err.message}` }, { quoted: msg });
+    } catch (error) {
+        console.error('Video fatal error:', error);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
     }
 }
