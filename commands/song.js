@@ -1,7 +1,6 @@
 /**
  * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la ES Modules la 26-TECH
- * FIXED v3: mimetype detection + document fallback
+ * Download wimbo (Audio MP3) kutoka YouTube — Toleo la Kasi na Uhakika la 26-TECH
  */
 
 import yts from 'yt-search';
@@ -23,8 +22,7 @@ export async function execute(sock, msg, args) {
         }, { quoted: msg });
     }
 
-    const { default: axios } = await import('axios');
-    const { default: APIs  } = await import('../api.js');
+    const { default: APIs } = await import('../api.js');
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta wimbo wako, subiri kidogo...*' }, { quoted: msg });
@@ -42,10 +40,6 @@ export async function execute(sock, msg, args) {
                 return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
             }
             if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
-            try {
-                const id = new URL(v.url).searchParams.get('v');
-                if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-            } catch (_) {}
             return '';
         };
 
@@ -61,12 +55,6 @@ export async function execute(sock, msg, args) {
                     videoThumb    = getThumb(v);
                 }
             } catch (_) {}
-            if (!videoThumb) {
-                try {
-                    const id = new URL(videoUrl).searchParams.get('v');
-                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-                } catch (_) {}
-            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -85,16 +73,23 @@ export async function execute(sock, msg, args) {
         const finalDuration = videoDuration || '--:--';
         let downloadUrl = null;
 
+        // Mfumo wa Fast Fallback — Unatafuta link kwa haraka
         // Seva ya 1 — Yupra
         try {
-            const res1 = await APIs.getYupraDownloadByUrl(videoUrl);
+            const res1 = await Promise.race([
+                APIs.getYupraDownloadByUrl(videoUrl),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+            ]);
             if (res1?.download) { downloadUrl = res1.download; console.log('✅ Yupra'); }
         } catch { console.warn('⚠️ Yupra imefeli'); }
 
         // Seva ya 2 — Izumi
         if (!downloadUrl) {
             try {
-                const res2 = await APIs.getIzumiDownloadByUrl(videoUrl);
+                const res2 = await Promise.race([
+                    APIs.getIzumiDownloadByUrl(videoUrl),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+                ]);
                 if (res2?.download) { downloadUrl = res2.download; console.log('✅ Izumi'); }
             } catch { console.warn('⚠️ Izumi imefeli'); }
         }
@@ -102,7 +97,10 @@ export async function execute(sock, msg, args) {
         // Seva ya 3 — Okatsu
         if (!downloadUrl) {
             try {
-                const res3 = await APIs.getOkatsuDownloadByUrl(videoUrl);
+                const res3 = await Promise.race([
+                    APIs.getOkatsuDownloadByUrl(videoUrl),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
+                ]);
                 if (res3?.download) { downloadUrl = res3.download; console.log('✅ Okatsu'); }
             } catch { console.warn('⚠️ Okatsu imefeli'); }
         }
@@ -110,84 +108,52 @@ export async function execute(sock, msg, args) {
         // Seva ya 4 — EliteProTech
         if (!downloadUrl) {
             try {
-                const res4 = await APIs.getEliteProTechDownloadByUrl(videoUrl);
+                const res4 = await Promise.race([
+                    APIs.getEliteProTechDownloadByUrl(videoUrl),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+                ]);
                 if (res4?.download) { downloadUrl = res4.download; console.log('✅ EliteProTech'); }
             } catch { console.error('❌ Seva zote zimegoma'); }
         }
 
         if (!downloadUrl) {
             return await sock.sendMessage(from, {
-                text: '❌ Imeshindwa kupakua wimbo huu. Seva zote za audio ziko chini.'
+                text: '❌ Imeshindwa kupakua wimbo huu. Seva zote za audio ziko chini kwa sasa.'
             }, { quoted: msg });
         }
 
-        // ✅ Download buffer
-        await sock.sendMessage(from, { text: '📥 *Inapakua audio...*' }, { quoted: msg });
-
-        let audioBuffer;
-        try {
-            const audioRes = await axios.get(downloadUrl, {
-                responseType: 'arraybuffer',
-                timeout: 120000,
-                headers: { 'User-Agent': 'Mozilla/5.0' }
-            });
-            audioBuffer = Buffer.from(audioRes.data);
-        } catch (dlErr) {
-            console.error('❌ Buffer download imefeli:', dlErr.message);
-            return await sock.sendMessage(from, {
-                text: '❌ Imeshindwa kupakua audio. Jaribu tena.'
-            }, { quoted: msg });
-        }
-
-        // ✅ Tambua mimetype kwa magic bytes za buffer
-        // MP3: FF FB, FF F3, FF F2, ID3
-        // MP4/AAC: ftyp
-        // OGG: OggS
-        const sig = audioBuffer.slice(0, 12);
-        let mimetype = 'audio/mpeg'; // default MP3
-
-        if (sig[0] === 0xFF && (sig[1] === 0xFB || sig[1] === 0xF3 || sig[1] === 0xF2)) {
-            mimetype = 'audio/mpeg';
-        } else if (sig[0] === 0x49 && sig[1] === 0x44 && sig[2] === 0x33) {
-            mimetype = 'audio/mpeg'; // ID3 tag = MP3
-        } else if (sig.slice(4, 8).toString('ascii') === 'ftyp') {
-            mimetype = 'audio/mp4'; // MP4/M4A/AAC
-        } else if (sig.slice(0, 4).toString('ascii') === 'OggS') {
-            mimetype = 'audio/ogg; codecs=opus';
-        } else {
-            // Angalia Content-Type kutoka header ya download
-            mimetype = 'audio/mpeg'; // safe default kwa YouTube MP3
-        }
-
-        console.log(`🎵 Mimetype detected: ${mimetype} | Size: ${(audioBuffer.length/1024/1024).toFixed(2)}MB`);
-
-        // ✅ Thumbnail kwanza
+        // 1. Tuma kwanza taarifa za Wimbo na Thumbnail
         if (videoThumb && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Naleta faili la audio sasa hivi...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
-        // ✅ Tuma audio — jaribu kama audio message kwanza
-        // Kama imeshindwa, tuma kama document (daima inafanya kazi)
+        // 2. Tuma kama Audio Message inayoplay moja kwa moja (Streaming Method)
+        const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
+        
         try {
+            console.log(`🔄 [26-TECH] Kujaribu kutuma kama audio stream: ${downloadUrl}`);
             await sock.sendMessage(from, {
-                audio:    audioBuffer,
-                mimetype: mimetype,
-                ptt:      false,
+                audio: { url: downloadUrl },
+                mimetype: 'audio/mp4', // Muundo wa mp4/m4a unakubalika na kuplay vizuri sana WhatsApp
+                fileName: `${safeFileName}.mp3`,
+                ptt: false
             }, { quoted: msg });
+            
+            console.log('✅ Audio imetumwa na inacheza!');
         } catch (audioErr) {
-            console.warn('⚠️ Audio message imeshindwa, natuma kama document:', audioErr.message);
-            // Fallback: tuma kama document — daima inafanya kazi
-            const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
+            console.warn('⚠️ Audio stream imefeli, tunageukia njia ya Document:', audioErr.message);
+            
+            // Fallback: Kama boti inagoma kutuma kama audio, inatupia kama Document (Hapa haifeli kamwe)
             await sock.sendMessage(from, {
-                document: audioBuffer,
+                document: { url: downloadUrl },
                 mimetype: 'audio/mpeg',
                 fileName: `${safeFileName}.mp3`,
-                caption:  `🎵 *${finalTitle}* — ${finalAuthor}`,
+                caption: `🎵 *${finalTitle}* — ${finalAuthor}`,
             }, { quoted: msg });
         }
 
