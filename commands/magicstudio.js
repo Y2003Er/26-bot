@@ -1,6 +1,6 @@
 /**
  * commands/magicstudio.js
- * Generate AI Art kutoka maandishi — Toleo la ES Modules la 26-TECH
+ * Generate AI Art kutoka maandishi — Toleo la Uhakika la 26-TECH
  */
 
 import axios from 'axios';
@@ -28,42 +28,45 @@ export async function execute(sock, msg, args) {
         await sock.sendMessage(from, { text: '🎨 *Ninatengeneza picha yako ya AI, subiri kidogo...*' }, { quoted: msg });
 
         const url = `${BASE}?prompt=${encodeURIComponent(prompt)}`;
+        
+        // 1. Kwanza tunapiga hodi kwa mtindo wa kawaida ili kuona kama inaleta JSON au Picha ya moja kwa moja
+        console.log(`🔄 [26-TECH] Kujaribu MagicStudio API kwa prompt: ${prompt}`);
+        
         const response = await axios.get(url, {
-            responseType: 'arraybuffer',
-            headers: {
-                'User-Agent': 'Mozilla/5.0',
-                'Accept': '*/*'
-            },
-            timeout: 120000
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 60000 // Sekunde 60 zinatosha sana
         });
 
-        const imageBuffer = Buffer.from(response.data);
+        let imageUrl = url; // Default ikiwa inatupa picha moja kwa moja
 
-        if (!imageBuffer || imageBuffer.length === 0) {
-            throw new Error('Picha haikupatikana kutoka API');
+        // Kama API inarudisha JSON yenye link ya picha (Kama zilivyo nyingi za Siputzx)
+        if (response.data && typeof response.data === 'object') {
+            if (response.data.data) imageUrl = response.data.data;
+            else if (response.data.result) imageUrl = response.data.result;
+            else if (response.data.url) imageUrl = response.data.url;
         }
 
-        const maxImageSize = 5 * 1024 * 1024; // 5MB
-        if (imageBuffer.length > maxImageSize) {
-            throw new Error(`Picha ni kubwa sana: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB (max 5MB)`);
-        }
-
+        // 2. Sasa tunaipitishia Baileys link ya picha moja kwa moja. 
+        // Uzuri wa Baileys ni kwamba ukiipa { url: ... }, inajua yenyewe jinsi ya ku-download na kutuma bila kula RAM yako!
         await sock.sendMessage(from, {
-            image: imageBuffer,
+            image: { url: imageUrl },
             caption: `🎨 *AI Art*\n📝 *Prompt:* ${prompt}\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
+
+        console.log('✅ [26-TECH] Picha ya AI imetumwa kwa mafanikio!');
 
     } catch (error) {
         console.error('MagicStudio error:', error);
 
+        // Kushughulikia makosa kwa usahihi
         if (error.response?.status === 429) {
-            await sock.sendMessage(from, { text: '❌ Ombi nyingi sana. Jaribu tena baadaye.' }, { quoted: msg });
+            await sock.sendMessage(from, { text: '❌ Ombi nyingi sana (Rate limit). Jaribu tena baadaye.' }, { quoted: msg });
         } else if (error.response?.status === 400) {
-            await sock.sendMessage(from, { text: '❌ Maelezo si sahihi. Jaribu maelezo mengine.' }, { quoted: msg });
+            await sock.sendMessage(from, { text: '❌ Maelezo si sahihi au neno lililokatazwa. Jaribu maelezo mengine.' }, { quoted: msg });
         } else if (error.response?.status === 500) {
-            await sock.sendMessage(from, { text: '❌ Hitilafu ya seva. Jaribu tena baadaye.' }, { quoted: msg });
+            await sock.sendMessage(from, { text: '❌ Hitilafu ya seva ya AI. Jaribu tena baadaye.' }, { quoted: msg });
         } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-            await sock.sendMessage(from, { text: '❌ Muda umekwisha. Tengeneza tena picha yako.' }, { quoted: msg });
+            await sock.sendMessage(from, { text: '❌ Muda umekwisha kabla picha haijakamilika. Jaribu tena.' }, { quoted: msg });
         } else {
             await sock.sendMessage(from, { text: `❌ Imeshindwa kutengeneza picha: ${error.message}` }, { quoted: msg });
         }
