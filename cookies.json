@@ -11,7 +11,22 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1796738184.296,
+        "expirationDate": 1796744424.613,
+        "storeId": null
+    },
+    {
+        "name": "ST-vy18uz",
+        "value": "csn=C3v8z8KGIVi2Cb4O&itct=CCYQ_FoiEwjZ0oyhrP-UAxUq5EkHHZa6J80yBmctaGlnaFoPRkV3aGF0X3RvX3dhdGNomgEGEI4eGIAKygEEEGSfsQ%3D%3D",
+        "domain": ".youtube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1781186376,
         "storeId": null
     },
     {
@@ -91,7 +106,7 @@
     },
     {
         "name": "SIDCC",
-        "value": "AKEyXzVL6yKZpRnh-lg51FvH8FJxiEcRX-xaLcFn_z1zmQeGNmIJ53HWcoQaW9Q4V4dStgSR",
+        "value": "AKEyXzVzDTgTVzqRSZgg0__qHdgs_I9TfNoM3bSPn2aigLPAd1564YvKeg9lvV0cU0MNHEgy",
         "domain": ".youtube.com",
         "hostOnly": false,
         "path": "/",
@@ -101,12 +116,12 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1812722190.288,
+        "expirationDate": 1812728431.557,
         "storeId": null
     },
     {
         "name": "YSC",
-        "value": "jGGTu2hFBvQ",
+        "value": "KkcQh_7oWoQ",
         "domain": ".youtube.com",
         "hostOnly": false,
         "path": "/",
@@ -164,6 +179,21 @@
         "storeId": null
     },
     {
+        "name": "ST-nul9zl",
+        "value": "csn=WTMNoRfmFE_dfEmv&itct=CKUBEPxaIhMIpcb67cL_lAMV2iC6AB3Y3CiqMgpnLWhpZ2gtcmVjWg9GRXdoYXRfdG9fd2F0Y2iaAQYQjh4YngHKAQQQZJ-x",
+        "domain": ".youtube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1781192441,
+        "storeId": null
+    },
+    {
         "name": "SAPISID",
         "value": "EhI9gwwBgtUL8szG/AmqEEKfqhmk6SKnNF",
         "domain": ".youtube.com",
@@ -180,7 +210,7 @@
     },
     {
         "name": "__Secure-1PSIDCC",
-        "value": "AKEyXzXYSdxqBDDbCxc2N-x0Bi8QRaAdknCRA_S8hCpRyKra4c37dAfcA35o0Os_r1H94dXC",
+        "value": "AKEyXzX13Do53kc9wApN3rCwOqiM-QFdB8GmGAEtKjxwFNu5d_qv-yZULvSQYXYukrK14HUJ",
         "domain": ".youtube.com",
         "hostOnly": false,
         "path": "/",
@@ -190,7 +220,7 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1812722190.288,
+        "expirationDate": 1812728431.557,
         "storeId": null
     },
     {
@@ -206,6 +236,21 @@
         "firstPartyDomain": "",
         "partitionKey": null,
         "expirationDate": 1815238280.062,
+        "storeId": null
+    },
+    {
+        "name": "ST-nlqr77",
+        "value": "csn=b4jPflP_zHhbwFzt&itct=CG4Qh_YEGAAiEwjZ0oyhrP-UAxUq5EkHHZa6J81aD0ZFd2hhdF90b193YXRjaJoBBQgkEI4eygEEEGSfsQ%3D%3D",
+        "domain": ".youtube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1781186397,
         "storeId": null
     },
     {
@@ -255,7 +300,7 @@
     },
     {
         "name": "__Secure-3PSIDCC",
-        "value": "AKEyXzW9iffjz2v_2TkQsvgaoJuwDHi_ek6r0-Unh3JWEIRq2k7BLkJnoMNHZl2IlbieJJA",
+        "value": "AKEyXzV8OUxrctzcrhaWcz8tZGFHn0LNbveKUX9KGwurku9gIZ4jFJOrQp8WdjcBZWbKlBI",
         "domain": ".youtube.com",
         "hostOnly": false,
         "path": "/",
@@ -265,7 +310,7 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1812722190.288,
+        "expirationDate": 1812728431.557,
         "storeId": null
     },
     {
@@ -355,7 +400,7 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1815746187.882,
+        "expirationDate": 1815752435.349,
         "storeId": null
     },
     {
@@ -390,7 +435,7 @@
     },
     {
         "name": "ST-eyk5aj",
-        "value": "csn=iZPnxBQGILr-YX-8&itct=CGwQh_YEGAEiEwi_maugq_-UAxVjDroAHQT1JnhaD0ZFd2hhdF90b193YXRjaJoBBQgkEI4eygEEEGSfsQ%3D%3D",
+        "value": "csn=b4jPflP_zHhbwFzt&itct=CGQQh_YEGAIiEwjZ0oyhrP-UAxUq5EkHHZa6J81aD0ZFd2hhdF90b193YXRjaJoBBQgkEI4eygEEEGSfsQ%3D%3D",
         "domain": ".youtube.com",
         "hostOnly": false,
         "path": "/",
@@ -400,7 +445,7 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1781186100,
+        "expirationDate": 1781186398,
         "storeId": null
     },
     {
@@ -415,7 +460,7 @@
         "session": false,
         "firstPartyDomain": "",
         "partitionKey": null,
-        "expirationDate": 1796738184.296,
+        "expirationDate": 1796744424.613,
         "storeId": null
     }
 ]
