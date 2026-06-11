@@ -1,15 +1,16 @@
 /**
  * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la Kasi na Uhakika la 26-TECH
+ * Download wimbo (Audio MP3) kutoka YouTube — Toleo thabiti la Local Storage la 26-TECH
  */
 
 import yts from 'yt-search';
 import ytdl from '@distube/ytdl-core';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 export const name        = 'song';
-export const description = 'Download wimbo (MP3) kutoka YouTube kupitia YTDL';
+export const description = 'Download wimbo (MP3) kutoka YouTube kupitia Local Temp Storage';
 export const category    = 'media';
 export const use         = '<jina la wimbo au link>';
 export const alias       = ['play', 'music', 'mp3'];
@@ -24,6 +25,9 @@ export async function execute(sock, msg, args) {
             text: `❌ Tafadhali andika jina la wimbo au uweke link.\nMfano: .song Mbosso Pawa`
         }, { quoted: msg });
     }
+
+    // Tengeneza variable ya njia ya faili nje ili iweze kufutika hata makosa yakitokea
+    let tempFilePath = '';
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako, subiri kidogo...*' }, { quoted: msg });
@@ -99,11 +103,15 @@ export async function execute(sock, msg, args) {
         }
 
         const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
+        
+        // Kutengeneza sehemu salama ya kuhifadhi faili la muda kule Railway
+        tempFilePath = path.join(os.tmpdir(), `${Date.now()}_${safeFileName}.mp3`);
 
-        // Mfumo Mnyumbufu wa Kuchagua Format (Flexible Format Picker)
+        // Mfumo uliorekebishwa wa YTDL Options
         let ytdlOptions = {
-            filter: format => format.hasAudio, // Inachukua faili lolote lililo na sauti (Inazuia "No playable formats")
-            highWaterMark: 1 << 25 // 32MB buffer kulinda RAM ya Railway
+            filter: 'audioonly',
+            quality: 'highestaudio',
+            highWaterMark: 1 << 25
         };
 
         try {
@@ -111,51 +119,50 @@ export async function execute(sock, msg, args) {
             if (fs.existsSync(cookiesPath)) {
                 const cookiesData = JSON.parse(fs.readFileSync(cookiesPath, 'utf-8'));
                 ytdlOptions.agent = ytdl.createAgent(cookiesData);
-                console.log('✅ [26-TECH] Cookies zimesomwa kwenye Flexible Agent!');
-            } else {
-                console.warn('⚠️ [26-TECH] Faili la cookies.json halijapatikana, inajaribu bila cookies...');
+                console.log('✅ [26-TECH] Cookies zimepachikwa kwa ufanisi.');
             }
         } catch (cookieErr) {
-            console.error('❌ Hitilafu ya kusoma cookies:', cookieErr.message);
+            console.error('❌ Hitilafu ya cookies:', cookieErr.message);
         }
 
-        // 3. Kupakua audio stream
-        try {
-            console.log(`🔄 [26-TECH] Kuanzisha Secure YTDL Stream kwa: ${videoUrl}`);
-            
-            const audioStream = ytdl(videoUrl, ytdlOptions);
+        console.log(`🔄 [26-TECH] Kuanza kupakua kwenda kwenye diski: ${tempFilePath}`);
 
-            await sock.sendMessage(from, {
-                audio: { stream: audioStream },
-                mimetype: 'audio/mpeg',
-                fileName: `${safeFileName}.mp3`,
-                ptt: false
-            }, { quoted: msg });
+        // Kupakua na kuandika faili kwanza kwenye seva (Pipe kwenda WriteStream)
+        const downloadStream = ytdl(videoUrl, ytdlOptions);
+        const fileStream = fs.createWriteStream(tempFilePath);
 
-            console.log('✅ YTDL: Sauti imetumwa kwa mafanikio!');
+        await new Promise((resolve, reject) => {
+            downloadStream.pipe(fileStream);
+            fileStream.on('finish', resolve);
+            downloadStream.on('error', reject);
+            fileStream.on('error', reject);
+        });
 
-        } catch (ytdlErr) {
-            console.error('⚠️ Direct Stream imefeli, tunajaribu kama Document:', ytdlErr.message);
-            
-            try {
-                const backupStream = ytdl(videoUrl, ytdlOptions);
+        console.log('✅ Faili limeshapakuliwa kikamilifu kwenye seva, sasa linatumwa WhatsApp...');
 
-                await sock.sendMessage(from, {
-                    document: { stream: backupStream },
-                    mimetype: 'audio/mpeg',
-                    fileName: `${safeFileName}.mp3`,
-                    caption: `🎵 *${finalTitle}* — ${finalAuthor}\n\n> *⚡ 26-TECH Secure Pass*`,
-                }, { quoted: msg });
-            } catch (finalErr) {
-                console.error('❌ YTDL Fatal Error:', finalErr);
-                await sock.sendMessage(from, { 
-                    text: `❌ Imeshindwa kupakua. YouTube Error: ${finalErr.message}` 
-                }, { quoted: msg });
-            }
+        // Tuma faili lililopo kwenye diski kwenda WhatsApp
+        await sock.sendMessage(from, {
+            audio: { url: tempFilePath }, // Inasoma faili la ndani ya seva moja kwa moja
+            mimetype: 'audio/mpeg',
+            fileName: `${safeFileName}.mp3`,
+            ptt: false
+        }, { quoted: msg });
+
+        console.log('✅ YTDL Local: Wimbo umetumwa kwa mafanikio!');
+
+        // Futa faili la muda mara moja ili kulinda diski ya Railway
+        if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+            console.log('🗑️ [26-TECH] Faili la muda limefutwa vizuri.');
         }
 
     } catch (error) {
         console.error('Song fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
+        await sock.sendMessage(from, { text: `❌ Imeshindwa kupakua. YouTube Error: ${error.message}` }, { quoted: msg });
+        
+        // Futa faili la muda likitokea kosa lolote katikati ili kuzuia memory leak
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try { fs.unlinkSync(tempFilePath); } catch (_) {}
+        }
     }
 }
