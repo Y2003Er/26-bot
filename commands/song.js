@@ -1,14 +1,16 @@
 /**
  * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo Thabiti la Ruhend (ESM Fix) [26-TECH]
+ * Download wimbo (Audio MP3) kutoka YouTube — Toleo la Kasi ya Mwanga la YT-DLP [26-TECH]
  */
 
 import yts from 'yt-search';
-// ESM Fix: Chukua kila kitu kama default import kutoka ruhend-scraper
-import ruhend from 'ruhend-scraper'; 
+import ytDlp from 'yt-dlp-exec';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 export const name        = 'song';
-export const description = 'Download wimbo (MP3) kutoka YouTube kupitia Ruhend Scraper';
+export const description = 'Download wimbo (MP3) kutoka YouTube kupitia YT-DLP Exec';
 export const category    = 'media';
 export const use         = '<jina la wimbo au link>';
 export const alias       = ['play', 'music', 'mp3'];
@@ -23,6 +25,8 @@ export async function execute(sock, msg, args) {
             text: `❌ Tafadhali andika jina la wimbo au uweke link.\nMfano: .song Mbosso Pawa`
         }, { quoted: msg });
     }
+
+    let tempFilePath = '';
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako, subiri kidogo...*' }, { quoted: msg });
@@ -92,36 +96,64 @@ export async function execute(sock, msg, args) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube (26-TECH ESM Pass)...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP Engaged]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
-        const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
+        // Kutengeneza sehemu na jina la faili la muda
+        const uniqueId = Date.now();
+        const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}`);
+        tempFilePath = `${outputTemplate}.mp3`; // Hili ndilo faili litakalotengenezwa na FFmpeg post-processor
 
-        console.log(`🔄 [26-TECH] Kujaribu kupakua kupitia Ruhend ESM Object: ${videoUrl}`);
-        
-        // ESM Fix: Tunaita ytdl kutoka kwenye default object 'ruhend'
-        const res = await ruhend.ytdl(videoUrl);
-        
-        if (!res || !res.audio) {
-            throw new Error("Ruhend imeshindwa kutoa kiungo cha audio.");
+        // Kuandaa maelekezo (Arguments) ya YT-DLP
+        let ytDlpArgs = {
+            extractAudio: true,
+            audioFormat: 'mp3',
+            audioQuality: '0', // Ubora wa juu kabisa (VBR 0)
+            output: outputTemplate,
+            noCheckCertificates: true,
+            noWarnings: true,
+            preferFreeFormats: true
+        };
+
+        // Kama kuna faili la cookies.json, lipitishe lifanye kazi yake
+        const cookiesPath = path.resolve('./cookies.json');
+        if (fs.existsSync(cookiesPath)) {
+            ytDlpArgs.cookies = cookiesPath;
+            console.log('✅ [26-TECH] YT-DLP: Cookies zimepachikwa kama parameter.');
         }
 
-        // Tuma kama Audio Message moja kwa moja kutumia URL ya Ruhend
+        console.log(`🔄 [26-TECH] YT-DLP inapakua na ku-convert: ${videoUrl}`);
+
+        // Kuendesha binary ya YT-DLP
+        await ytDlp(videoUrl, ytDlpArgs);
+
+        console.log('✅ YT-DLP imemaliza kazi! Faili lipo tayari kwenye diski, linatumwa WhatsApp...');
+
+        // Tuma faili sasa kwenda WhatsApp
         await sock.sendMessage(from, {
-            audio: { url: res.audio }, 
+            audio: { url: tempFilePath },
             mimetype: 'audio/mpeg',
-            fileName: `${safeFileName}.mp3`,
+            fileName: `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.mp3`,
             ptt: false
         }, { quoted: msg });
 
-        console.log('✅ Ruhend: Audio imetumwa kwa mafanikio!');
+        console.log('✅ 26-TECH YT-DLP: Kazi imekamilika vizuri!');
+
+        // Futa faili kuzuia memory leak kwenye seva ya Railway
+        if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+            console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
+        }
 
     } catch (error) {
-        console.error('Ruhend error au Fatal error:', error.message);
-        await sock.sendMessage(from, { 
-            text: `❌ Seva zimezidiwa kidogo au zimeshindwa kusoma muundo. Tafadhali jaribu tena baada ya muda kidogo.` 
-        }, { quoted: msg });
+        console.error('YT-DLP Fatal Error:', error);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya YT-DLP: Imeshindwa kukamilisha maombi.` }, { quoted: msg });
+        
+        // Futa faili likifeli katikati kuzuia space kujaa
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try { fs.unlinkSync(tempFilePath); } catch (_) {}
+        }
     }
 }
