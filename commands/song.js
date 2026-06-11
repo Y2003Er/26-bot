@@ -1,10 +1,11 @@
 /**
  * commands/song.js
- * Download wimbo (Audio MP3) kutoka YouTube — Toleo la Uhakika la Ruhend [26-TECH]
+ * Download wimbo (Audio MP3) kutoka YouTube — Toleo Thabiti la Ruhend (ESM Fix) [26-TECH]
  */
 
 import yts from 'yt-search';
-import { ytdl } from 'ruhend-scraper'; 
+// ESM Fix: Chukua kila kitu kama default import kutoka ruhend-scraper
+import ruhend from 'ruhend-scraper'; 
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube kupitia Ruhend Scraper';
@@ -91,17 +92,17 @@ export async function execute(sock, msg, args) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube (26-TECH Direct Pass)...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube (26-TECH ESM Pass)...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
         const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
 
-        console.log(`🔄 [26-TECH] Kujaribu kupakua kupitia Ruhend API: ${videoUrl}`);
+        console.log(`🔄 [26-TECH] Kujaribu kupakua kupitia Ruhend ESM Object: ${videoUrl}`);
         
-        // Ruhend inafanya kila kitu yenyewe kwenye seva zao kisha inatupa link ya audio iliyokamilika
-        const res = await ytdl(videoUrl);
+        // ESM Fix: Tunaita ytdl kutoka kwenye default object 'ruhend'
+        const res = await ruhend.ytdl(videoUrl);
         
         if (!res || !res.audio) {
             throw new Error("Ruhend imeshindwa kutoa kiungo cha audio.");
@@ -120,7 +121,7 @@ export async function execute(sock, msg, args) {
     } catch (error) {
         console.error('Ruhend error au Fatal error:', error.message);
         await sock.sendMessage(from, { 
-            text: `❌ Seva zimezidiwa kidogo. Imeshindwa kupakua kwa sasa.` 
+            text: `❌ Seva zimezidiwa kidogo au zimeshindwa kusoma muundo. Tafadhali jaribu tena baada ya muda kidogo.` 
         }, { quoted: msg });
     }
 }
