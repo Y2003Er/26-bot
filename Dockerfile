@@ -14,7 +14,6 @@ COPY package*.json ./
 
 RUN npm install
 
-# Weka binary ya yt-dlp mahali yt-dlp-exec inapotafuta
 RUN mkdir -p /app/node_modules/yt-dlp-exec/bin && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     -o /app/node_modules/yt-dlp-exec/bin/yt-dlp && \
