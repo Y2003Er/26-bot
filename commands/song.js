@@ -1,5 +1,10 @@
+/**
+ * commands/song.js
+ * Download wimbo (Audio MP3) kutoka YouTube — Toleo la ES Modules la 26-TECH
+ */
+
 import yts from 'yt-search';
-import APIs from '../api.js'; 
+import APIs from '../api.js'; // Imerekebishwa: Inasoma bila mabano ili ilingane na api.js yako
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube';
@@ -97,8 +102,8 @@ export async function execute(sock, msg, args) {
             caption: `🎵 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
-    } catch (err) {
-        console.error('Song fatal error:', err);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${err.message}` }, { quoted: msg });
+    } catch (error) {
+        console.error('Song fatal error:', error);
+        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
     }
 }
