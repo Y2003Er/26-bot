@@ -5,6 +5,8 @@
 
 import yts from 'yt-search';
 import ytdl from '@distube/ytdl-core';
+import fs from 'fs';
+import path from 'path';
 
 export const name        = 'song';
 export const description = 'Download wimbo (MP3) kutoka YouTube kupitia YTDL';
@@ -72,45 +74,59 @@ export async function execute(sock, msg, args) {
         const finalAuthor   = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        // Kinga ya RAM Railway: Zuia nyimbo ndefu sana (Mix za masaa)
-        // Kama wimbo una masaa (ina viunganishi viwili vya :)
+        // Kikomo cha urefu kulinda RAM ya Railway
         if (finalDuration.split(':').length > 2) {
             return await sock.sendMessage(from, { 
-                text: '❌ Wimbo huu ni mrefu sana (unazidi saa 1). Tafadhali weka wimbo wa kawaida chini ya dakika 12 kulinda seva.' 
+                text: '❌ Wimbo mrefu sana. Tafadhali weka wimbo chini ya dakika 12.' 
             }, { quoted: msg });
         }
         
-        // Kama ni dakika lakini zinazidi dakika 12
-        const mins = parseInt(finalDuration.split('[0]'));
+        const mins = parseInt(finalDuration.split(':')[0]);
         if (mins > 12) {
             return await sock.sendMessage(from, { 
-                text: '❌ Wimbo ni mrefu sana (unazidi dakika 12). Tafadhali omba wimbo mfupi.' 
+                text: '❌ Wimbo unazidi dakika 12. Tafadhali omba wimbo mfupi.' 
             }, { quoted: msg });
         }
 
-        // 2. Tuma kwanza taarifa za Wimbo na Thumbnail
+        // Tuma Thumbnail
         if (videoThumb && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube na kuileta sasa hivi...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube (Secured Pass) na kuileta...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
         const safeFileName = finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio';
 
-        // 3. Kupakua audio kwa kutumia YTDL-Core (Streaming Direct kutoka YT)
-        try {
-            console.log(`🔄 [26-TECH] Kuanzisha YTDL Stream kwa: ${videoUrl}`);
-            
-            const audioStream = ytdl(videoUrl, {
-                filter: 'audioonly',
-                quality: 'highestaudio',
-                highWaterMark: 1 << 25 // 32MB buffer kulinda RAM ya Railway isi-crash
-            });
+        // Pakia na kusoma Cookies za YouTube zilizowekwa
+        let ytdlOptions = {
+            filter: 'audioonly',
+            quality: 'highestaudio',
+            highWaterMark: 1 << 25
+        };
 
-            // Tuma kama Audio inayoplay moja kwa moja WhatsApp
+        try {
+            const cookiesPath = path.resolve('./cookies.json');
+            if (fs.existsSync(cookiesPath)) {
+                const cookiesData = JSON.parse(fs.readFileSync(cookiesPath, 'utf-8'));
+                // ytdl-core inahitaji cookies katika muundo wa Agent
+                ytdlOptions.agent = ytdl.createAgent(cookiesData);
+                console.log('✅ [26-TECH] Cookies zimesomwa na kuwekwa kwenye YTDL Agent!');
+            } else {
+                console.warn('⚠️ [26-TECH] Faili la cookies.json halijapatikana, inajaribu bila cookies...');
+            }
+        } catch (cookieErr) {
+            console.error('❌ Hitilafu ya kusoma cookies:', cookieErr.message);
+        }
+
+        // 3. Kupakua audio stream
+        try {
+            console.log(`🔄 [26-TECH] Kuanzisha Secure YTDL Stream kwa: ${videoUrl}`);
+            
+            const audioStream = ytdl(videoUrl, ytdlOptions);
+
             await sock.sendMessage(from, {
                 audio: { stream: audioStream },
                 mimetype: 'audio/mpeg',
@@ -118,29 +134,24 @@ export async function execute(sock, msg, args) {
                 ptt: false
             }, { quoted: msg });
 
-            console.log('✅ YTDL: Audio imepakulewa na imetumwa kwa mafanikio!');
+            console.log('✅ YTDL: Sauti imetumwa kwa mafanikio!');
 
         } catch (ytdlErr) {
-            console.error('⚠️ YTDL Direct Stream imefeli, tunajaribu njia ya Document:', ytdlErr.message);
+            console.error('⚠️ Direct Stream imefeli, tunajaribu kama Document:', ytdlErr.message);
             
-            // Fallback ya mwisho kabisa kama njia ya audio stream ikisumbua
             try {
-                const backupStream = ytdl(videoUrl, {
-                    filter: 'audioonly',
-                    quality: 'highestaudio',
-                    highWaterMark: 1 << 25
-                });
+                const backupStream = ytdl(videoUrl, ytdlOptions);
 
                 await sock.sendMessage(from, {
                     document: { stream: backupStream },
                     mimetype: 'audio/mpeg',
                     fileName: `${safeFileName}.mp3`,
-                    caption: `🎵 *${finalTitle}* — ${finalAuthor}\n\n> *⚡ 26-TECH YTDL-Document*`,
+                    caption: `🎵 *${finalTitle}* — ${finalAuthor}\n\n> *⚡ 26-TECH Secure Pass*`,
                 }, { quoted: msg });
             } catch (finalErr) {
                 console.error('❌ YTDL Fatal Error:', finalErr);
                 await sock.sendMessage(from, { 
-                    text: '❌ Imeshindwa kabisa kupakua wimbo huu kutoka YouTube kwa sasa. Jaribu tena baada ya muda kidogo.' 
+                    text: `❌ Imeshindwa kupakua. YouTube Error: ${finalErr.message}` 
                 }, { quoted: msg });
             }
         }
