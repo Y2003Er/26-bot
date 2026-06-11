@@ -126,8 +126,8 @@ export async function execute(sock, msg, args) {
             text: [
                 `❌ *Ruhusa Imekataliwa!*`,
                 ``,
-                `• Kubadilisha PP ya boti  → *Owner tu*`,
-                `• Kubadilisha PP ya mtu   → *Owner tu*`,
+                `• Kubadilisha PP ya boti → *Owner tu*`,
+                `• Kubadilisha PP ya mtu  → *Owner tu*`,
                 `• Kubadilisha PP ya group → *Group Admin* anatosha`,
             ].join('\n')
         }, { quoted: msg });
@@ -136,9 +136,9 @@ export async function execute(sock, msg, args) {
     // ── Kwa group PP — angalia kama boti ni admin ──
     if (targetJid === from) {
         try {
-            const groupMeta  = await sock.groupMetadata(from);
-            const botNumber  = sock.user.id.replace(/:\d+@/, '@');
-            const botIsAdmin = groupMeta.participants.some(p =>
+            const groupMeta   = await sock.groupMetadata(from);
+            const botNumber   = sock.user.id.replace(/:\d+@/, '@');
+            const botIsAdmin  = groupMeta.participants.some(p =>
                 (p.id === botNumber || p.id === sock.user.id) &&
                 (p.admin === 'admin' || p.admin === 'superadmin')
             );
@@ -161,10 +161,10 @@ export async function execute(sock, msg, args) {
                 `❌ *Picha haijapatikana!*`,
                 ``,
                 `📌 *Jinsi ya kutumia:*`,
-                `• Tuma picha + caption \`.setpp\`        → PP ya boti`,
-                `• Reply picha + \`.setpp\`               → PP ya boti`,
-                `• Reply picha + \`.setpp group\`         → PP ya group`,
-                `• Reply picha + \`.setpp @tag\`          → PP ya mtu (Owner tu)`,
+                `• Tuma picha + caption \`.setpp\`  → PP ya boti`,
+                `• Reply picha + \`.setpp\`          → PP ya boti`,
+                `• Reply picha + \`.setpp group\`    → PP ya group`,
+                `• Reply picha + \`.setpp @tag\`     → PP ya mtu (Owner tu)`,
             ].join('\n')
         }, { quoted: msg });
     }
