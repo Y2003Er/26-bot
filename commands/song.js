@@ -1,13 +1,52 @@
 import exec from 'yt-dlp-exec';
 import yts from 'yt-search';
+import ytM from 'node-youtube-music';
+import NodeID3 from 'node-id3';
+import axios from 'axios';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { crypto } from 'crypto';
+
+// Kazi ya kupakua picha ya kava na kuifanya kuwa Buffer kwa ajili ya ID3 Tags
+async function fetchBuffer(url) {
+    try {
+        const res = await axios.get(url, { responseType: 'arraybuffer' });
+        return Buffer.from(res.data);
+    } catch {
+        return null;
+    }
+}
+
+// Kazi ya kuandika Metadata (Tags) kwenye faili la MP3
+async function writeTags(filePath, metadata) {
+    try {
+        const imageBuffer = await fetchBuffer(metadata.image);
+        const tags = {
+            title: metadata.title,
+            artist: metadata.artist,
+            album: metadata.album || 'YouTube Music',
+            year: metadata.year || new Date().getFullYear().toString(),
+        };
+
+        if (imageBuffer) {
+            tags.image = {
+                mime: 'image/jpeg',
+                type: { id: 3, name: 'front cover' },
+                description: `Cover of ${metadata.title}`,
+                imageBuffer: imageBuffer
+            };
+        }
+        NodeID3.write(tags, filePath);
+    } catch (e) {
+        console.error('Failed to write ID3 tags:', e.message);
+    }
+}
 
 const playCommand = {
     name: 'play',
     alias: ['song', 'wimbo'],
-    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio kupitia yt-dlp)',
+    description: 'Tafuta kwenye YT Music, weka kava (ID3 Tags) na upakue kupitia yt-dlp',
     category: 'downloader',
     use: '<jina la wimbo>',
     ownerOnly: false,
@@ -21,49 +60,62 @@ const playCommand = {
             }, { quoted: msg });
         }
 
-        // Kuitikia ujumbe kwa kuweka emoji ya kusubiri (Reaction)
+        // React kwa emoji ya kusubiri
         try {
-            await sock.sendMessage(msg.key.remoteJid, {
-                react: { text: '⏳', key: msg.key }
-            });
-        } catch (e) {
-            console.error('Failed to react:', e.message);
-        }
+            await sock.sendMessage(msg.key.remoteJid, { react: { text: '⏳', key: msg.key } });
+        } catch {}
 
         try {
-            // Kutafuta wimbo kwa usalama kutumia yt-search
-            let search = await yts(`${text} Song`);
-            if (!search.videos.length) {
-                return await sock.sendMessage(msg.key.remoteJid, { 
-                    text: '❌ Wimbo haujapatikana, jaribu jina jengine.' 
-                }, { quoted: msg });
+            let searchResult;
+            let title, url, artist, album, image, year;
+
+            // 1. Jaribu kutafuta kwenye YouTube Music kwanza kwa usahihi wa Audio
+            try {
+                let ytMusic = await ytM.searchMusics(text);
+                if (ytMusic && ytMusic.length > 0) {
+                    let track = ytMusic[0];
+                    title = track.title;
+                    artist = track.artists.map(x => x.name).join(', ');
+                    album = track.album;
+                    url = `https://www.youtube.com/watch?v=${track.youtubeId}`;
+                    image = track.thumbnailUrl ? track.thumbnailUrl.replace('w120-h120', 'w600-h600') : null;
+                    year = new Date().getFullYear().toString();
+                }
+            } catch (e) {
+                console.log('YT Music search failed, falling back to standard yt-search...');
             }
 
-            // Kuchukua wimbo wa kwanza uliopatikana
-            let vid = search.videos[0];
-            const { title, thumbnail, timestamp, views, ago, url } = vid;
+            // 2. Kama YT Music isipopata, tumia yt-search ya kawaida
+            if (!url) {
+                let standardSearch = await yts(`${text} Song`);
+                if (!standardSearch.videos.length) {
+                    return await sock.sendMessage(msg.key.remoteJid, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
+                }
+                let vid = standardSearch.videos[0];
+                title = vid.title;
+                artist = vid.author.name;
+                album = 'YouTube Release';
+                url = vid.url;
+                image = vid.thumbnail;
+                year = vid.ago ? vid.ago.split(' ').pop() : new Date().getFullYear().toString();
+            }
 
-            // Maandalizi ya ujumbe wa maelezo ya wimbo (Caption)
+            // Tuma maelezo ya ujumbe (Caption)
             const captvid = `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
 ❏ Title: ${title}
-❐ Duration: ${timestamp}
-❑ Views: ${views}
-❒ Uploaded: ${ago}
+❐ Artist: ${artist}
+❑ Album: ${album}
 ❒ Link: ${url}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`;
 
-            // Tuma picha ya kava (thumbnail) ikiwa na maelezo ya wimbo
-            await sock.sendMessage(msg.key.remoteJid, { 
-                image: { url: thumbnail }, 
-                caption: captvid 
-            }, { quoted: msg });
+            await sock.sendMessage(msg.key.remoteJid, { image: { url: image }, caption: captvid }, { quoted: msg });
 
-            // Kutengeneza njia ya faili la muda (temporary path)
+            // Kutengeneza njia ya faili la muda
             const tmpDir = os.tmpdir();
             const outputFilename = `${Date.now()}_audio`;
             const audioPath = path.join(tmpDir, `${outputFilename}.mp3`);
 
-            // Kuendesha yt-dlp kwa kutumia vigezo ulivyotoa
+            // 3. Kupakua kwa kutumia yt-dlp yenye vigezo vyako thabiti
             await exec(url, {
                 geoBypass: true,
                 extractorArgs: 'youtube:player_client=android,web',
@@ -75,11 +127,14 @@ const playCommand = {
                 output: path.join(tmpDir, `${outputFilename}.%(ext)s`)
             });
 
-            // Muundo wa ujumbe wa audio wenye muonekano wa kijanja (External Ad Reply)
+            // 4. Kuandika ID3 Tags (Kuweka picha ya kava na jina la msanii ndani ya faili)
+            if (fs.existsSync(audioPath)) {
+                await writeTags(audioPath, { title, artist, album, image, year });
+            }
+
+            // Muundo wa ujumbe wa audio wa WhatsApp
             const doc = {
-                audio: {
-                    url: audioPath,
-                },
+                audio: { url: audioPath },
                 mimetype: 'audio/mpeg',
                 ptt: false,
                 waveform: [100, 0, 100, 0, 100, 0, 100], 
@@ -90,31 +145,28 @@ const playCommand = {
                         mediaType: 2,
                         mediaUrl: url,
                         title: title,
-                        body: 'HERE IS YOUR SONG 🎧',
+                        body: `by ${artist} 🎧`,
                         sourceUrl: url,
-                        thumbnailUrl: thumbnail, 
+                        thumbnailUrl: image, 
                     },
                 },
             };
 
-            // Tuma wimbo kwa mtumiaji
+            // Tuma wimbo uliokamilika wenye kava ndani yake
             await sock.sendMessage(msg.key.remoteJid, doc, { quoted: msg });
 
-            // Futa faili la wimbo lililohifadhiwa kwa muda ili lisijaze nafasi (Storage Cleanup)
+            // Futa faili la muda kujilinda na disk space full
             if (fs.existsSync(audioPath)) {
                 await fs.promises.unlink(audioPath);
-                console.log(`Deleted audio file: ${audioPath}`);
             }
 
-            // Badilisha reaction kuwa tiki kuashiria umemaliza
-            await sock.sendMessage(msg.key.remoteJid, {
-                react: { text: '✅', key: msg.key }
-            });
+            // React kwa emoji ya kumaliza
+            await sock.sendMessage(msg.key.remoteJid, { react: { text: '✅', key: msg.key } });
 
         } catch (error) {
-            console.error('Play command error:', error);
+            console.error('Play advanced command error:', error);
             await sock.sendMessage(msg.key.remoteJid, { 
-                text: '❌ Hitilafu imetokea wakati wa kupakua wimbo huo. Tafadhali jaribu tena.' 
+                text: '❌ Hitilafu imetokea wakati wa kuandaa wimbo wako kwa sasa.' 
             }, { quoted: msg });
         }
     }
