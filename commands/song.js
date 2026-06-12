@@ -1,29 +1,50 @@
-import ytdl from 'ytdl-core';
+import exec from 'yt-dlp-exec';
 import yts from 'yt-search';
 import fs from 'fs';
-import { pipeline } from 'stream';
-import { promisify } from 'util';
 import os from 'os';
+import path from 'path';
 
-const streamPipeline = promisify(pipeline);
+const playCommand = {
+    name: 'play',
+    alias: ['song', 'wimbo'],
+    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio kupitia yt-dlp)',
+    category: 'downloader',
+    use: '<jina la wimbo>',
+    ownerOnly: false,
+    adminOnly: false,
+    execute: async (sock, msg, args) => {
+        const text = args.join(' ');
+        
+        if (!text) {
+            return await sock.sendMessage(msg.key.remoteJid, { 
+                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play anna blue bird` 
+            }, { quoted: msg });
+        }
 
-let handler = async (m, { conn, command, text, usedPrefix }) => {
-  if (!text) throw `Use example: ${usedPrefix}${command} anna blue bird`;
-  
-  // Weka emoji ya kusubiri au ujumbe wa kuanza kupakua
-  await m.react('⏳'); 
+        // Kuitikia ujumbe kwa kuweka emoji ya kusubiri (Reaction)
+        try {
+            await sock.sendMessage(msg.key.remoteJid, {
+                react: { text: '⏳', key: msg.key }
+            });
+        } catch (e) {
+            console.error('Failed to react:', e.message);
+        }
 
-  try {
-    // Kutafuta wimbo kwa usalama kutumia yt-search
-    let search = await yts(`${text} Song`);
-    if (!search.videos.length) throw 'Song Not Found, Try Another Title';
+        try {
+            // Kutafuta wimbo kwa usalama kutumia yt-search
+            let search = await yts(`${text} Song`);
+            if (!search.videos.length) {
+                return await sock.sendMessage(msg.key.remoteJid, { 
+                    text: '❌ Wimbo haujapatikana, jaribu jina jengine.' 
+                }, { quoted: msg });
+            }
 
-    // Kuchukua wimbo wa kwanza uliopatikana
-    let vid = search.videos[0];
-    const { title, thumbnail, timestamp, views, ago, url } = vid;
+            // Kuchukua wimbo wa kwanza uliopatikana
+            let vid = search.videos[0];
+            const { title, thumbnail, timestamp, views, ago, url } = vid;
 
-    // Maandalizi ya ujumbe wa maelezo ya wimbo (Caption)
-    const captvid = `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
+            // Maandalizi ya ujumbe wa maelezo ya wimbo (Caption)
+            const captvid = `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
 ❏ Title: ${title}
 ❐ Duration: ${timestamp}
 ❑ Views: ${views}
@@ -31,69 +52,72 @@ let handler = async (m, { conn, command, text, usedPrefix }) => {
 ❒ Link: ${url}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`;
 
-    // Tuma picha ya kava (thumbnail) ikiwa na maelezo ya wimbo
-    await conn.sendMessage(m.chat, { image: { url: thumbnail }, caption: captvid }, { quoted: m });
+            // Tuma picha ya kava (thumbnail) ikiwa na maelezo ya wimbo
+            await sock.sendMessage(msg.key.remoteJid, { 
+                image: { url: thumbnail }, 
+                caption: captvid 
+            }, { quoted: msg });
 
-    // Kuanza kutengeneza stream ya audio kutoka YouTube
-    const audioStream = ytdl(url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-    });
+            // Kutengeneza njia ya faili la muda (temporary path)
+            const tmpDir = os.tmpdir();
+            const outputFilename = `${Date.now()}_audio`;
+            const audioPath = path.join(tmpDir, `${outputFilename}.mp3`);
 
-    // Kutengeneza faili la muda (temporary file) kwenye mfumo wa kompyuta/server
-    const tmpDir = os.tmpdir();
-    const audioPath = `${tmpDir}/${Date.now()}_audio.mp3`; // Imetumia Date.now() kuzuia mgongano wa majina ya mafaili
-    const writableStream = fs.createWriteStream(audioPath);
+            // Kuendesha yt-dlp kwa kutumia vigezo ulivyotoa
+            await exec(url, {
+                geoBypass: true,
+                extractorArgs: 'youtube:player_client=android,web',
+                userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G991B)',
+                noCheckCertificate: true,
+                noCacheDir: true,
+                extractAudio: true,
+                audioFormat: 'mp3',
+                output: path.join(tmpDir, `${outputFilename}.%(ext)s`)
+            });
 
-    // Pakua na uhifadhi audio kwenye folder la muda
-    await streamPipeline(audioStream, writableStream);
+            // Muundo wa ujumbe wa audio wenye muonekano wa kijanja (External Ad Reply)
+            const doc = {
+                audio: {
+                    url: audioPath,
+                },
+                mimetype: 'audio/mpeg',
+                ptt: false,
+                waveform: [100, 0, 100, 0, 100, 0, 100], 
+                fileName: `${title}.mp3`,
+                contextInfo: {
+                    externalAdReply: {
+                        showAdAttribution: true,
+                        mediaType: 2,
+                        mediaUrl: url,
+                        title: title,
+                        body: 'HERE IS YOUR SONG 🎧',
+                        sourceUrl: url,
+                        thumbnailUrl: thumbnail, 
+                    },
+                },
+            };
 
-    // Kupata picha ya thumbnail kwa ajili ya kuweka kwenye kijanduku cha audio (Buffer)
-    let thumbnailBuffer;
-    try {
-      thumbnailBuffer = await (await conn.getFile(thumbnail)).data;
-    } catch {
-      thumbnailBuffer = thumbnail; // Kama ikifeli, tumia url ya kawaida
+            // Tuma wimbo kwa mtumiaji
+            await sock.sendMessage(msg.key.remoteJid, doc, { quoted: msg });
+
+            // Futa faili la wimbo lililohifadhiwa kwa muda ili lisijaze nafasi (Storage Cleanup)
+            if (fs.existsSync(audioPath)) {
+                await fs.promises.unlink(audioPath);
+                console.log(`Deleted audio file: ${audioPath}`);
+            }
+
+            // Badilisha reaction kuwa tiki kuashiria umemaliza
+            await sock.sendMessage(msg.key.remoteJid, {
+                react: { text: '✅', key: msg.key }
+            });
+
+        } catch (error) {
+            console.error('Play command error:', error);
+            await sock.sendMessage(msg.key.remoteJid, { 
+                text: '❌ Hitilafu imetokea wakati wa kupakua wimbo huo. Tafadhali jaribu tena.' 
+            }, { quoted: msg });
+        }
     }
-
-    // Muundo wa ujumbe wa audio wenye muonekano wa kijanja (External Ad Reply)
-    const doc = {
-      audio: {
-        url: audioPath,
-      },
-      mimetype: 'audio/mpeg',
-      ptt: false,
-      waveform: [100, 0, 100, 0, 100, 0, 100], // Mstari wa mawimbi ya sauti (audiowave)
-      fileName: `${title}.mp3`,
-      contextInfo: {
-        externalAdReply: {
-          showAdAttribution: true,
-          mediaType: 2,
-          mediaUrl: url,
-          title: title,
-          body: 'HERE IS YOUR SONG 🎧',
-          sourceUrl: url,
-          thumbnail: thumbnailBuffer,
-        },
-      },
-    };
-
-    // Tuma wimbo kwa mtumiaji
-    await conn.sendMessage(m.chat, doc, { quoted: m });
-
-    // Futa faili la wimbo lililohifadhiwa kwa muda ili lisijaze nafasi (Storage Cleanup)
-    await fs.promises.unlink(audioPath);
-    console.log(`Deleted audio file: ${audioPath}`);
-
-  } catch (error) {
-    console.error(error);
-    throw 'An error occurred while processing your request. Please try again.';
-  }
 };
 
-handler.help = ['play'].map((v) => v + ' <query>');
-handler.tags = ['downloader'];
-handler.command = /^play|song$/i; // Itaitikia amri zote mbili: .play au .song
-handler.exp = 0;
-
-export default handler;
+export default playCommand;
