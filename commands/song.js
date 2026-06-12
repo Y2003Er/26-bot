@@ -132,8 +132,6 @@ export async function execute(sock, msg, args) {
         if (fs.existsSync(cookiesTxt)) {
             options.cookies = cookiesTxt;
             console.log(`✅ [26-TECH] Cookies imepachikwa`);
-        } else {
-            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani`);
         }
 
         const execOptions = {
@@ -167,6 +165,7 @@ export async function execute(sock, msg, args) {
 
         const fileExt = path.extname(tempFilePath).replace('.', '') || 'm4a';
         const fileSize = fs.statSync(tempFilePath).size;
+        const fileName = `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.${fileExt}`;
 
         const mimeMap = {
             mp3: 'audio/mpeg',
@@ -179,16 +178,26 @@ export async function execute(sock, msg, args) {
         };
         const mimetype = mimeMap[fileExt] || 'audio/mp4';
 
-        console.log(`✅ [26-TECH] Linatumwa: ${tempFilePath} | ${fileExt} | ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
-
-        await sock.sendMessage(from, {
-            audio: { url: tempFilePath },
-            mimetype: mimetype,
-            fileName: `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.${fileExt}`,
-            ptt: false
-        }, { quoted: msg });
-
-        console.log('✅ [26-TECH] Kazi imekamilika!');
+        // Jaribu kutuma kama audio kwanza
+        try {
+            await sock.sendMessage(from, {
+                audio: { url: tempFilePath },
+                mimetype: mimetype,
+                fileName: fileName,
+                ptt: false
+            }, { quoted: msg });
+            console.log('✅ [26-TECH] Imetumwa kama audio');
+        } catch (sendErr) {
+            console.warn('⚠️ Audio send failed, fallback to document:', sendErr.message);
+            // Fallback: tuma kama document
+            await sock.sendMessage(from, {
+                document: { url: tempFilePath },
+                mimetype: mimetype,
+                fileName: fileName,
+                caption: `🎵 ${finalTitle}`
+            }, { quoted: msg });
+            console.log('✅ [26-TECH] Imetumwa kama document fallback');
+        }
 
     } catch (error) {
         console.error('YT-DLP Fatal Error:', error);
@@ -197,10 +206,10 @@ export async function execute(sock, msg, args) {
         const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
 
         if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot.';
+            errMsg = '❌ YouTube imeblock. Fanya refresh cookies.txt';
         } else if (allOutput.includes('format is not available')) {
-            errMsg = '❌ Format haipatikani. Jaribu wimbo mwingine.';
-        } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
+            errMsg = '❌ Audio haipatikani kwa wimbo huu. Jaribu mwingine.';
+        } else if (allOutput.includes('Video unavailable')) {
             errMsg = '❌ Video hii haipatikani au imefungwa.';
         }
 
@@ -210,7 +219,6 @@ export async function execute(sock, msg, args) {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
             try {
                 fs.unlinkSync(tempFilePath);
-                console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
             } catch (_) {}
         }
     }
