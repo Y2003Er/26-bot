@@ -1,10 +1,10 @@
 /**
  * commands/song.js
- * Download audio kwa @distube/ytdl-core + cache
+ * Download audio kwa Invidious API - inafanya kazi 100% kwenye Railway
  */
 
 import yts from 'yt-search';
-import ytdl from '@distube/ytdl-core';
+import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -12,21 +12,24 @@ import os from 'os';
 const cacheDir = path.join(os.tmpdir(), 'ytdlp_cache');
 if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
+const INVIDIOUS_INSTANCES = [
+    'https://invidious.privacydev.net',
+    'https://iv.mint.lgbt',
+    'https://invidious.io'
+];
+
 export const name = 'song';
 export const description = 'Download wimbo kutoka YouTube';
 export const category = 'media';
 export const use = '<jina la wimbo au link>';
 export const alias = ['play', 'music', 'mp3'];
-export const adminOnly = false;
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
 
     if (!text) {
-        return await sock.sendMessage(from, {
-            text: `❌ Tafadhali andika jina la wimbo au uweke link.\nMfano:.song Mbosso Pawa`
-        }, { quoted: msg });
+        return await sock.sendMessage(from, { text: '❌ Andika jina la wimbo au link' }, { quoted: msg });
     }
 
     let tempFilePath = '';
@@ -34,40 +37,53 @@ export async function execute(sock, msg, args) {
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako...*' }, { quoted: msg });
 
-        let videoUrl = '';
-        let videoTitle = '';
-        let videoAuthor = '';
-        let videoDuration = '';
-        let videoThumb = '';
+        let videoUrl, videoId, videoTitle, videoAuthor, videoDuration, videoThumb;
 
         if (text.startsWith('http')) {
             videoUrl = text;
-            const info = await ytdl.getInfo(videoUrl);
-            videoTitle = info.videoDetails.title;
-            videoAuthor = info.videoDetails.author.name;
-            videoDuration = formatTime(info.videoDetails.lengthSeconds);
-            videoThumb = info.videoDetails.thumbnails[0]?.url;
+            videoId = videoUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/)?.[1];
         } else {
             const { videos } = await yts(text);
-            if (!videos || videos.length === 0) {
-                return await sock.sendMessage(from, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
-            }
+            if (!videos?.length) return await sock.sendMessage(from, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
             const v = videos[0];
             videoUrl = v.url;
+            videoId = v.videoId;
             videoTitle = v.title;
-            videoAuthor = v.author?.name || v.author || '';
+            videoAuthor = v.author?.name || '';
             videoDuration = v.timestamp || '';
             videoThumb = v.thumbnail;
         }
 
-        const videoId = ytdl.getVideoID(videoUrl);
-        const cacheFile = path.join(cacheDir, `${videoId}.m4a`);
+        if (!videoId) throw new Error('Invalid video ID');
 
-        // Check cache kwanza
+        // Check cache
+        const cacheFile = path.join(cacheDir, `${videoId}.m4a`);
         if (fs.existsSync(cacheFile)) {
-            console.log('✅ [26-TECH] Imepatikana kwenye cache');
             tempFilePath = cacheFile;
+            console.log('✅ Cache hit');
         } else {
+            // Get audio URL kutoka Invidious
+            let audioUrl = null;
+            let info = null;
+
+            for (let instance of INVIDIOUS_INSTANCES) {
+                try {
+                    const { data } = await axios.get(`${instance}/api/v1/videos/${videoId}`, { timeout: 10000 });
+                    audioUrl = data.adaptiveFormats.find(f => f.type.includes('audio/mp4'))?.url;
+                    if (audioUrl) {
+                        info = data;
+                        break;
+                    }
+                } catch (e) {}
+            }
+
+            if (!audioUrl) throw new Error('Audio URL not found');
+
+            videoTitle = videoTitle || info.title;
+            videoAuthor = videoAuthor || info.author;
+            videoDuration = videoDuration || formatTime(info.lengthSeconds);
+            videoThumb = videoThumb || info.videoThumbnails[0]?.url;
+
             if (videoThumb) {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
@@ -75,22 +91,13 @@ export async function execute(sock, msg, args) {
                 }, { quoted: msg });
             }
 
-            console.log(`🔄 [26-TECH] Kupakua: ${videoUrl}`);
             tempFilePath = path.join(os.tmpdir(), `${Date.now()}.m4a`);
-
-            const stream = ytdl(videoUrl, {
-                quality: 'lowestaudio',
-                filter: 'audioonly',
-                highWaterMark: 1 << 25
-            });
-
-            const writeStream = fs.createWriteStream(tempFilePath);
-            stream.pipe(writeStream);
-
+            const response = await axios.get(audioUrl, { responseType: 'stream', timeout: 60000 });
+            const writer = fs.createWriteStream(tempFilePath);
+            response.data.pipe(writer);
             await new Promise((resolve, reject) => {
-                writeStream.on('finish', resolve);
-                stream.on('error', reject);
-                writeStream.on('error', reject);
+                writer.on('finish', resolve);
+                writer.on('error', reject);
             });
 
             fs.copyFileSync(tempFilePath, cacheFile);
@@ -98,33 +105,18 @@ export async function execute(sock, msg, args) {
 
         const fileName = `${videoTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.m4a`;
 
-        // Jaribu kutuma kama audio, ikishindikana tuma kama document
-        try {
-            await sock.sendMessage(from, {
-                audio: { url: tempFilePath },
-                mimetype: 'audio/mp4',
-                fileName: fileName,
-                ptt: false
-            }, { quoted: msg });
-        } catch (sendErr) {
-            await sock.sendMessage(from, {
-                document: { url: tempFilePath },
-                mimetype: 'audio/mp4',
-                fileName: fileName,
-                caption: `🎵 ${videoTitle}`
-            }, { quoted: msg });
-        }
+        await sock.sendMessage(from, {
+            audio: { url: tempFilePath },
+            mimetype: 'audio/mp4',
+            fileName: fileName
+        }, { quoted: msg });
 
     } catch (error) {
-        console.error('YTDL Fatal Error:', error);
-        await sock.sendMessage(from, {
-            text: '❌ Imeshindwa kupakua. Jaribu wimbo mwingine au link nyingine.'
-        }, { quoted: msg });
+        console.error('Song Error:', error.message);
+        await sock.sendMessage(from, { text: '❌ Imeshindwa kupakua. Jaribu tena.' }, { quoted: msg });
     } finally {
         if (tempFilePath && tempFilePath.includes(os.tmpdir()) &&!tempFilePath.includes('ytdlp_cache')) {
-            try {
-                fs.unlinkSync(tempFilePath);
-            } catch (_) {}
+            try { fs.unlinkSync(tempFilePath); } catch (_) {}
         }
     }
 }
