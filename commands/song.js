@@ -1,4 +1,4 @@
-import ytdl from 'ytdl-core';
+import ytdl from '@distube/ytdl-core';
 import yts from 'yt-search';
 import fs from 'fs';
 import { pipeline } from 'stream';
@@ -10,7 +10,7 @@ const streamPipeline = promisify(pipeline);
 let handler = async (m, { conn, command, text, usedPrefix }) => {
   if (!text) throw `Use example: ${usedPrefix}${command} anna blue bird`;
   
-  // Weka emoji ya kusubiri au ujumbe wa kuanza kupakua
+  // Weka emoji ya kusubiri
   await m.react('⏳'); 
 
   try {
@@ -40,9 +40,9 @@ let handler = async (m, { conn, command, text, usedPrefix }) => {
       quality: 'highestaudio',
     });
 
-    // Kutengeneza faili la muda (temporary file) kwenye mfumo wa kompyuta/server
+    // Kutengeneza faili la muda (temporary file) kwenye mfumo wa seva
     const tmpDir = os.tmpdir();
-    const audioPath = `${tmpDir}/${Date.now()}_audio.mp3`; // Imetumia Date.now() kuzuia mgongano wa majina ya mafaili
+    const audioPath = `${tmpDir}/${Date.now()}_audio.mp3`; 
     const writableStream = fs.createWriteStream(audioPath);
 
     // Pakua na uhifadhi audio kwenye folder la muda
@@ -51,7 +51,8 @@ let handler = async (m, { conn, command, text, usedPrefix }) => {
     // Kupata picha ya thumbnail kwa ajili ya kuweka kwenye kijanduku cha audio (Buffer)
     let thumbnailBuffer;
     try {
-      thumbnailBuffer = await (await conn.getFile(thumbnail)).data;
+      let res = await conn.getFile(thumbnail);
+      thumbnailBuffer = res.data;
     } catch {
       thumbnailBuffer = thumbnail; // Kama ikifeli, tumia url ya kawaida
     }
@@ -63,7 +64,7 @@ let handler = async (m, { conn, command, text, usedPrefix }) => {
       },
       mimetype: 'audio/mpeg',
       ptt: false,
-      waveform: [100, 0, 100, 0, 100, 0, 100], // Mstari wa mawimbi ya sauti (audiowave)
+      waveform: [100, 0, 100, 0, 100, 0, 100], // Mstari wa mawimbi ya sauti
       fileName: `${title}.mp3`,
       contextInfo: {
         externalAdReply: {
@@ -93,7 +94,7 @@ let handler = async (m, { conn, command, text, usedPrefix }) => {
 
 handler.help = ['play'].map((v) => v + ' <query>');
 handler.tags = ['downloader'];
-handler.command = /^play|song$/i; // Itaitikia amri zote mbili: .play au .song
+handler.command = /^play|song$/i; // Inakubali .play au .song
 handler.exp = 0;
 
 export default handler;
