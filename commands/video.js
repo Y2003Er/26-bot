@@ -1,7 +1,12 @@
 import yts from 'yt-search';
 import axios from 'axios';
 
-export default async function execute(sock, msg, args) {
+export const name = 'video';
+export const desc = 'Download video from YouTube';
+export const category = 'download';
+export const use = '.video <jina au link>';
+
+export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
 
