@@ -1,4 +1,4 @@
-import exec from 'yt-dlp-exec';
+import axios from 'axios';
 import yts from 'yt-search';
 import fs from 'fs';
 import os from 'os';
@@ -7,7 +7,7 @@ import path from 'path';
 const playCommand = {
     name: 'play',
     alias: ['song', 'wimbo'],
-    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio kupitia yt-dlp)',
+    description: 'Tafuta na upakue wimbo kutoka YouTube',
     category: 'downloader',
     use: '<jina la wimbo>',
     ownerOnly: false,
@@ -17,7 +17,7 @@ const playCommand = {
 
         if (!text) {
             return await sock.sendMessage(msg.key.remoteJid, {
-                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play anna blue bird`
+                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play marioo unanionea`
             }, { quoted: msg });
         }
 
@@ -25,17 +25,11 @@ const playCommand = {
             await sock.sendMessage(msg.key.remoteJid, {
                 react: { text: '⏳', key: msg.key }
             });
-        } catch (e) {
-            console.error('Failed to react:', e.message);
-        }
-
-        const tmpDir = os.tmpdir();
-        const outputFilename = `${Date.now()}_audio`;
-        let audioPath = null;
+        } catch (e) {}
 
         try {
-            // Search for the song
-            let search = await yts(`${text} Song`);
+            // Search YouTube
+            const search = await yts(`${text} Song`);
             if (!search.videos.length) {
                 return await sock.sendMessage(msg.key.remoteJid, {
                     text: '❌ Wimbo haujapatikana, jaribu jina jengine.'
@@ -46,47 +40,53 @@ const playCommand = {
             const { title, thumbnail, timestamp, views, ago, url } = vid;
 
             // Send thumbnail + info first
-            const captvid = `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
+            await sock.sendMessage(msg.key.remoteJid, {
+                image: { url: thumbnail },
+                caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
 ❏ Title: ${title}
 ❐ Duration: ${timestamp}
 ❑ Views: ${views}
 ❒ Uploaded: ${ago}
 ❒ Link: ${url}
-⊱─━━━━⊱༻●༺⊰━━━━─⊰`;
-
-            await sock.sendMessage(msg.key.remoteJid, {
-                image: { url: thumbnail },
-                caption: captvid
+⊱─━━━━⊱༻●༺⊰━━━━─⊰`
             }, { quoted: msg });
 
-            // Run yt-dlp download
-            await exec(url, {
-                geoBypass: true,
-                extractorArgs: 'youtube:player_client=android,web',
-                userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G991B)',
-                noCheckCertificate: true,
-                noCacheDir: true,
-                extractAudio: true,
-                audioFormat: 'mp3',
-                audioQuality: '128K',
-                output: path.join(tmpDir, `${outputFilename}.%(ext)s`)
-            });
+            // ✅ Request download link from Cobalt API
+            const cobaltRes = await axios.post(
+                'https://api.cobalt.tools/api/json',
+                {
+                    url: url,
+                    aFormat: 'mp3',
+                    isAudioOnly: true,
+                    disableMetadata: true
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    timeout: 30000
+                }
+            );
 
-            // ✅ Detect actual output file (yt-dlp may use .mp3, .m4a, .webm, etc.)
-            const files = fs.readdirSync(tmpDir);
-            const audioFile = files.find(f => f.startsWith(outputFilename));
+            const { status, url: downloadUrl } = cobaltRes.data;
 
-            if (!audioFile) {
-                throw new Error('yt-dlp completed but no output file was found in tmpDir');
+            if (!downloadUrl || (status !== 'stream' && status !== 'redirect' && status !== 'tunnel')) {
+                throw new Error(`Cobalt API returned unexpected status: ${status}`);
             }
 
-            audioPath = path.join(tmpDir, audioFile);
-            console.log(`✅ Audio file found: ${audioPath}`);
+            // ✅ Download audio buffer directly from Cobalt's CDN
+            const audioRes = await axios.get(downloadUrl, {
+                responseType: 'arraybuffer',
+                timeout: 60000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
 
-            // Read file into buffer (more reliable than passing URL path to Baileys)
-            const audioBuffer = fs.readFileSync(audioPath);
+            const audioBuffer = Buffer.from(audioRes.data);
 
-            // Send audio message
+            // Send audio
             await sock.sendMessage(msg.key.remoteJid, {
                 audio: audioBuffer,
                 mimetype: 'audio/mpeg',
@@ -105,34 +105,20 @@ const playCommand = {
                 },
             }, { quoted: msg });
 
-            // Done reaction
             await sock.sendMessage(msg.key.remoteJid, {
                 react: { text: '✅', key: msg.key }
             });
 
         } catch (error) {
-            console.error('Play command error:', error);
+            console.error('Play command error:', error.message);
             await sock.sendMessage(msg.key.remoteJid, {
                 text: '❌ Hitilafu imetokea wakati wa kupakua wimbo huo. Tafadhali jaribu tena.'
             }, { quoted: msg });
-
-            // Error reaction
             try {
                 await sock.sendMessage(msg.key.remoteJid, {
                     react: { text: '❌', key: msg.key }
                 });
             } catch (_) {}
-
-        } finally {
-            // ✅ Always cleanup temp file regardless of success or failure
-            if (audioPath && fs.existsSync(audioPath)) {
-                try {
-                    await fs.promises.unlink(audioPath);
-                    console.log(`🗑️ Deleted temp file: ${audioPath}`);
-                } catch (e) {
-                    console.error('Failed to delete temp file:', e.message);
-                }
-            }
         }
     }
 };
