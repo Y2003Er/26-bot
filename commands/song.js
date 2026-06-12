@@ -46,7 +46,6 @@ export async function execute(sock, msg, args) {
             if (typeof v.thumbnail === 'object' && v.thumbnail!== null) {
                 return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
             }
-            if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
             try {
                 const id = new URL(v.url).searchParams.get('v');
                 if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
@@ -66,12 +65,6 @@ export async function execute(sock, msg, args) {
                     videoThumb = getThumb(v);
                 }
             } catch (_) {}
-            if (!videoThumb) {
-                try {
-                    const id = new URL(videoUrl).searchParams.get('v');
-                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-                } catch (_) {}
-            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -89,46 +82,32 @@ export async function execute(sock, msg, args) {
         const finalAuthor = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        if (finalDuration && finalDuration!== '--:--') {
-            const parts = finalDuration.split(':');
-            if (parts.length > 2) {
-                return await sock.sendMessage(from, {
-                    text: '❌ Wimbo mrefu sana. Tafadhali weka wimbo chini ya dakika 12.'
-                }, { quoted: msg });
-            }
-            const mins = parseInt(parts[0]);
-            if (!isNaN(mins) && mins > 12) {
-                return await sock.sendMessage(from, {
-                    text: '❌ Wimbo unazidi dakika 12. Tafadhali omba wimbo mfupi.'
-                }, { quoted: msg });
-            }
-        }
-
         if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
         const uniqueId = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}.%(ext)s`);
+        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
 
-        const options = {
+        // Try 1: na cookies.txt + android client
+        let options = {
             output: outputTemplate,
             noCheckCertificates: true,
             noWarnings: true,
-            extractorArgs: 'youtube:player_client=ios,android',
+            extractorArgs: 'youtube:player_client=android',
             addHeader: [
                 'referer:youtube.com',
-                'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
+                'user-agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36'
             ],
-            format: 'bestaudio/best'
+            format: 'bestaudio/worst/best'
         };
 
-        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesTxt)) {
             options.cookies = cookiesTxt;
             console.log(`✅ [26-TECH] Cookies imepachikwa`);
@@ -143,42 +122,37 @@ export async function execute(sock, msg, args) {
         try {
             console.log(`🔄 [26-TECH] Kupakua: ${videoUrl}`);
             await ytDlp(videoUrl, options, execOptions);
+            downloaded = true;
+        } catch (e1) {
+            console.warn(`⚠️ Try 1 failed, trying without cookies...`);
+            // Try 2: bila cookies, worst format
+            delete options.cookies;
+            options.format = 'worst/best';
+            try {
+                await ytDlp(videoUrl, options, execOptions);
+                downloaded = true;
+            } catch (e2) {
+                throw e2;
+            }
+        }
 
+        if (downloaded) {
             const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
             if (tmpFiles.length > 0) {
                 tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
-                const sz = fs.statSync(tempFilePath).size;
-                if (sz > 0) {
-                    downloaded = true;
-                    console.log(`✅ [26-TECH] Imepatikana!`);
-                }
             }
-        } catch (e) {
-            const msg2 = (e?.stderr || '') + (e?.stdout || '');
-            console.warn(`⚠️ Imeshindwa: ${msg2.slice(0, 200)}`);
-            throw e;
         }
 
-        if (!downloaded ||!tempFilePath) {
-            throw new Error('ALLFAILED: Download imeshindwa');
+        if (!tempFilePath || !fs.existsSync(tempFilePath)) {
+            throw new Error('Download imeshindwa');
         }
 
         const fileExt = path.extname(tempFilePath).replace('.', '') || 'm4a';
         const fileSize = fs.statSync(tempFilePath).size;
         const fileName = `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.${fileExt}`;
+        const mimetype = 'audio/mpeg';
 
-        const mimeMap = {
-            mp3: 'audio/mpeg',
-            m4a: 'audio/mp4',
-            webm: 'audio/webm',
-            opus: 'audio/ogg',
-            ogg: 'audio/ogg',
-            wav: 'audio/wav',
-            aac: 'audio/aac',
-        };
-        const mimetype = mimeMap[fileExt] || 'audio/mp4';
-
-        // Jaribu kutuma kama audio kwanza
+        // Auto fallback: jaribu audio, ikishindikana tuma doc
         try {
             await sock.sendMessage(from, {
                 audio: { url: tempFilePath },
@@ -188,33 +162,19 @@ export async function execute(sock, msg, args) {
             }, { quoted: msg });
             console.log('✅ [26-TECH] Imetumwa kama audio');
         } catch (sendErr) {
-            console.warn('⚠️ Audio send failed, fallback to document:', sendErr.message);
-            // Fallback: tuma kama document
+            console.warn('⚠️ Audio send failed, fallback to document');
             await sock.sendMessage(from, {
                 document: { url: tempFilePath },
                 mimetype: mimetype,
                 fileName: fileName,
                 caption: `🎵 ${finalTitle}`
             }, { quoted: msg });
-            console.log('✅ [26-TECH] Imetumwa kama document fallback');
         }
 
     } catch (error) {
         console.error('YT-DLP Fatal Error:', error);
-
-        let errMsg = '❌ Hitilafu: Imeshindwa kupakua wimbo huu.';
-        const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
-
-        if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Fanya refresh cookies.txt';
-        } else if (allOutput.includes('format is not available')) {
-            errMsg = '❌ Audio haipatikani kwa wimbo huu. Jaribu mwingine.';
-        } else if (allOutput.includes('Video unavailable')) {
-            errMsg = '❌ Video hii haipatikani au imefungwa.';
-        }
-
+        let errMsg = '❌ Imeshindwa kupakua. Jaribu video nyingine au update cookies.txt';
         await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
-
     } finally {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
             try {
