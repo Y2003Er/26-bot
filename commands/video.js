@@ -1,5 +1,6 @@
 import yts from 'yt-search';
 import axios from 'axios';
+import { cobaltDownload } from '../lib/cobalt.js';
 
 const videoCommand = {
     name: 'video',
@@ -24,7 +25,6 @@ const videoCommand = {
                 react: { text: '⏳', key: msg.key }
             });
 
-            // Search or use direct URL
             let videoUrl;
             let videoTitle = text;
 
@@ -41,32 +41,9 @@ const videoCommand = {
                 videoTitle = videos[0].title;
             }
 
-            // ✅ Cobalt API — correct status values
-            const cobaltRes = await axios.post(
-                'https://api.cobalt.tools/api/json',
-                {
-                    url: videoUrl,
-                    isAudioOnly: false,
-                    vQuality: '360',   // ✅ correct param name
-                    vFormat: 'mp4'     // ✅ correct param name
-                },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    timeout: 60000
-                }
-            );
+            // ✅ Use updated Cobalt helper
+            const downloadUrl = await cobaltDownload(videoUrl, false);
 
-            const { status, url: downloadUrl } = cobaltRes.data;
-
-            // ✅ Cobalt returns 'stream', 'redirect', or 'tunnel' on success — NOT 'success'
-            if (!downloadUrl || !['stream', 'redirect', 'tunnel'].includes(status)) {
-                throw new Error(`Cobalt API error: ${status} — ${cobaltRes.data?.text || 'unknown'}`);
-            }
-
-            // Download video buffer
             const videoRes = await axios.get(downloadUrl, {
                 responseType: 'arraybuffer',
                 timeout: 120000,
@@ -77,7 +54,6 @@ const videoCommand = {
 
             const videoBuffer = Buffer.from(videoRes.data);
 
-            // Send video
             await sock.sendMessage(from, {
                 video: videoBuffer,
                 mimetype: 'video/mp4',
