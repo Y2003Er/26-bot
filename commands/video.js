@@ -1,23 +1,23 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la Kasi la 26-TECH
+ * Download video kutoka YouTube — No ffmpeg required [26-TECH]
  */
 
 import yts from 'yt-search';
-import ytdlp from 'yt-dlp-exec';
+import ytDlp from 'yt-dlp-exec';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const name = 'video';
-export const description = 'Download video kutoka YouTube kwa kasi ya juu';
+export const description = 'Download video kutoka YouTube kupitia YT-DLP Exec';
 export const category = 'media';
 export const use = '<jina la video au link>';
-export const alias = ['ytv', 'ytmp4', 'ytvid'];
+export const alias = ['ytvideo', 'mp4'];
 export const adminOnly = false;
-
-// hakikisha folder ya temp ipo
-const TEMP_DIR = './temp';
-if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR);
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
@@ -25,72 +25,193 @@ export async function execute(sock, msg, args) {
 
     if (!text) {
         return await sock.sendMessage(from, {
-            text: `❌ Tafadhali andika jina la video au uweke link ya YouTube.\nMfano:.video Alikiba New Song`
+            text: `❌ Tafadhali andika jina la video au uweke link.\nMfano:.video Marioo Watu`
         }, { quoted: msg });
     }
 
+    let tempFilePath = '';
+
     try {
-        await sock.sendMessage(from, { text: '⏳ *Natafuta video...*' }, { quoted: msg });
+        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa video yako, subiri kidogo...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
+        let videoAuthor = '';
+        let videoDuration = '';
+        let videoThumb = '';
 
-        // 1. Pata link ya video
+        const getThumb = (v) => {
+            if (!v) return '';
+            if (typeof v.thumbnail === 'string' && v.thumbnail.startsWith('http')) return v.thumbnail;
+            if (typeof v.thumbnail === 'object' && v.thumbnail!== null) {
+                return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
+            }
+            if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
+            try {
+                const id = new URL(v.url).searchParams.get('v');
+                if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+            } catch (_) {}
+            return '';
+        };
+
+        // 1. Tafuta Video kwenye YouTube
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
-            const searchLink = await yts(text);
-            if (searchLink && searchLink.videos.length > 0) {
-                videoTitle = searchLink.videos[0].title;
+            try {
+                const sl = await yts(text);
+                if (sl?.videos?.length > 0) {
+                    const v = sl.videos[0];
+                    videoTitle = v.title;
+                    videoAuthor = v.author?.name || v.author || '';
+                    videoDuration = v.timestamp || '';
+                    videoThumb = getThumb(v);
+                }
+            } catch (_) {}
+            if (!videoThumb) {
+                try {
+                    const id = new URL(videoUrl).searchParams.get('v');
+                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+                } catch (_) {}
             }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
                 return await sock.sendMessage(from, { text: '❌ Video haijapatikana!' }, { quoted: msg });
             }
-            videoUrl = videos[0].url;
-            videoTitle = videos[0].title;
+            const v = videos[0];
+            videoUrl = v.url;
+            videoTitle = v.title;
+            videoAuthor = v.author?.name || v.author || '';
+            videoDuration = v.timestamp || '';
+            videoThumb = getThumb(v);
         }
 
-        const safeTitle = videoTitle.replace(/[^\w\s-]/g, '').trim().slice(0, 50) || 'video';
-        const outputPath = path.join(TEMP_DIR, `${Date.now()}_${safeTitle}.mp4`);
+        const finalTitle = videoTitle || 'Video';
+        const finalAuthor = videoAuthor || 'Haijulikani';
+        const finalDuration = videoDuration || '--:--';
 
-        await sock.sendMessage(from, { text: `⬇️ *Napakua: ${safeTitle}*\nSubiri kidogo...` }, { quoted: msg });
+        // Kikomo cha urefu - 5 min kwa video
+        if (finalDuration && finalDuration!== '--:--') {
+            const parts = finalDuration.split(':');
+            if (parts.length > 2) {
+                return await sock.sendMessage(from, {
+                    text: '❌ Video ndefu sana. Tafadhali weka video chini ya dakika 5.'
+                }, { quoted: msg });
+            }
+            const mins = parseInt(parts[0]);
+            if (!isNaN(mins) && mins > 5) {
+                return await sock.sendMessage(from, {
+                    text: '❌ Video inazidi dakika 5. Tafadhali omba video fupi.'
+                }, { quoted: msg });
+            }
+        }
 
-        // 2. Pakua kwa yt-dlp - hii ndio sehemu ya kasi
-        await ytdlp(videoUrl, {
-            format: 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
-            output: outputPath,
+        // Tuma Thumbnail
+        if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
+            try {
+                await sock.sendMessage(from, {
+                    image: { url: videoThumb },
+                    caption: `🎬 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                }, { quoted: msg });
+            } catch (_) {}
+        }
+
+        const uniqueId = Date.now();
+        const outputTemplate = path.join(os.tmpdir(), `ytdlp_vid_${uniqueId}.%(ext)s`);
+
+        const options = {
+            output: outputTemplate,
             noCheckCertificates: true,
             noWarnings: true,
-            preferFreeFormats: true,
-            extractorArgs: 'youtube:player_client=android',
-            addHeader: ['referer:youtube.com', 'user-agent:Mozilla/5.0'],
-            limitRate: '5M' // limit 5MB/s ili isilete ban
-        });
+            extractorArgs: 'youtube:player_client=ios,android',
+            addHeader: [
+                'referer:youtube.com',
+                'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
+            ],
+            format: 'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best'
+        };
 
-        // 3. Check size - WhatsApp inaruhusu max 100MB
-        const stats = fs.statSync(outputPath);
-        if (stats.size > 95 * 1024 * 1024) {
-            fs.unlinkSync(outputPath);
+        // Ongeza cookies kama ipo
+        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
+        if (fs.existsSync(cookiesTxt)) {
+            options.cookies = cookiesTxt;
+            console.log(`✅ [26-TECH] Cookies imepachikwa kwa video`);
+        } else {
+            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani - YouTube inaweza kukublock`);
+        }
+
+        const execOptions = {
+            executablePath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
+        };
+
+        let downloaded = false;
+
+        try {
+            console.log(`🔄 [26-TECH] Kupakua video: ${videoUrl}`);
+            await ytDlp(videoUrl, options, execOptions);
+
+            const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_vid_${uniqueId}`));
+            if (tmpFiles.length > 0) {
+                tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
+                const sz = fs.statSync(tempFilePath).size;
+                if (sz > 0) {
+                    downloaded = true;
+                    console.log(`✅ [26-TECH] Video imepatikana!`);
+                }
+            }
+        } catch (e) {
+            const msg2 = (e?.stderr || '') + (e?.stdout || '');
+            console.warn(`⚠️ Imeshindwa: ${msg2.slice(0, 200)}`);
+            throw e;
+        }
+
+        if (!downloaded ||!tempFilePath) {
+            throw new Error('ALLFAILED: Download imeshindwa');
+        }
+
+        const fileExt = path.extname(tempFilePath).replace('.', '') || 'mp4';
+        const fileSize = fs.statSync(tempFilePath).size;
+
+        // WhatsApp limit 64MB
+        if (fileSize > 60 * 1024 * 1024) {
+            fs.unlinkSync(tempFilePath);
             return await sock.sendMessage(from, {
-                text: '❌ Video ni kubwa sana. Max ni 95MB kwa WhatsApp.'
+                text: '❌ Video kubwa sana. WhatsApp hairuhusu zaidi ya 60MB.'
             }, { quoted: msg });
         }
 
-        // 4. Tuma video
+        console.log(`✅ [26-TECH] Video inatumwa: ${tempFilePath} | ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
+
         await sock.sendMessage(from, {
-            video: { url: outputPath },
-            mimetype: 'video/mp4',
-            fileName: `${safeTitle}.mp4`,
-            caption: `🎬 *${videoTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            video: { url: tempFilePath },
+            caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*`,
+            mimetype: 'video/mp4'
         }, { quoted: msg });
 
-        // 5. Futa file baada ya kutuma
-        fs.unlinkSync(outputPath);
-        console.log(`✅ [26-TECH] Video imetumwa: ${safeTitle}`);
+        console.log('✅ [26-TECH] Video imetumwa!');
 
     } catch (error) {
-        console.error('Video error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu: ${error.message}` }, { quoted: msg });
+        console.error('YT-DLP Video Fatal Error:', error);
+
+        let errMsg = '❌ Hitilafu: Imeshindwa kupakua video hii.';
+        const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
+
+        if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
+            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot.';
+        } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
+            errMsg = '❌ Video hii haipatikani au imefungwa.';
+        } else if (error?.code === 'ENOENT') {
+            errMsg = '❌ YT-DLP binary haipatikani.';
+        }
+
+        await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
+
+    } finally {
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try {
+                fs.unlinkSync(tempFilePath);
+                console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
+            } catch (_) {}
+        }
     }
 }
