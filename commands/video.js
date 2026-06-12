@@ -89,14 +89,8 @@ export async function execute(sock, msg, args) {
         const finalAuthor = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        // Limit dakika 5 ili isizidi 60MB ya WhatsApp
         if (finalDuration && finalDuration!== '--:--') {
             const parts = finalDuration.split(':');
-            if (parts.length > 2) {
-                return await sock.sendMessage(from, {
-                    text: '❌ Video ndefu sana. Tafadhali weka video chini ya dakika 5.'
-                }, { quoted: msg });
-            }
             const mins = parseInt(parts[0]);
             if (!isNaN(mins) && mins > 5) {
                 return await sock.sendMessage(from, {
@@ -126,16 +120,13 @@ export async function execute(sock, msg, args) {
                 'referer:youtube.com',
                 'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
             ],
-            format: 'best[height<=720]/best'
+            format: 'best/best'
         };
 
-        // Ongeza cookies kama ipo
         const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesTxt)) {
             options.cookies = cookiesTxt;
             console.log(`✅ [26-TECH] Cookies imepachikwa kwa video`);
-        } else {
-            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani`);
         }
 
         const execOptions = {
@@ -167,10 +158,8 @@ export async function execute(sock, msg, args) {
             throw new Error('ALLFAILED: Download imeshindwa');
         }
 
-        const fileExt = path.extname(tempFilePath).replace('.', '') || 'mp4';
         const fileSize = fs.statSync(tempFilePath).size;
 
-        // WhatsApp limit 64MB
         if (fileSize > 60 * 1024 * 1024) {
             fs.unlinkSync(tempFilePath);
             return await sock.sendMessage(from, {
@@ -178,15 +167,11 @@ export async function execute(sock, msg, args) {
             }, { quoted: msg });
         }
 
-        console.log(`✅ [26-TECH] Video inatumwa: ${tempFilePath} | ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
-
         await sock.sendMessage(from, {
             video: { url: tempFilePath },
             caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*`,
             mimetype: 'video/mp4'
         }, { quoted: msg });
-
-        console.log('✅ [26-TECH] Video imetumwa!');
 
     } catch (error) {
         console.error('YT-DLP Video Fatal Error:', error);
@@ -195,10 +180,10 @@ export async function execute(sock, msg, args) {
         const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
 
         if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot.';
+            errMsg = '❌ YouTube imeblock. Fanya refresh cookies.txt';
         } else if (allOutput.includes('format is not available')) {
-            errMsg = '❌ Format haipatikani. Jaribu video nyingine.';
-        } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
+            errMsg = '❌ Video haipatikani kwa format yoyote. Jaribu nyingine.';
+        } else if (allOutput.includes('Video unavailable')) {
             errMsg = '❌ Video hii haipatikani au imefungwa.';
         }
 
@@ -208,7 +193,6 @@ export async function execute(sock, msg, args) {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
             try {
                 fs.unlinkSync(tempFilePath);
-                console.log('🗑️ [26-TECH] Faili la muda limefutwa.');
             } catch (_) {}
         }
     }
