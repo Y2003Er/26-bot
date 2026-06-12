@@ -63,6 +63,7 @@ export async function execute(sock, msg, args) {
             noCheckCertificates: true,
             noWarnings: true,
             preferFreeFormats: true,
+            extractorArgs: 'youtube:player_client=android',
             addHeader: ['referer:youtube.com', 'user-agent:Mozilla/5.0'],
             limitRate: '5M' // limit 5MB/s ili isilete ban
         });
