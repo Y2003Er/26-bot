@@ -83,7 +83,7 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used = ((os.totalmem() - os.freem()) / 1024 / 1024).toFixed(0); // FIX: freem not freem
+    const used = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
     return `${used}/${total} MB`;
 }
@@ -196,7 +196,7 @@ function displayPairingCode(code) {
     console.log('║ 🔑 PAIRING CODE ║');
     console.log('╠══════════╣');
     console.log(`║ ${code} ║`);
-    console.log('╚══════════════════════════╝');
+    console.log('╚══════════╝');
     console.log(`\n📋 CODE: ${code}\n`);
 }
 
@@ -348,7 +348,6 @@ async function startBot() {
                         updateBanner('groups', Object.keys(groups).length);
                     }),
                     Promise.resolve(setupAntiDelete(sock)),
-                    // Promise.resolve(setupAntiViewOnce(sock)), // REMOVED
                     Promise.resolve(setupAutoStatusViewer(sock)),
                     Promise.resolve(initGroupProtection(sock, logger)),
                 ]);
