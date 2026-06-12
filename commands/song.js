@@ -119,7 +119,7 @@ export async function execute(sock, msg, args) {
         const uniqueId = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}.%(ext)s`);
 
-        const baseArgs = {
+        const options = {
             output: outputTemplate,
             noCheckCertificates: true,
             noWarnings: true,
@@ -128,6 +128,10 @@ export async function execute(sock, msg, args) {
                 'referer:youtube.com',
                 'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
             ],
+            format: 'bestaudio[ext=m4a]/bestaudio/best'
+        };
+
+        const execOptions = {
             executablePath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
         };
 
@@ -135,7 +139,7 @@ export async function execute(sock, msg, args) {
 
         try {
             console.log(`🔄 [26-TECH] Kupakua: ${videoUrl}`);
-            await ytDlp(videoUrl, {...baseArgs, format: 'bestaudio[ext=m4a]/bestaudio/best' });
+            await ytDlp(videoUrl, options, execOptions);
 
             const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
             if (tmpFiles.length > 0) {
