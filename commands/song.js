@@ -1,8 +1,6 @@
 import axios from 'axios';
 import yts from 'yt-search';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import { cobaltDownload } from '../lib/cobalt.js';
 
 const playCommand = {
     name: 'play',
@@ -28,7 +26,6 @@ const playCommand = {
         } catch (e) {}
 
         try {
-            // Search YouTube
             const search = await yts(`${text} Song`);
             if (!search.videos.length) {
                 return await sock.sendMessage(msg.key.remoteJid, {
@@ -39,7 +36,6 @@ const playCommand = {
             const vid = search.videos[0];
             const { title, thumbnail, timestamp, views, ago, url } = vid;
 
-            // Send thumbnail + info first
             await sock.sendMessage(msg.key.remoteJid, {
                 image: { url: thumbnail },
                 caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
@@ -51,34 +47,12 @@ const playCommand = {
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
             }, { quoted: msg });
 
-            // ✅ Request download link from Cobalt API
-            const cobaltRes = await axios.post(
-                'https://api.cobalt.tools/api/json',
-                {
-                    url: url,
-                    aFormat: 'mp3',
-                    isAudioOnly: true,
-                    disableMetadata: true
-                },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    timeout: 30000
-                }
-            );
+            // ✅ Use updated Cobalt helper
+            const downloadUrl = await cobaltDownload(url, true);
 
-            const { status, url: downloadUrl } = cobaltRes.data;
-
-            if (!downloadUrl || (status !== 'stream' && status !== 'redirect' && status !== 'tunnel')) {
-                throw new Error(`Cobalt API returned unexpected status: ${status}`);
-            }
-
-            // ✅ Download audio buffer directly from Cobalt's CDN
             const audioRes = await axios.get(downloadUrl, {
                 responseType: 'arraybuffer',
-                timeout: 60000,
+                timeout: 120000,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
@@ -86,7 +60,6 @@ const playCommand = {
 
             const audioBuffer = Buffer.from(audioRes.data);
 
-            // Send audio
             await sock.sendMessage(msg.key.remoteJid, {
                 audio: audioBuffer,
                 mimetype: 'audio/mpeg',
