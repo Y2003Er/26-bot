@@ -4,7 +4,7 @@
  */
 
 import yts from 'yt-search';
-import ytdlp from '@distube/ytdlp-exec';
+import ytdlp from 'yt-dlp-exec';
 import fs from 'fs';
 import path from 'path';
 
