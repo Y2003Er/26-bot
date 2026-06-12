@@ -6,31 +6,26 @@ import ffmpegStatic from 'ffmpeg-static';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Readable } from 'stream';
 
-// ✅ Waambia fluent-ffmpeg iko wapi ffmpeg binary
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
-// ✅ Convert buffer kwenda mp3 clean
-async function convertToMp3(inputBuffer) {
+async function convertToAudio(inputBuffer) {
     return new Promise((resolve, reject) => {
         const tmpInput = path.join(os.tmpdir(), `input_${Date.now()}`);
-        const tmpOutput = path.join(os.tmpdir(), `output_${Date.now()}.mp3`);
+        const tmpOutput = path.join(os.tmpdir(), `output_${Date.now()}.mp4`);
 
-        // Andika buffer kwenye temp file
         fs.writeFileSync(tmpInput, inputBuffer);
 
         ffmpeg(tmpInput)
             .setFfmpegPath(ffmpegStatic)
-            .audioCodec('libmp3lame')
+            .audioCodec('aac')
             .audioBitrate('128k')
             .audioFrequency(44100)
             .audioChannels(2)
-            .format('mp3')
+            .format('mp4')
             .on('end', () => {
                 try {
                     const outputBuffer = fs.readFileSync(tmpOutput);
-                    // Cleanup temp files
                     fs.unlinkSync(tmpInput);
                     fs.unlinkSync(tmpOutput);
                     resolve(outputBuffer);
@@ -39,7 +34,6 @@ async function convertToMp3(inputBuffer) {
                 }
             })
             .on('error', (err) => {
-                // Cleanup on error
                 try { fs.unlinkSync(tmpInput); } catch (_) {}
                 try { fs.unlinkSync(tmpOutput); } catch (_) {}
                 reject(err);
@@ -72,7 +66,6 @@ const playCommand = {
         } catch (e) {}
 
         try {
-            // Search YouTube
             const search = await yts(`${text} Song`);
             if (!search.videos.length) {
                 return await sock.sendMessage(msg.key.remoteJid, {
@@ -83,7 +76,6 @@ const playCommand = {
             const vid = search.videos[0];
             const { title, thumbnail, timestamp, views, ago, url } = vid;
 
-            // Thumbnail + info
             await sock.sendMessage(msg.key.remoteJid, {
                 image: { url: thumbnail },
                 caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
@@ -127,15 +119,15 @@ const playCommand = {
             const finalTitle = audioData.title || title;
             const finalThumb = audioData.thumbnail || thumbnail;
 
-            // ✅ Convert to clean mp3 before sending
+            // ✅ Convert to aac/mp4 before sending
             console.log(`[PLAY] Converting: ${finalTitle}`);
-            const audioBuffer = await convertToMp3(rawBuffer);
+            const audioBuffer = await convertToAudio(rawBuffer);
             console.log(`[PLAY] Converted successfully — ${audioBuffer.length} bytes`);
 
-            // Send audio
+            // ✅ Send with audio/mp4 mimetype
             await sock.sendMessage(msg.key.remoteJid, {
                 audio: audioBuffer,
-                mimetype: 'audio/mpeg',
+                mimetype: 'audio/mp4',
                 ptt: false,
                 fileName: `${finalTitle}.mp3`,
                 contextInfo: {
