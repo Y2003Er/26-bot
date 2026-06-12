@@ -1,121 +1,65 @@
 import exec from 'yt-dlp-exec';
 import yts from 'yt-search';
-import ytM from 'node-youtube-music';
-import NodeID3 from 'node-id3';
-import axios from 'axios';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { crypto } from 'crypto';
-
-// Kazi ya kupakua picha ya kava na kuifanya kuwa Buffer kwa ajili ya ID3 Tags
-async function fetchBuffer(url) {
-    try {
-        const res = await axios.get(url, { responseType: 'arraybuffer' });
-        return Buffer.from(res.data);
-    } catch {
-        return null;
-    }
-}
-
-// Kazi ya kuandika Metadata (Tags) kwenye faili la MP3
-async function writeTags(filePath, metadata) {
-    try {
-        const imageBuffer = await fetchBuffer(metadata.image);
-        const tags = {
-            title: metadata.title,
-            artist: metadata.artist,
-            album: metadata.album || 'YouTube Music',
-            year: metadata.year || new Date().getFullYear().toString(),
-        };
-
-        if (imageBuffer) {
-            tags.image = {
-                mime: 'image/jpeg',
-                type: { id: 3, name: 'front cover' },
-                description: `Cover of ${metadata.title}`,
-                imageBuffer: imageBuffer
-            };
-        }
-        NodeID3.write(tags, filePath);
-    } catch (e) {
-        console.error('Failed to write ID3 tags:', e.message);
-    }
-}
 
 const playCommand = {
     name: 'play',
     alias: ['song', 'wimbo'],
-    description: 'Tafuta kwenye YT Music, weka kava (ID3 Tags) na upakue kupitia yt-dlp',
+    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio kupitia yt-dlp)',
     category: 'downloader',
     use: '<jina la wimbo>',
     ownerOnly: false,
     adminOnly: false,
     execute: async (sock, msg, args) => {
         const text = args.join(' ');
-        
+
         if (!text) {
-            return await sock.sendMessage(msg.key.remoteJid, { 
-                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play anna blue bird` 
+            return await sock.sendMessage(msg.key.remoteJid, {
+                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play anna blue bird`
             }, { quoted: msg });
         }
 
-        // React kwa emoji ya kusubiri
         try {
-            await sock.sendMessage(msg.key.remoteJid, { react: { text: '⏳', key: msg.key } });
-        } catch {}
+            await sock.sendMessage(msg.key.remoteJid, {
+                react: { text: '⏳', key: msg.key }
+            });
+        } catch (e) {
+            console.error('Failed to react:', e.message);
+        }
+
+        const tmpDir = os.tmpdir();
+        const outputFilename = `${Date.now()}_audio`;
+        let audioPath = null;
 
         try {
-            let searchResult;
-            let title, url, artist, album, image, year;
-
-            // 1. Jaribu kutafuta kwenye YouTube Music kwanza kwa usahihi wa Audio
-            try {
-                let ytMusic = await ytM.searchMusics(text);
-                if (ytMusic && ytMusic.length > 0) {
-                    let track = ytMusic[0];
-                    title = track.title;
-                    artist = track.artists.map(x => x.name).join(', ');
-                    album = track.album;
-                    url = `https://www.youtube.com/watch?v=${track.youtubeId}`;
-                    image = track.thumbnailUrl ? track.thumbnailUrl.replace('w120-h120', 'w600-h600') : null;
-                    year = new Date().getFullYear().toString();
-                }
-            } catch (e) {
-                console.log('YT Music search failed, falling back to standard yt-search...');
+            // Search for the song
+            let search = await yts(`${text} Song`);
+            if (!search.videos.length) {
+                return await sock.sendMessage(msg.key.remoteJid, {
+                    text: '❌ Wimbo haujapatikana, jaribu jina jengine.'
+                }, { quoted: msg });
             }
 
-            // 2. Kama YT Music isipopata, tumia yt-search ya kawaida
-            if (!url) {
-                let standardSearch = await yts(`${text} Song`);
-                if (!standardSearch.videos.length) {
-                    return await sock.sendMessage(msg.key.remoteJid, { text: '❌ Wimbo haujapatikana!' }, { quoted: msg });
-                }
-                let vid = standardSearch.videos[0];
-                title = vid.title;
-                artist = vid.author.name;
-                album = 'YouTube Release';
-                url = vid.url;
-                image = vid.thumbnail;
-                year = vid.ago ? vid.ago.split(' ').pop() : new Date().getFullYear().toString();
-            }
+            const vid = search.videos[0];
+            const { title, thumbnail, timestamp, views, ago, url } = vid;
 
-            // Tuma maelezo ya ujumbe (Caption)
+            // Send thumbnail + info first
             const captvid = `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
 ❏ Title: ${title}
-❐ Artist: ${artist}
-❑ Album: ${album}
+❐ Duration: ${timestamp}
+❑ Views: ${views}
+❒ Uploaded: ${ago}
 ❒ Link: ${url}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`;
 
-            await sock.sendMessage(msg.key.remoteJid, { image: { url: image }, caption: captvid }, { quoted: msg });
+            await sock.sendMessage(msg.key.remoteJid, {
+                image: { url: thumbnail },
+                caption: captvid
+            }, { quoted: msg });
 
-            // Kutengeneza njia ya faili la muda
-            const tmpDir = os.tmpdir();
-            const outputFilename = `${Date.now()}_audio`;
-            const audioPath = path.join(tmpDir, `${outputFilename}.mp3`);
-
-            // 3. Kupakua kwa kutumia yt-dlp yenye vigezo vyako thabiti
+            // Run yt-dlp download
             await exec(url, {
                 geoBypass: true,
                 extractorArgs: 'youtube:player_client=android,web',
@@ -124,20 +68,29 @@ const playCommand = {
                 noCacheDir: true,
                 extractAudio: true,
                 audioFormat: 'mp3',
+                audioQuality: '128K',
                 output: path.join(tmpDir, `${outputFilename}.%(ext)s`)
             });
 
-            // 4. Kuandika ID3 Tags (Kuweka picha ya kava na jina la msanii ndani ya faili)
-            if (fs.existsSync(audioPath)) {
-                await writeTags(audioPath, { title, artist, album, image, year });
+            // ✅ Detect actual output file (yt-dlp may use .mp3, .m4a, .webm, etc.)
+            const files = fs.readdirSync(tmpDir);
+            const audioFile = files.find(f => f.startsWith(outputFilename));
+
+            if (!audioFile) {
+                throw new Error('yt-dlp completed but no output file was found in tmpDir');
             }
 
-            // Muundo wa ujumbe wa audio wa WhatsApp
-            const doc = {
-                audio: { url: audioPath },
+            audioPath = path.join(tmpDir, audioFile);
+            console.log(`✅ Audio file found: ${audioPath}`);
+
+            // Read file into buffer (more reliable than passing URL path to Baileys)
+            const audioBuffer = fs.readFileSync(audioPath);
+
+            // Send audio message
+            await sock.sendMessage(msg.key.remoteJid, {
+                audio: audioBuffer,
                 mimetype: 'audio/mpeg',
                 ptt: false,
-                waveform: [100, 0, 100, 0, 100, 0, 100], 
                 fileName: `${title}.mp3`,
                 contextInfo: {
                     externalAdReply: {
@@ -145,29 +98,41 @@ const playCommand = {
                         mediaType: 2,
                         mediaUrl: url,
                         title: title,
-                        body: `by ${artist} 🎧`,
+                        body: 'HERE IS YOUR SONG 🎧',
                         sourceUrl: url,
-                        thumbnailUrl: image, 
+                        thumbnailUrl: thumbnail,
                     },
                 },
-            };
+            }, { quoted: msg });
 
-            // Tuma wimbo uliokamilika wenye kava ndani yake
-            await sock.sendMessage(msg.key.remoteJid, doc, { quoted: msg });
-
-            // Futa faili la muda kujilinda na disk space full
-            if (fs.existsSync(audioPath)) {
-                await fs.promises.unlink(audioPath);
-            }
-
-            // React kwa emoji ya kumaliza
-            await sock.sendMessage(msg.key.remoteJid, { react: { text: '✅', key: msg.key } });
+            // Done reaction
+            await sock.sendMessage(msg.key.remoteJid, {
+                react: { text: '✅', key: msg.key }
+            });
 
         } catch (error) {
-            console.error('Play advanced command error:', error);
-            await sock.sendMessage(msg.key.remoteJid, { 
-                text: '❌ Hitilafu imetokea wakati wa kuandaa wimbo wako kwa sasa.' 
+            console.error('Play command error:', error);
+            await sock.sendMessage(msg.key.remoteJid, {
+                text: '❌ Hitilafu imetokea wakati wa kupakua wimbo huo. Tafadhali jaribu tena.'
             }, { quoted: msg });
+
+            // Error reaction
+            try {
+                await sock.sendMessage(msg.key.remoteJid, {
+                    react: { text: '❌', key: msg.key }
+                });
+            } catch (_) {}
+
+        } finally {
+            // ✅ Always cleanup temp file regardless of success or failure
+            if (audioPath && fs.existsSync(audioPath)) {
+                try {
+                    await fs.promises.unlink(audioPath);
+                    console.log(`🗑️ Deleted temp file: ${audioPath}`);
+                } catch (e) {
+                    console.error('Failed to delete temp file:', e.message);
+                }
+            }
         }
     }
 };
