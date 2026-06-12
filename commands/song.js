@@ -51,3 +51,69 @@ export async function execute(sock, msg, args) {
             await downloadFromInvidious(videoId, tempFilePath);
             downloaded = true;
         } catch (e) {
+            console.log('Invidious failed, falling back to yt-dlp');
+        }
+
+        // Fallback: yt-dlp
+        if (!downloaded) {
+            await downloadWithYtdlp(videoUrl, tempFilePath);
+        }
+
+        fs.copyFileSync(tempFilePath, cacheFile);
+        await sendAudio(sock, from, msg, tempFilePath, videoTitle);
+
+        if (!tempFilePath.includes('ytdlp_cache')) fs.unlinkSync(tempFilePath);
+
+    } catch (error) {
+        console.error('Song Error:', error.message);
+        await sock.sendMessage(from, { text: '❌ Imeshindwa kupakua. Jaribu wimbo mwingine.' }, { quoted: msg });
+    }
+}
+
+async function downloadFromInvidious(videoId, outputPath) {
+    for (let instance of INVIDIOUS_INSTANCES) {
+        try {
+            const { data } = await axios.get(`${instance}/api/v1/videos/${videoId}`, { timeout: 8000 });
+            const audioUrl = data.adaptiveFormats.find(f => f.type.includes('audio/mp4'))?.url;
+            if (!audioUrl) continue;
+
+            const response = await axios.get(audioUrl, { responseType: 'stream', timeout: 60000 });
+            const writer = fs.createWriteStream(outputPath);
+            response.data.pipe(writer);
+            await new Promise((resolve, reject) => {
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            });
+            return;
+        } catch (e) {}
+    }
+    throw new Error('Audio url not found');
+}
+
+async function downloadWithYtdlp(url, outputPath) {
+    await ytdl(url, {
+        output: outputPath,
+        format: 'worstaudio/140',
+        noCheckCertificates: true,
+        noWarnings: true,
+        cookies: './cookies.txt',
+        extractorArgs: 'youtube:player_client=android',
+        addHeader: ['referer:youtube.com', 'user-agent:Mozilla/5.0']
+    });
+}
+
+async function sendAudio(sock, from, msg, filePath, title) {
+    try {
+        await sock.sendMessage(from, {
+            audio: { url: filePath },
+            mimetype: 'audio/mp4',
+            fileName: `${title || 'audio'}.m4a`
+        }, { quoted: msg });
+    } catch {
+        await sock.sendMessage(from, {
+            document: { url: filePath },
+            mimetype: 'audio/mp4',
+            fileName: `${title || 'audio'}.m4a`
+        }, { quoted: msg });
+    }
+}
