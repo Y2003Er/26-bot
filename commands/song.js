@@ -1,25 +1,30 @@
 import yts from 'yt-search';
 import axios from 'axios';
 
-export async function execute(sock, msg, args) {
+export default async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
-    if (!text) return await sock.sendMessage(from, { text: '❌ Andika jina la wimbo\nMfano:.song sza snooze' }, { quoted: msg });
+
+    if (!text) {
+        return await sock.sendMessage(from, {
+            text: '❌ Andika jina la wimbo\nMfano:.song sza snooze'
+        }, { quoted: msg });
+    }
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta wimbo...*' }, { quoted: msg });
 
-        // Pata link ya YouTube
         let videoUrl;
         if (text.startsWith('http')) {
             videoUrl = text;
         } else {
             const { videos } = await yts(text);
-            if (!videos?.length) return await sock.sendMessage(from, { text: '❌ Wimbo haukupatikana' }, { quoted: msg });
+            if (!videos?.length) {
+                return await sock.sendMessage(from, { text: '❌ Wimbo haukupatikana' }, { quoted: msg });
+            }
             videoUrl = videos[0].url;
         }
 
-        // Tuma request kwa Cobalt API
         const { data } = await axios.post('https://api.cobalt.tools/api/json', {
             url: videoUrl,
             isAudioOnly: true,
@@ -30,9 +35,10 @@ export async function execute(sock, msg, args) {
             timeout: 60000
         });
 
-        if (data.status!== 'success') throw new Error(data.error || 'Cobalt failed');
+        if (data.status!== 'success') {
+            throw new Error(data.error || 'Cobalt failed');
+        }
 
-        // Tuma audio direct
         await sock.sendMessage(from, {
             audio: { url: data.url },
             mimetype: 'audio/mpeg',
@@ -41,6 +47,8 @@ export async function execute(sock, msg, args) {
 
     } catch (error) {
         console.error('Song Error:', error.message);
-        await sock.sendMessage(from, { text: '❌ Imeshindwa kupakua. Jaribu tena au badilisha wimbo.' }, { quoted: msg });
+        await sock.sendMessage(from, {
+            text: '❌ Imeshindwa kupakua. Jaribu tena.'
+        }, { quoted: msg });
     }
 }
