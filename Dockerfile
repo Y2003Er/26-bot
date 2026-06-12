@@ -25,7 +25,7 @@ ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 COPY package*.json ./
 
-RUN npm ci --omit=dev --no-audit --no-fund
+RUN npm install --omit=dev --no-audit --no-fund
 
 RUN mkdir -p /app/node_modules/yt-dlp-exec/bin && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
