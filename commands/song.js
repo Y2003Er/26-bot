@@ -128,7 +128,7 @@ export async function execute(sock, msg, args) {
                 'referer:youtube.com',
                 'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
             ],
-            binaryPath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
+            executablePath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
         };
 
         let downloaded = false;
