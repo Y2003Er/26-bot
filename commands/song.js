@@ -1,19 +1,19 @@
 /**
  * commands/song.js
- * Download wimbo (Audio) kutoka YouTube — No ffmpeg required [26-TECH]
+ * Download audio kwa @distube/ytdl-core + cache
  */
 
 import yts from 'yt-search';
-import ytDlp from 'yt-dlp-exec';
+import ytdl from '@distube/ytdl-core';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const cacheDir = path.join(os.tmpdir(), 'ytdlp_cache');
+if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
 export const name = 'song';
-export const description = 'Download wimbo (Audio) kutoka YouTube kupitia YT-DLP Exec';
+export const description = 'Download wimbo kutoka YouTube';
 export const category = 'media';
 export const use = '<jina la wimbo au link>';
 export const alias = ['play', 'music', 'mp3'];
@@ -32,7 +32,7 @@ export async function execute(sock, msg, args) {
     let tempFilePath = '';
 
     try {
-        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako, subiri kidogo...*' }, { quoted: msg });
+        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa wimbo wako...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
@@ -40,31 +40,13 @@ export async function execute(sock, msg, args) {
         let videoDuration = '';
         let videoThumb = '';
 
-        const getThumb = (v) => {
-            if (!v) return '';
-            if (typeof v.thumbnail === 'string' && v.thumbnail.startsWith('http')) return v.thumbnail;
-            if (typeof v.thumbnail === 'object' && v.thumbnail!== null) {
-                return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
-            }
-            try {
-                const id = new URL(v.url).searchParams.get('v');
-                if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-            } catch (_) {}
-            return '';
-        };
-
-        if (text.startsWith('http://') || text.startsWith('https://')) {
+        if (text.startsWith('http')) {
             videoUrl = text;
-            try {
-                const sl = await yts(text);
-                if (sl?.videos?.length > 0) {
-                    const v = sl.videos[0];
-                    videoTitle = v.title;
-                    videoAuthor = v.author?.name || v.author || '';
-                    videoDuration = v.timestamp || '';
-                    videoThumb = getThumb(v);
-                }
-            } catch (_) {}
+            const info = await ytdl.getInfo(videoUrl);
+            videoTitle = info.videoDetails.title;
+            videoAuthor = info.videoDetails.author.name;
+            videoDuration = formatTime(info.videoDetails.lengthSeconds);
+            videoThumb = info.videoDetails.thumbnails[0]?.url;
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -75,111 +57,80 @@ export async function execute(sock, msg, args) {
             videoTitle = v.title;
             videoAuthor = v.author?.name || v.author || '';
             videoDuration = v.timestamp || '';
-            videoThumb = getThumb(v);
+            videoThumb = v.thumbnail;
         }
 
-        const finalTitle = videoTitle || 'Audio';
-        const finalAuthor = videoAuthor || 'Haijulikani';
-        const finalDuration = videoDuration || '--:--';
+        const videoId = ytdl.getVideoID(videoUrl);
+        const cacheFile = path.join(cacheDir, `${videoId}.m4a`);
 
-        if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
-            try {
+        // Check cache kwanza
+        if (fs.existsSync(cacheFile)) {
+            console.log('✅ [26-TECH] Imepatikana kwenye cache');
+            tempFilePath = cacheFile;
+        } else {
+            if (videoThumb) {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎵 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎵 *${videoTitle}*\n👤 *${videoAuthor}*\n⏱️ *${videoDuration}*\n\n📥 *Napakua...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
-            } catch (_) {}
-        }
+            }
 
-        const uniqueId = Date.now();
-        const outputTemplate = path.join(os.tmpdir(), `ytdlp_${uniqueId}.%(ext)s`);
-        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
-
-        // Try 1: na cookies.txt + android client
-        let options = {
-            output: outputTemplate,
-            noCheckCertificates: true,
-            noWarnings: true,
-            extractorArgs: 'youtube:player_client=android',
-            addHeader: [
-                'referer:youtube.com',
-                'user-agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36'
-            ],
-            format: 'bestaudio/worst/best'
-        };
-
-        if (fs.existsSync(cookiesTxt)) {
-            options.cookies = cookiesTxt;
-            console.log(`✅ [26-TECH] Cookies imepachikwa`);
-        }
-
-        const execOptions = {
-            executablePath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
-        };
-
-        let downloaded = false;
-
-        try {
             console.log(`🔄 [26-TECH] Kupakua: ${videoUrl}`);
-            await ytDlp(videoUrl, options, execOptions);
-            downloaded = true;
-        } catch (e1) {
-            console.warn(`⚠️ Try 1 failed, trying without cookies...`);
-            // Try 2: bila cookies, worst format
-            delete options.cookies;
-            options.format = 'worst/best';
-            try {
-                await ytDlp(videoUrl, options, execOptions);
-                downloaded = true;
-            } catch (e2) {
-                throw e2;
-            }
+            tempFilePath = path.join(os.tmpdir(), `${Date.now()}.m4a`);
+
+            const stream = ytdl(videoUrl, {
+                quality: 'lowestaudio',
+                filter: 'audioonly',
+                highWaterMark: 1 << 25
+            });
+
+            const writeStream = fs.createWriteStream(tempFilePath);
+            stream.pipe(writeStream);
+
+            await new Promise((resolve, reject) => {
+                writeStream.on('finish', resolve);
+                stream.on('error', reject);
+                writeStream.on('error', reject);
+            });
+
+            fs.copyFileSync(tempFilePath, cacheFile);
         }
 
-        if (downloaded) {
-            const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_${uniqueId}`));
-            if (tmpFiles.length > 0) {
-                tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
-            }
-        }
+        const fileName = `${videoTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.m4a`;
 
-        if (!tempFilePath || !fs.existsSync(tempFilePath)) {
-            throw new Error('Download imeshindwa');
-        }
-
-        const fileExt = path.extname(tempFilePath).replace('.', '') || 'm4a';
-        const fileSize = fs.statSync(tempFilePath).size;
-        const fileName = `${finalTitle.replace(/[^\w\s-]/g, '').trim() || 'audio'}.${fileExt}`;
-        const mimetype = 'audio/mpeg';
-
-        // Auto fallback: jaribu audio, ikishindikana tuma doc
+        // Jaribu kutuma kama audio, ikishindikana tuma kama document
         try {
             await sock.sendMessage(from, {
                 audio: { url: tempFilePath },
-                mimetype: mimetype,
+                mimetype: 'audio/mp4',
                 fileName: fileName,
                 ptt: false
             }, { quoted: msg });
-            console.log('✅ [26-TECH] Imetumwa kama audio');
         } catch (sendErr) {
-            console.warn('⚠️ Audio send failed, fallback to document');
             await sock.sendMessage(from, {
                 document: { url: tempFilePath },
-                mimetype: mimetype,
+                mimetype: 'audio/mp4',
                 fileName: fileName,
-                caption: `🎵 ${finalTitle}`
+                caption: `🎵 ${videoTitle}`
             }, { quoted: msg });
         }
 
     } catch (error) {
-        console.error('YT-DLP Fatal Error:', error);
-        let errMsg = '❌ Imeshindwa kupakua. Jaribu video nyingine au update cookies.txt';
-        await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
+        console.error('YTDL Fatal Error:', error);
+        await sock.sendMessage(from, {
+            text: '❌ Imeshindwa kupakua. Jaribu wimbo mwingine au link nyingine.'
+        }, { quoted: msg });
     } finally {
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
+        if (tempFilePath && tempFilePath.includes(os.tmpdir()) &&!tempFilePath.includes('ytdlp_cache')) {
             try {
                 fs.unlinkSync(tempFilePath);
             } catch (_) {}
         }
     }
+}
+
+function formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
