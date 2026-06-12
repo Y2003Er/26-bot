@@ -1,6 +1,6 @@
 import axios from 'axios';
 import yts from 'yt-search';
-import { cobaltDownload } from '../lib/cobalt.js';
+import APIs from '../api.js';
 
 const playCommand = {
     name: 'play',
@@ -26,6 +26,7 @@ const playCommand = {
         } catch (e) {}
 
         try {
+            // Search YouTube
             const search = await yts(`${text} Song`);
             if (!search.videos.length) {
                 return await sock.sendMessage(msg.key.remoteJid, {
@@ -36,6 +37,7 @@ const playCommand = {
             const vid = search.videos[0];
             const { title, thumbnail, timestamp, views, ago, url } = vid;
 
+            // ✅ Thumbnail + info
             await sock.sendMessage(msg.key.remoteJid, {
                 image: { url: thumbnail },
                 caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
@@ -47,10 +49,27 @@ const playCommand = {
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
             }, { quoted: msg });
 
-            // ✅ Use updated Cobalt helper
-            const downloadUrl = await cobaltDownload(url, true);
+            // ✅ Fallback chain: EliteProTech → Yupra → Okatsu → Izumi
+            let audioData;
+            try {
+                audioData = await APIs.getEliteProTechDownloadByUrl(url);
+            } catch (e1) {
+                console.error('[PLAY] EliteProTech failed:', e1.message);
+                try {
+                    audioData = await APIs.getYupraDownloadByUrl(url);
+                } catch (e2) {
+                    console.error('[PLAY] Yupra failed:', e2.message);
+                    try {
+                        audioData = await APIs.getOkatsuDownloadByUrl(url);
+                    } catch (e3) {
+                        console.error('[PLAY] Okatsu failed:', e3.message);
+                        audioData = await APIs.getIzumiDownloadByUrl(url);
+                    }
+                }
+            }
 
-            const audioRes = await axios.get(downloadUrl, {
+            // Download audio buffer
+            const audioRes = await axios.get(audioData.download, {
                 responseType: 'arraybuffer',
                 timeout: 120000,
                 headers: {
@@ -59,21 +78,24 @@ const playCommand = {
             });
 
             const audioBuffer = Buffer.from(audioRes.data);
+            const finalTitle = audioData.title || title;
+            const finalThumb = audioData.thumbnail || thumbnail;
 
+            // ✅ Send audio with branding
             await sock.sendMessage(msg.key.remoteJid, {
                 audio: audioBuffer,
                 mimetype: 'audio/mpeg',
                 ptt: false,
-                fileName: `${title}.mp3`,
+                fileName: `${finalTitle}.mp3`,
                 contextInfo: {
                     externalAdReply: {
                         showAdAttribution: true,
                         mediaType: 2,
                         mediaUrl: url,
-                        title: title,
-                        body: 'HERE IS YOUR SONG 🎧',
+                        title: finalTitle,
+                        body: '⚡ Powered by 26-𝐓𝐄𝐂𝐇',
                         sourceUrl: url,
-                        thumbnailUrl: thumbnail,
+                        thumbnailUrl: finalThumb,
                     },
                 },
             }, { quoted: msg });
