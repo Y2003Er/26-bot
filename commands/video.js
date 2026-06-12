@@ -1,44 +1,47 @@
 /**
  * commands/video.js
- * Download video kutoka YouTube — Toleo la Kasi na Uhakika la 26-TECH
+ * Download video kutoka YouTube — Toleo la Kasi la 26-TECH
  */
 
 import yts from 'yt-search';
+import ytdlp from '@distube/ytdlp-exec';
+import fs from 'fs';
+import path from 'path';
 
-export const name        = 'video';
+export const name = 'video';
 export const description = 'Download video kutoka YouTube kwa kasi ya juu';
-export const category    = 'media';
-export const use         = '<jina la video au link>';
-export const alias       = ['ytv', 'ytmp4', 'ytvid'];
-export const adminOnly   = false;
+export const category = 'media';
+export const use = '<jina la video au link>';
+export const alias = ['ytv', 'ytmp4', 'ytvid'];
+export const adminOnly = false;
+
+// hakikisha folder ya temp ipo
+const TEMP_DIR = './temp';
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR);
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
 
     if (!text) {
-        return await sock.sendMessage(from, { 
-            text: `❌ Tafadhali andika jina la video au uweke link ya YouTube.\nMfano: .video Alikiba New Song` 
+        return await sock.sendMessage(from, {
+            text: `❌ Tafadhali andika jina la video au uweke link ya YouTube.\nMfano:.video Alikiba New Song`
         }, { quoted: msg });
     }
 
-    const { default: APIs } = await import('../api.js');
-
     try {
-        await sock.sendMessage(from, { text: '⏳ *Natafuta na kupakua video yako, subiri sekunde chache...*' }, { quoted: msg });
+        await sock.sendMessage(from, { text: '⏳ *Natafuta video...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
 
-        // 1. Angalia kama mtumiaji ameweka link au jina la utafutaji
+        // 1. Pata link ya video
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
-            try {
-                const searchLink = await yts(text);
-                if (searchLink && searchLink.videos.length > 0) {
-                    videoTitle = searchLink.videos[0].title;
-                }
-            } catch (_) {}
+            const searchLink = await yts(text);
+            if (searchLink && searchLink.videos.length > 0) {
+                videoTitle = searchLink.videos[0].title;
+            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -48,79 +51,45 @@ export async function execute(sock, msg, args) {
             videoTitle = videos[0].title;
         }
 
-        const finalTitle = videoTitle || 'Video';
-        let downloadUrl = null;
+        const safeTitle = videoTitle.replace(/[^\w\s-]/g, '').trim().slice(0, 50) || 'video';
+        const outputPath = path.join(TEMP_DIR, `${Date.now()}_${safeTitle}.mp4`);
 
-        console.log(`🔄 [26-TECH] Kuanza kutafuta video kwa mpigo: ${videoUrl}`);
+        await sock.sendMessage(from, { text: `⬇️ *Napakua: ${safeTitle}*\nSubiri kidogo...` }, { quoted: msg });
 
-        // 2. Mfumo wa Fast-Fallback: Kila seva inapewa max sekunde 8. Ikizingua inaruka sekunde hiyo hiyo!
-        // Seva ya 1: Yupro
-        try {
-            const res1 = await Promise.race([
-                APIs.getYupraVideoByUrl(videoUrl),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-            ]);
-            if (res1 && res1.download) {
-                downloadUrl = res1.download;
-                console.log('✅ Video: Yupro Imefanikiwa');
-            }
-        } catch (e) {
-            console.warn('⚠️ Video: Yupro imefeli au imechukua muda mrefu.');
-        }
+        // 2. Pakua kwa yt-dlp - hii ndio sehemu ya kasi
+        await ytdlp(videoUrl, {
+            format: 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+            output: outputPath,
+            noCheckCertificates: true,
+            noWarnings: true,
+            preferFreeFormats: true,
+            addHeader: ['referer:youtube.com', 'user-agent:Mozilla/5.0'],
+            limitRate: '5M' // limit 5MB/s ili isilete ban
+        });
 
-        // Seva ya 2: Okatsu
-        if (!downloadUrl) {
-            try {
-                const res2 = await Promise.race([
-                    APIs.getOkatsuVideoByUrl(videoUrl),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000))
-                ]);
-                if (res2 && res2.download) {
-                    downloadUrl = res2.download;
-                    console.log('✅ Video: Okatsu Imefanikiwa');
-                }
-            } catch (e) {
-                console.warn('⚠️ Video: Okatsu imefeli au imechukua muda mrefu.');
-            }
-        }
-
-        // Seva ya 3: EliteProTech
-        if (!downloadUrl) {
-            try {
-                const res3 = await Promise.race([
-                    APIs.getEliteProTechVideoByUrl(videoUrl),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
-                ]);
-                if (res3 && res3.download) {
-                    downloadUrl = res3.download;
-                    console.log('✅ Video: EliteProTech Imefanikiwa');
-                }
-            } catch (e) {
-                console.error('❌ Video: Seva zote zimegoma.');
-            }
-        }
-
-        // 3. Kama hakuna link yoyote iliyopatikana
-        if (!downloadUrl) {
-            return await sock.sendMessage(from, { 
-                text: '❌ Imeshindwa kupakua video hii kwa sasa. Seva zote ziko bize au zimezuiwa na YouTube.' 
+        // 3. Check size - WhatsApp inaruhusu max 100MB
+        const stats = fs.statSync(outputPath);
+        if (stats.size > 95 * 1024 * 1024) {
+            fs.unlinkSync(outputPath);
+            return await sock.sendMessage(from, {
+                text: '❌ Video ni kubwa sana. Max ni 95MB kwa WhatsApp.'
             }, { quoted: msg });
         }
 
-        // 4. Kutuma video kwenda WhatsApp kwa kutumia Streaming Link (HAKUNA BUFFER)
-        const safeFileName = finalTitle.replace(/[^:\w\s-]/g, '').trim() || 'video';
-        
+        // 4. Tuma video
         await sock.sendMessage(from, {
-            video: { url: downloadUrl },
+            video: { url: outputPath },
             mimetype: 'video/mp4',
-            fileName: `${safeFileName}.mp4`,
-            caption: `🎬 *${finalTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+            fileName: `${safeTitle}.mp4`,
+            caption: `🎬 *${videoTitle}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         }, { quoted: msg });
 
-        console.log(`✅ [26-TECH] Video imetumwa kwa mafanikio: ${finalTitle}`);
+        // 5. Futa file baada ya kutuma
+        fs.unlinkSync(outputPath);
+        console.log(`✅ [26-TECH] Video imetumwa: ${safeTitle}`);
 
     } catch (error) {
-        console.error('Video fatal error:', error);
-        await sock.sendMessage(from, { text: `❌ Hitilafu ya mfumo: ${error.message}` }, { quoted: msg });
+        console.error('Video error:', error);
+        await sock.sendMessage(from, { text: `❌ Hitilafu: ${error.message}` }, { quoted: msg });
     }
 }
