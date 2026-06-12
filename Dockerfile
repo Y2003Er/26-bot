@@ -34,6 +34,9 @@ RUN mkdir -p /app/node_modules/yt-dlp-exec/bin && \
     chmod +x /app/node_modules/yt-dlp-exec/bin/yt-dlp && \
     /app/node_modules/yt-dlp-exec/bin/yt-dlp --version
 
+# Copy cookies.txt first so it doesn't get ignored
+COPY cookies.txt ./
+
 COPY . .
 
 RUN npm rebuild sharp
