@@ -19,7 +19,6 @@ import {
     handleMessage,
     setupContactListener,
     setupAntiDelete,
-    setupAntiViewOnce,
     setupAutoStatusViewer
 } from './lib/handler.js';
 import {
