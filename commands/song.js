@@ -1,46 +1,6 @@
 import axios from 'axios';
 import yts from 'yt-search';
 import APIs from '../api.js';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-
-ffmpeg.setFfmpegPath(ffmpegStatic);
-
-async function convertToAudio(inputBuffer) {
-    return new Promise((resolve, reject) => {
-        const tmpInput = path.join(os.tmpdir(), `input_${Date.now()}`);
-        const tmpOutput = path.join(os.tmpdir(), `output_${Date.now()}.mp4`);
-
-        fs.writeFileSync(tmpInput, inputBuffer);
-
-        ffmpeg(tmpInput)
-            .setFfmpegPath(ffmpegStatic)
-            .audioCodec('aac')
-            .audioBitrate('128k')
-            .audioFrequency(44100)
-            .audioChannels(2)
-            .format('mp4')
-            .on('end', () => {
-                try {
-                    const outputBuffer = fs.readFileSync(tmpOutput);
-                    fs.unlinkSync(tmpInput);
-                    fs.unlinkSync(tmpOutput);
-                    resolve(outputBuffer);
-                } catch (e) {
-                    reject(e);
-                }
-            })
-            .on('error', (err) => {
-                try { fs.unlinkSync(tmpInput); } catch (_) {}
-                try { fs.unlinkSync(tmpOutput); } catch (_) {}
-                reject(err);
-            })
-            .save(tmpOutput);
-    });
-}
 
 const playCommand = {
     name: 'play',
@@ -66,6 +26,7 @@ const playCommand = {
         } catch (e) {}
 
         try {
+            // Search YouTube
             const search = await yts(`${text} Song`);
             if (!search.videos.length) {
                 return await sock.sendMessage(msg.key.remoteJid, {
@@ -76,6 +37,7 @@ const playCommand = {
             const vid = search.videos[0];
             const { title, thumbnail, timestamp, views, ago, url } = vid;
 
+            // ✅ Thumbnail + info
             await sock.sendMessage(msg.key.remoteJid, {
                 image: { url: thumbnail },
                 caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
@@ -87,7 +49,7 @@ const playCommand = {
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
             }, { quoted: msg });
 
-            // Fallback chain: EliteProTech → Yupra → Okatsu → Izumi
+            // ✅ Fallback chain: EliteProTech → Yupra → Okatsu → Izumi
             let audioData;
             try {
                 audioData = await APIs.getEliteProTechDownloadByUrl(url);
@@ -106,7 +68,7 @@ const playCommand = {
                 }
             }
 
-            // Download raw buffer
+            // Download audio buffer
             const audioRes = await axios.get(audioData.download, {
                 responseType: 'arraybuffer',
                 timeout: 120000,
@@ -115,19 +77,14 @@ const playCommand = {
                 }
             });
 
-            const rawBuffer = Buffer.from(audioRes.data);
+            const audioBuffer = Buffer.from(audioRes.data);
             const finalTitle = audioData.title || title;
             const finalThumb = audioData.thumbnail || thumbnail;
 
-            // ✅ Convert to aac/mp4 before sending
-            console.log(`[PLAY] Converting: ${finalTitle}`);
-            const audioBuffer = await convertToAudio(rawBuffer);
-            console.log(`[PLAY] Converted successfully — ${audioBuffer.length} bytes`);
-
-            // ✅ Send with audio/mp4 mimetype
+            // ✅ Send audio with branding
             await sock.sendMessage(msg.key.remoteJid, {
                 audio: audioBuffer,
-                mimetype: 'audio/mp4',
+                mimetype: 'audio/mpeg',
                 ptt: false,
                 fileName: `${finalTitle}.mp3`,
                 contextInfo: {
