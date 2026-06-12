@@ -1,10 +1,15 @@
 import yts from 'yt-search';
 import axios from 'axios';
 
-export async function execute(sock, msg, args) {
+export default async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
-    if (!text) return await sock.sendMessage(from, { text: '❌ Andika jina la video\nMfano:.video one dance' }, { quoted: msg });
+
+    if (!text) {
+        return await sock.sendMessage(from, {
+            text: '❌ Andika jina la video\nMfano:.video one dance'
+        }, { quoted: msg });
+    }
 
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta video...*' }, { quoted: msg });
@@ -14,7 +19,9 @@ export async function execute(sock, msg, args) {
             videoUrl = text;
         } else {
             const { videos } = await yts(text);
-            if (!videos?.length) return await sock.sendMessage(from, { text: '❌ Video haikupatikana' }, { quoted: msg });
+            if (!videos?.length) {
+                return await sock.sendMessage(from, { text: '❌ Video haikupatikana' }, { quoted: msg });
+            }
             videoUrl = videos[0].url;
         }
 
@@ -28,7 +35,9 @@ export async function execute(sock, msg, args) {
             timeout: 120000
         });
 
-        if (data.status!== 'success') throw new Error(data.error || 'Cobalt failed');
+        if (data.status!== 'success') {
+            throw new Error(data.error || 'Cobalt failed');
+        }
 
         await sock.sendMessage(from, {
             video: { url: data.url },
@@ -38,6 +47,8 @@ export async function execute(sock, msg, args) {
 
     } catch (error) {
         console.error('Video Error:', error.message);
-        await sock.sendMessage(from, { text: '❌ Imeshindwa kupakua. Jaribu tena.' }, { quoted: msg });
+        await sock.sendMessage(from, {
+            text: '❌ Imeshindwa kupakua. Jaribu tena.'
+        }, { quoted: msg });
     }
 }
