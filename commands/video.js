@@ -32,7 +32,7 @@ export async function execute(sock, msg, args) {
     let tempFilePath = '';
 
     try {
-        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa video yako, subiri kidogo...*' }, { quoted: msg });
+        await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa video yako...*' }, { quoted: msg });
 
         let videoUrl = '';
         let videoTitle = '';
@@ -43,10 +43,6 @@ export async function execute(sock, msg, args) {
         const getThumb = (v) => {
             if (!v) return '';
             if (typeof v.thumbnail === 'string' && v.thumbnail.startsWith('http')) return v.thumbnail;
-            if (typeof v.thumbnail === 'object' && v.thumbnail!== null) {
-                return v.thumbnail.hqDefault || v.thumbnail.mqDefault || v.thumbnail.sdDefault || '';
-            }
-            if (typeof v.image === 'string' && v.image.startsWith('http')) return v.image;
             try {
                 const id = new URL(v.url).searchParams.get('v');
                 if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
@@ -66,12 +62,6 @@ export async function execute(sock, msg, args) {
                     videoThumb = getThumb(v);
                 }
             } catch (_) {}
-            if (!videoThumb) {
-                try {
-                    const id = new URL(videoUrl).searchParams.get('v');
-                    if (id) videoThumb = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-                } catch (_) {}
-            }
         } else {
             const { videos } = await yts(text);
             if (!videos || videos.length === 0) {
@@ -89,44 +79,33 @@ export async function execute(sock, msg, args) {
         const finalAuthor = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        if (finalDuration && finalDuration!== '--:--') {
-            const parts = finalDuration.split(':');
-            const mins = parseInt(parts[0]);
-            if (!isNaN(mins) && mins > 5) {
-                return await sock.sendMessage(from, {
-                    text: '❌ Video inazidi dakika 5. Tafadhali omba video fupi.'
-                }, { quoted: msg });
-            }
-        }
-
         if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎬 *${finalTitle}*\n👤 *Msanii:* ${finalAuthor}\n⏱️ *Muda:* ${finalDuration}\n\n📥 *Napakua kutoka YouTube [YT-DLP]...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
+                    caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*\n⏱️ *${finalDuration}*\n\n📥 *Napakua...*`
                 }, { quoted: msg });
             } catch (_) {}
         }
 
         const uniqueId = Date.now();
         const outputTemplate = path.join(os.tmpdir(), `ytdlp_vid_${uniqueId}.%(ext)s`);
+        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
 
-        const options = {
+        let options = {
             output: outputTemplate,
             noCheckCertificates: true,
             noWarnings: true,
-            extractorArgs: 'youtube:player_client=ios,android',
+            extractorArgs: 'youtube:player_client=android',
             addHeader: [
                 'referer:youtube.com',
-                'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
+                'user-agent:Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36'
             ],
-            format: 'best/best'
+            format: 'best/worst/best'
         };
 
-        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesTxt)) {
             options.cookies = cookiesTxt;
-            console.log(`✅ [26-TECH] Cookies imepachikwa kwa video`);
         }
 
         const execOptions = {
@@ -138,24 +117,28 @@ export async function execute(sock, msg, args) {
         try {
             console.log(`🔄 [26-TECH] Kupakua video: ${videoUrl}`);
             await ytDlp(videoUrl, options, execOptions);
+            downloaded = true;
+        } catch (e1) {
+            console.warn(`⚠️ Try 1 failed, trying worst format...`);
+            delete options.cookies;
+            options.format = 'worst/best';
+            try {
+                await ytDlp(videoUrl, options, execOptions);
+                downloaded = true;
+            } catch (e2) {
+                throw e2;
+            }
+        }
 
+        if (downloaded) {
             const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith(`ytdlp_vid_${uniqueId}`));
             if (tmpFiles.length > 0) {
                 tempFilePath = path.join(os.tmpdir(), tmpFiles[0]);
-                const sz = fs.statSync(tempFilePath).size;
-                if (sz > 0) {
-                    downloaded = true;
-                    console.log(`✅ [26-TECH] Video imepatikana!`);
-                }
             }
-        } catch (e) {
-            const msg2 = (e?.stderr || '') + (e?.stdout || '');
-            console.warn(`⚠️ Imeshindwa: ${msg2.slice(0, 200)}`);
-            throw e;
         }
 
-        if (!downloaded ||!tempFilePath) {
-            throw new Error('ALLFAILED: Download imeshindwa');
+        if (!tempFilePath || !fs.existsSync(tempFilePath)) {
+            throw new Error('Download imeshindwa');
         }
 
         const fileSize = fs.statSync(tempFilePath).size;
@@ -175,20 +158,9 @@ export async function execute(sock, msg, args) {
 
     } catch (error) {
         console.error('YT-DLP Video Fatal Error:', error);
-
-        let errMsg = '❌ Hitilafu: Imeshindwa kupakua video hii.';
-        const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
-
-        if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Fanya refresh cookies.txt';
-        } else if (allOutput.includes('format is not available')) {
-            errMsg = '❌ Video haipatikani kwa format yoyote. Jaribu nyingine.';
-        } else if (allOutput.includes('Video unavailable')) {
-            errMsg = '❌ Video hii haipatikani au imefungwa.';
-        }
-
-        await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
-
+        await sock.sendMessage(from, { 
+            text: '❌ Imeshindwa kupakua. Video hii inaweza kuwa private au inahitaji cookies mpya.' 
+        }, { quoted: msg });
     } finally {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
             try {
