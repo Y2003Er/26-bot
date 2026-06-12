@@ -1,22 +1,18 @@
-import ytdl from '@distube/ytdl-core';
+import exec from 'yt-dlp-exec';
 import yts from 'yt-search';
 import fs from 'fs';
-import { pipeline } from 'stream';
-import { promisify } from 'util';
 import os from 'os';
-
-const streamPipeline = promisify(pipeline);
+import path from 'path';
 
 const playCommand = {
     name: 'play',
     alias: ['song', 'wimbo'],
-    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio)',
+    description: 'Tafuta na upakue wimbo kutoka YouTube (Audio kupitia yt-dlp)',
     category: 'downloader',
     use: '<jina la wimbo>',
     ownerOnly: false,
     adminOnly: false,
     execute: async (sock, msg, args) => {
-        // Kuunganisha args kuwa text moja ya kutafutia wimbo
         const text = args.join(' ');
         
         if (!text) {
@@ -62,19 +58,22 @@ const playCommand = {
                 caption: captvid 
             }, { quoted: msg });
 
-            // Kuanza kutengeneza stream ya audio kutoka YouTube
-            const audioStream = ytdl(url, {
-                filter: 'audioonly',
-                quality: 'highestaudio',
-            });
-
-            // Kutengeneza faili la muda (temporary file) kwenye mfumo wa seva
+            // Kutengeneza njia ya faili la muda (temporary path)
             const tmpDir = os.tmpdir();
-            const audioPath = `${tmpDir}/${Date.now()}_audio.mp3`; 
-            const writableStream = fs.createWriteStream(audioPath);
+            const outputFilename = `${Date.now()}_audio`;
+            const audioPath = path.join(tmpDir, `${outputFilename}.mp3`);
 
-            // Pakua na uhifadhi audio kwenye folder la muda
-            await streamPipeline(audioStream, writableStream);
+            // Kuendesha yt-dlp kwa kutumia vigezo ulivyotoa
+            await exec(url, {
+                geoBypass: true,
+                extractorArgs: 'youtube:player_client=android,web',
+                userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G991B)',
+                noCheckCertificate: true,
+                noCacheDir: true,
+                extractAudio: true,
+                audioFormat: 'mp3',
+                output: path.join(tmpDir, `${outputFilename}.%(ext)s`)
+            });
 
             // Muundo wa ujumbe wa audio wenye muonekano wa kijanja (External Ad Reply)
             const doc = {
@@ -83,7 +82,7 @@ const playCommand = {
                 },
                 mimetype: 'audio/mpeg',
                 ptt: false,
-                waveform: [100, 0, 100, 0, 100, 0, 100], // Mstari wa mawimbi ya sauti
+                waveform: [100, 0, 100, 0, 100, 0, 100], 
                 fileName: `${title}.mp3`,
                 contextInfo: {
                     externalAdReply: {
@@ -93,7 +92,6 @@ const playCommand = {
                         title: title,
                         body: 'HERE IS YOUR SONG 🎧',
                         sourceUrl: url,
-                        // Kwenye Baileys mpya unaweza kupitisha URL moja kwa moja kwenye thumbnail ya ad reply
                         thumbnailUrl: thumbnail, 
                     },
                 },
@@ -103,8 +101,10 @@ const playCommand = {
             await sock.sendMessage(msg.key.remoteJid, doc, { quoted: msg });
 
             // Futa faili la wimbo lililohifadhiwa kwa muda ili lisijaze nafasi (Storage Cleanup)
-            await fs.promises.unlink(audioPath);
-            console.log(`Deleted audio file: ${audioPath}`);
+            if (fs.existsSync(audioPath)) {
+                await fs.promises.unlink(audioPath);
+                console.log(`Deleted audio file: ${audioPath}`);
+            }
 
             // Badilisha reaction kuwa tiki kuashiria umemaliza
             await sock.sendMessage(msg.key.remoteJid, {
