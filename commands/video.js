@@ -1,29 +1,33 @@
 /**
  * commands/video.js
- * Download video kwa @distube/ytdl-core
+ * Download video kwa Invidious + yt-dlp fallback
  */
 
 import yts from 'yt-search';
-import ytdl from '@distube/ytdl-core';
+import ytdl from 'yt-dlp-exec';
+import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+
+const INVIDIOUS_INSTANCES = [
+    'https://invidious.privacydev.net',
+    'https://iv.mint.lgbt',
+    'https://invidious.io'
+];
 
 export const name = 'video';
 export const description = 'Download video kutoka YouTube';
 export const category = 'media';
 export const use = '<jina la video au link>';
 export const alias = ['ytvideo', 'mp4'];
-export const adminOnly = false;
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
 
     if (!text) {
-        return await sock.sendMessage(from, {
-            text: `❌ Tafadhali andika jina la video au uweke link.\nMfano:.video Marioo Watu`
-        }, { quoted: msg });
+        return await sock.sendMessage(from, { text: '❌ Andika jina la video au link' }, { quoted: msg });
     }
 
     let tempFilePath = '';
@@ -31,61 +35,56 @@ export async function execute(sock, msg, args) {
     try {
         await sock.sendMessage(from, { text: '⏳ *Natafuta na kuandaa video yako...*' }, { quoted: msg });
 
-        let videoUrl = '';
-        let videoTitle = '';
-        let videoAuthor = '';
-        let videoDuration = '';
-        let videoThumb = '';
+        let videoUrl, videoId, videoTitle, videoAuthor, videoThumb;
 
         if (text.startsWith('http')) {
             videoUrl = text;
-            const info = await ytdl.getInfo(videoUrl);
-            videoTitle = info.videoDetails.title;
-            videoAuthor = info.videoDetails.author.name;
-            videoDuration = formatTime(info.videoDetails.lengthSeconds);
-            videoThumb = info.videoDetails.thumbnails[0]?.url;
+            videoId = videoUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/)?.[1];
         } else {
             const { videos } = await yts(text);
-            if (!videos || videos.length === 0) {
+            if (!videos?.length) {
                 return await sock.sendMessage(from, { text: '❌ Video haijapatikana!' }, { quoted: msg });
             }
             const v = videos[0];
             videoUrl = v.url;
+            videoId = v.videoId;
             videoTitle = v.title;
-            videoAuthor = v.author?.name || v.author || '';
-            videoDuration = v.timestamp || '';
+            videoAuthor = v.author?.name || '';
             videoThumb = v.thumbnail;
+        }
+
+        if (!videoId) throw new Error('Invalid video ID');
+
+        tempFilePath = path.join(os.tmpdir(), `${Date.now()}.mp4`);
+        let downloaded = false;
+
+        // Jaribu Invidious kwanza
+        try {
+            await downloadFromInvidious(videoId, tempFilePath);
+            downloaded = true;
+            console.log('✅ Downloaded via Invidious');
+        } catch (e) {
+            console.log('Invidious failed, falling back to yt-dlp:', e.message);
+        }
+
+        // Fallback: yt-dlp
+        if (!downloaded) {
+            await downloadWithYtdlp(videoUrl, tempFilePath);
+            console.log('✅ Downloaded via yt-dlp');
+        }
+
+        const fileSize = fs.statSync(tempFilePath).size;
+        if (fileSize > 60 * 1024 * 1024) {
+            fs.unlinkSync(tempFilePath);
+            return await sock.sendMessage(from, {
+                text: '❌ Video kubwa sana. WhatsApp hairuhusu zaidi ya 60MB.'
+            }, { quoted: msg });
         }
 
         if (videoThumb) {
             await sock.sendMessage(from, {
                 image: { url: videoThumb },
-                caption: `🎬 *${videoTitle}*\n👤 *${videoAuthor}*\n⏱️ *${videoDuration}*\n\n📥 *Napakua...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
-            }, { quoted: msg });
-        }
-
-        tempFilePath = path.join(os.tmpdir(), `${Date.now()}.mp4`);
-
-        const stream = ytdl(videoUrl, {
-            quality: '18', // 360p, ndogo na haraka
-            highWaterMark: 1 << 25
-        });
-
-        const writeStream = fs.createWriteStream(tempFilePath);
-        stream.pipe(writeStream);
-
-        await new Promise((resolve, reject) => {
-            writeStream.on('finish', resolve);
-            stream.on('error', reject);
-            writeStream.on('error', reject);
-        });
-
-        const fileSize = fs.statSync(tempFilePath).size;
-
-        if (fileSize > 60 * 1024 * 1024) {
-            fs.unlinkSync(tempFilePath);
-            return await sock.sendMessage(from, {
-                text: '❌ Video kubwa sana. WhatsApp hairuhusu zaidi ya 60MB.'
+                caption: `🎬 *${videoTitle}*\n👤 *${videoAuthor}*\n\n📤 *Inatuma...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
             }, { quoted: msg });
         }
 
@@ -96,21 +95,48 @@ export async function execute(sock, msg, args) {
         }, { quoted: msg });
 
     } catch (error) {
-        console.error('YTDL Video Fatal Error:', error);
+        console.error('Video Error:', error.message);
         await sock.sendMessage(from, {
             text: '❌ Imeshindwa kupakua. Video hii inaweza kuwa private au age restricted.'
         }, { quoted: msg });
     } finally {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
-            try {
-                fs.unlinkSync(tempFilePath);
-            } catch (_) {}
+            try { fs.unlinkSync(tempFilePath); } catch (_) {}
         }
     }
 }
 
-function formatTime(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+async function downloadFromInvidious(videoId, outputPath) {
+    for (let instance of INVIDIOUS_INSTANCES) {
+        try {
+            const { data } = await axios.get(`${instance}/api/v1/videos/${videoId}`, { timeout: 10000 });
+            const videoUrl = data.adaptiveFormats.find(f =>
+                f.type.includes('video/mp4') && f.qualityLabel === '360p'
+            )?.url || data.adaptiveFormats.find(f => f.type.includes('video/mp4'))?.url;
+
+            if (!videoUrl) continue;
+
+            const response = await axios.get(videoUrl, { responseType: 'stream', timeout: 120000 });
+            const writer = fs.createWriteStream(outputPath);
+            response.data.pipe(writer);
+            await new Promise((resolve, reject) => {
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            });
+            return;
+        } catch (e) {}
+    }
+    throw new Error('Audio url not found');
+}
+
+async function downloadWithYtdlp(url, outputPath) {
+    await ytdl(url, {
+        output: outputPath,
+        format: 'worst[height<=360]/18',
+        noCheckCertificates: true,
+        noWarnings: true,
+        cookies: './cookies.txt',
+        extractorArgs: 'youtube:player_client=android',
+        addHeader: ['referer:youtube.com', 'user-agent:Mozilla/5.0']
+    });
 }
