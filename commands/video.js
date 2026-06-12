@@ -83,7 +83,7 @@ export async function execute(sock, msg, args) {
             try {
                 await sock.sendMessage(from, {
                     image: { url: videoThumb },
-                    caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*\n⏱️ *${finalDuration}*\n\n📥 *Napakua...*`
+                    caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*\n⏱️ *${finalDuration}*\n\n📥 *Napakua...*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
                 }, { quoted: msg });
             } catch (_) {}
         }
@@ -152,7 +152,7 @@ export async function execute(sock, msg, args) {
 
         await sock.sendMessage(from, {
             video: { url: tempFilePath },
-            caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*`,
+            caption: `🎬 *${finalTitle}*\n👤 *${finalAuthor}*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`,
             mimetype: 'video/mp4'
         }, { quoted: msg });
 
