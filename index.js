@@ -1,5 +1,5 @@
-// index.js - FIXED v2 by 26-TECH
-// Fixes: 440 loop, health check false restart, connection check kabla ya kutuma
+// index.js - FIXED v3 by 26-TECH
+// Fixes: 440 loop, health check false restart, memory leak, sendMessage error handling
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -42,43 +42,42 @@ global.dbPool = pool;
 // ── Fix MaxListeners Warning ──
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
-pool.setMaxListeners(20);
 
 // ── Caches ──
 const aiCache = new NodeCache({ stdTTL: 60 });
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
-const processedMessages = new Set();
+const processedMessages = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // FIX: Badilisha Set → NodeCache kuzuia memory leak
 
-const logger        = pino({ level: 'silent' });
-const PHONE_NUMBER  = process.env.PHONE_NUMBER?.trim();
-const SESSION_ID    = process.env.SESSION_ID || '26_tech_v5';
+const logger = pino({ level: process.env.DEBUG? 'debug' : 'silent' });
+const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
+const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
 
 global.prefix = process.env.PREFIX || '.';
 
 const C = {
-    reset:   '\x1b[0m',
-    bold:    '\x1b[1m',
-    cyan:    '\x1b[36m',
-    green:   '\x1b[32m',
-    yellow:  '\x1b[33m',
-    red:     '\x1b[31m',
-    gray:    '\x1b[90m',
-    white:   '\x1b[97m',
-    blue:    '\x1b[34m',
+    reset: '\x1b[0m',
+    bold: '\x1b[1m',
+    cyan: '\x1b[36m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    red: '\x1b[31m',
+    gray: '\x1b[90m',
+    white: '\x1b[97m',
+    blue: '\x1b[34m',
     magenta: '\x1b[35m',
 };
 
 const bannerState = {
     connection: '⏳ Starting...',
-    database:   '⏳ Connecting...',
-    commands:   '0 loaded',
-    messages:   0,
-    groups:     0,
-    lastMsg:    '—',
-    ai:         process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
-    startTime:  Date.now(),
+    database: '⏳ Connecting...',
+    commands: '0 loaded',
+    messages: 0,
+    groups: 0,
+    lastMsg: '—',
+    ai: process.env.GROQ_API_KEY? 'Groq + Gemini' : process.env.GEMINI_API_KEY? 'Gemini' : '—',
+    startTime: Date.now(),
 };
 
 function getUptime() {
@@ -92,7 +91,7 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used  = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
+    const used = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
     return `${used}/${total} MB`;
 }
@@ -100,24 +99,24 @@ function getRAM() {
 function printBanner() {
     const s = bannerState;
     const connVal = s.connection === 'ONLINE'
-        ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
+       ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
         : `${C.yellow}${s.connection}${C.reset}`;
     const dbVal = s.database.includes('✅')
-        ? `${C.green}✅ Connected ${C.reset}`
+       ? `${C.green}✅ Connected ${C.reset}`
         : `${C.yellow}${s.database}${C.reset}`;
     const lines = [
         `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}               ${C.gray}uptime: ${getUptime()}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset} ${C.gray}uptime: ${getUptime()}${C.reset}`,
         `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}◈ Connection ${C.reset}  →  ${connVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🗄️  Database ${C.reset}   →  ${dbVal}`,
-        `${C.cyan}│${C.reset}  ${C.bold}⚡ Commands ${C.reset}   →  ${C.green}${s.commands}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}📨 Messages ${C.reset}   →  ${C.white}${s.messages}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}👥 Groups ${C.reset}     →  ${C.white}${s.groups}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}🤖 AI ${C.reset}         →  ${C.magenta}${s.ai}${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.bold}💾 RAM ${C.reset}        →  ${C.blue}${getRAM()}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}◈ Connection ${C.reset} → ${connVal}`,
+        `${C.cyan}│${C.reset} ${C.bold}🗄️ Database ${C.reset} → ${dbVal}`,
+        `${C.cyan}│${C.reset} ${C.bold}⚡ Commands ${C.reset} → ${C.green}${s.commands}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}📨 Messages ${C.reset} → ${C.white}${s.messages}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}👥 Groups ${C.reset} → ${C.white}${s.groups}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}🤖 AI ${C.reset} → ${C.magenta}${s.ai}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.bold}💾 RAM ${C.reset} → ${C.blue}${getRAM()}${C.reset}`,
         `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
+        `${C.cyan}│${C.reset} ${C.gray}Last: ${s.lastMsg}${C.reset}`,
         `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
     ];
     lines.forEach(line => console.log(line));
@@ -125,19 +124,19 @@ function printBanner() {
 }
 
 function updateBanner(key, value) {
-    if (value !== null && value !== undefined && key in bannerState) {
+    if (value!== null && value!== undefined && key in bannerState) {
         bannerState[key] = value;
     }
 }
 
 const log = {
-    info:    (msg) => console.log(`  ✦  ${msg}`),
-    success: (msg) => console.log(`  ✔  ${msg}`),
-    warn:    (msg) => console.warn(`  ⚠  ${msg}`),
-    error:   (msg) => console.error(`  ✖  ${msg}`),
-    state:   (msg) => console.log(`  ◈  ${msg}`),
-    div:     ()    => console.log(`  ${'─'.repeat(46)}`),
-    blank:   ()    => console.log(''),
+    info: (msg) => console.log(` ✦ ${msg}`),
+    success: (msg) => console.log(` ✔ ${msg}`),
+    warn: (msg) => console.warn(` ⚠ ${msg}`),
+    error: (msg) => console.error(` ✖ ${msg}`),
+    state: (msg) => console.log(` ◈ ${msg}`),
+    div: () => console.log(` ${'─'.repeat(46)}`),
+    blank: () => console.log(''),
 };
 
 // ====================== GLOBAL IS OWNER ======================
@@ -145,11 +144,11 @@ global.isOwner = (jid) => {
     if (!jid) return false;
     const ownerNum = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
     const normalize = (str) => String(str)
-        .split(':')[0]
-        .replace(/@lid|@s.whatsapp.net/, '')
-        .replace(/[^0-9]/g, '');
+       .split(':')[0]
+       .replace(/@lid|@s.whatsapp.net/, '')
+       .replace(/[^0-9]/g, '');
     const senderClean = normalize(jid);
-    const ownerClean  = normalize(ownerNum);
+    const ownerClean = normalize(ownerNum);
     if (senderClean === ownerClean || String(jid).includes(ownerNum)) return true;
     if (String(jid).endsWith('@lid') && global.ownerLid) {
         if (normalize(jid) === normalize(global.ownerLid)) return true;
@@ -157,15 +156,13 @@ global.isOwner = (jid) => {
     return false;
 };
 
-// ── Global sock accessor kwa commands (video.js n.k) ──
-// Commands zinaweza kutumia: if (!global.isSockReady()) return;
-global.isSockReady = () => sock?.ws?.readyState === 1;
-// =============================================================
+// ── Global sock accessor ──
+global.isSockReady = () => sock?.ws && sock.ws.readyState === 1;
 
 function resolveOwnerLid(sock) {
     let lid = sock.user?.lid || sock.authState?.creds?.me?.lid;
     if (lid) {
-        const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
+        const fullLid = lid.endsWith('@lid')? lid : `${lid}@lid`;
         global.ownerLid = fullLid;
         log.success(`Owner LID imesetiwa: ${fullLid}`);
         return fullLid;
@@ -178,25 +175,23 @@ if (!process.env.DATABASE_URL) {
     log.error('DATABASE_URL haipo — Bot imesimama.');
     process.exit(1);
 }
-if (!PHONE_NUMBER || !/^\d{10,15}$/.test(PHONE_NUMBER)) {
+if (!PHONE_NUMBER ||!/^\d{10,15}$/.test(PHONE_NUMBER)) {
     log.error('PHONE_NUMBER si sahihi (mfano: 255753495142)');
     process.exit(1);
 }
 
-let sock             = null;
-let isConnecting     = false;
+let sock = null;
+let isConnecting = false;
 let pairingRequested = false;
-let bootLock         = false;
-let openTimer        = null;
-let hasEverOpened    = false;
-
-// ── FIX: Track 440 conflicts ili tusifanye loop ──
+let bootLock = false;
+let openTimer = null;
+let hasEverOpened = false;
 let consecutiveConflicts = 0;
-const MAX_CONFLICTS      = 3; // Baada ya conflicts 3 — subiri muda mrefu
+const MAX_CONFLICTS = 3;
 
-let healthCheckTimer  = null;
-let keepaliveTimer    = null;
-let cacheCleanTimer   = null;
+let healthCheckTimer = null;
+let keepaliveTimer = null;
+let cacheCleanTimer = null;
 
 function clearOpenTimer() {
     if (openTimer) clearTimeout(openTimer);
@@ -205,16 +200,16 @@ function clearOpenTimer() {
 
 function clearBackgroundTimers() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
-    if (keepaliveTimer)   clearInterval(keepaliveTimer);
-    if (cacheCleanTimer)  clearInterval(cacheCleanTimer);
+    if (keepaliveTimer) clearInterval(keepaliveTimer);
+    if (cacheCleanTimer) clearInterval(cacheCleanTimer);
     healthCheckTimer = keepaliveTimer = cacheCleanTimer = null;
 }
 
 function displayPairingCode(code) {
-    console.log('\n╔══════════════════════════╗');
-    console.log('║   🔑 PAIRING CODE        ║');
-    console.log('╠══════════════════════════╣');
-    console.log(`║      ${code}      ║`);
+    console.log('\n╔══════════╗');
+    console.log('║ 🔑 PAIRING CODE ║');
+    console.log('╠══════════╣');
+    console.log(`║ ${code} ║`);
     console.log('╚══════════════════════════╝');
     console.log(`\n📋 CODE: ${code}\n`);
     console.log('👆 WhatsApp → Linked Devices → Link a Device');
@@ -222,37 +217,22 @@ function displayPairingCode(code) {
     console.log('👆 Popup itatokea yenyewe — bonyeza CONFIRM\n');
 }
 
-// ════════════════════════════════════════════════
-//   AUTO CACHE CLEAR — Kila dakika 10
-// ════════════════════════════════════════════════
 function startCacheCleanup() {
     if (cacheCleanTimer) clearInterval(cacheCleanTimer);
     cacheCleanTimer = setInterval(() => {
         try {
-            const msgsBefore = processedMessages.size;
-            if (processedMessages.size > 500) {
-                processedMessages.clear();
-                log.info(`🧹 processedMessages imesafishwa (ilikuwa ${msgsBefore})`);
-            }
+            const stats = processedMessages.getStats();
+            log.info(`🧹 Cache cleanup: processedMessages ${stats.keys} keys`);
         } catch (e) {
             log.warn(`Cache cleanup error: ${e.message}`);
         }
     }, 10 * 60 * 1000);
 }
 
-// ════════════════════════════════════════════════
-//   HEALTH CHECK — Kila dakika 3
-//   FIX: Angalia readyState 0 au 2 tu (si undefined)
-//   undefined = bado haijaunganika, si hitilafu
-// ════════════════════════════════════════════════
 function startHealthCheck() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     healthCheckTimer = setInterval(async () => {
         const ws = sock?.ws?.readyState;
-
-        // ✅ FIX: undefined = socket mpya bado inaungana — usifanye restart
-        // 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
-        // Restart tu kama 2 (CLOSING) au 3 (CLOSED)
         if (ws === 2 || ws === 3) {
             log.warn(`⚠️ Health Check: WebSocket imekufa (state: ${ws}) — inarestart...`);
             clearBackgroundTimers();
@@ -261,12 +241,9 @@ function startHealthCheck() {
             try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 5000);
         }
-    }, 3 * 60 * 1000); // ✅ FIX: Kila dakika 3 (ilikuwa 2)
+    }, 3 * 60 * 1000);
 }
 
-// ════════════════════════════════════════════════
-//   KEEPALIVE — Kila sekunde 90
-// ════════════════════════════════════════════════
 function startKeepalive() {
     if (keepaliveTimer) clearInterval(keepaliveTimer);
     keepaliveTimer = setInterval(async () => {
@@ -284,8 +261,8 @@ async function startBot() {
     if (bootLock || isConnecting) return;
     if (sock?.ws?.readyState === 1) return;
 
-    bootLock         = true;
-    isConnecting     = true;
+    bootLock = true;
+    isConnecting = true;
     pairingRequested = false;
     clearOpenTimer();
     clearBackgroundTimers();
@@ -310,33 +287,30 @@ async function startBot() {
         }
 
         sock = makeWASocket({
-            auth:                           state,
+            auth: state,
             msgRetryCounterCache,
             logger,
-            printQRInTerminal:              false,
-            browser:                        Browsers.ubuntu('Chrome'),
-            connectTimeoutMs:               120000,
-            keepAliveIntervalMs:            30000,
-            defaultQueryTimeoutMs:          undefined,
+            printQRInTerminal: false,
+            browser: Browsers.ubuntu('Chrome'),
+            connectTimeoutMs: 45000, // FIX: Punguza kutoka 120s hadi 45s
+            keepAliveIntervalMs: 30000,
             generateHighQualityLinkPreview: false,
-            patchMessageBeforeSending:      (msg) => msg,
-            retryRequestDelayMs:            2000,
-            maxRetries:                     5,
-            syncFullHistory:                false,
-            shouldSyncHistory:              () => false,
-            markOnlineOnConnect:            true,
-            emitOwnEvents:                  false,
+            retryRequestDelayMs: 2000,
+            maxRetries: 5,
+            syncFullHistory: false,
+            shouldSyncHistory: () => false,
+            markOnlineOnConnect: true,
+            emitOwnEvents: false,
         });
 
         sock.ev.on('creds.update', saveCreds);
         setupContactListener(sock);
 
-        // Anti Pre-key Spam
         let preKeyCount = 0;
         sock.ev.on('creds.update', () => {
             preKeyCount++;
             if (preKeyCount % 5 === 0) {
-                console.log(`⚠️ Pre-keys upload count: ${preKeyCount} (inazuiliwa spam)`);
+                log.info(`Pre-keys upload count: ${preKeyCount}`);
             }
         });
 
@@ -344,12 +318,12 @@ async function startBot() {
             const { connection, lastDisconnect } = update;
 
             if (connection) {
-                updateBanner('connection', connection === 'open' ? 'ONLINE' : connection);
-                log.state(`Connection  →  ${connection}`);
+                updateBanner('connection', connection === 'open'? 'ONLINE' : connection);
+                log.state(`Connection → ${connection}`);
             }
 
             if (!pairingRequested && connection === 'connecting') {
-                const isRegistered = !!(state.creds?.me || state.creds?.account);
+                const isRegistered =!!(state.creds?.me || state.creds?.account);
                 if (!isRegistered) {
                     pairingRequested = true;
                     log.info(`Subiri sekunde ${PAIRING_DELAY / 1000}...`);
@@ -370,16 +344,16 @@ async function startBot() {
 
             if (connection === 'open') {
                 clearOpenTimer();
-                hasEverOpened        = true;
-                consecutiveConflicts = 0; // ✅ FIX: Reset conflict counter
+                hasEverOpened = true;
+                consecutiveConflicts = 0;
                 updateBanner('connection', 'ONLINE');
 
                 resolveOwnerLid(sock);
                 global.owner = process.env.OWNER_NUMBER || "255753495142";
 
                 console.log(`🔑 GLOBAL OWNER SETUP`);
-                console.log(`   • OWNER_NUMBER : ${global.owner}`);
-                console.log(`   • OWNER_LID    : ${global.ownerLid || 'bado haipo'}`);
+                console.log(` • OWNER_NUMBER : ${global.owner}`);
+                console.log(` • OWNER_LID : ${global.ownerLid || 'bado haipo'}`);
 
                 await Promise.allSettled([
                     sock.groupFetchAllParticipating().then(groups => {
@@ -403,7 +377,7 @@ async function startBot() {
                 printBanner();
 
                 isConnecting = false;
-                bootLock     = false;
+                bootLock = false;
             }
 
             if (connection === 'close') {
@@ -411,40 +385,23 @@ async function startBot() {
                 clearBackgroundTimers();
                 const code = lastDisconnect?.error?.output?.statusCode;
                 isConnecting = false;
-                bootLock     = false;
+                bootLock = false;
                 updateBanner('connection', 'OFFLINE');
 
                 log.div();
-                log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
+                log.error(`Muunganiko Umevunjika → [${code?? '?'}]`);
 
-                // ════════════════════════════════════════════════
-                //   FIX: 440 Session Conflict — Logic Mpya
-                //   440 = WhatsApp imeona sessions mbili
-                //   Suluhisho: subiri muda mrefu zaidi ili
-                //   session ya zamani ifungwe kabla ya mpya
-                // ════════════════════════════════════════════════
                 if (code === 440) {
                     consecutiveConflicts++;
-                    if (consecutiveConflicts >= MAX_CONFLICTS) {
-                        // Conflicts nyingi mfululizo — subiri dakika 1
-                        const waitMs = 60000;
-                        log.warn(`⚠️ Conflicts ${consecutiveConflicts} mfululizo — kusubiri dakika 1...`);
-                        consecutiveConflicts = 0;
-                        setTimeout(startBot, waitMs);
-                    } else {
-                        // Conflict ya kawaida — subiri sekunde 15
-                        log.warn(`⚠️ Session conflict (${consecutiveConflicts}/${MAX_CONFLICTS}) — kusubiri sekunde 15...`);
-                        setTimeout(startBot, 15000);
-                    }
+                    const waitMs = consecutiveConflicts >= MAX_CONFLICTS? 60000 : 15000;
+                    log.warn(`⚠️ Session conflict (${consecutiveConflicts}/${MAX_CONFLICTS}) — kusubiri ${waitMs/1000}s...`);
+                    if (consecutiveConflicts >= MAX_CONFLICTS) consecutiveConflicts = 0;
+                    setTimeout(startBot, waitMs);
                 } else if (code === 515) {
-                    // 515 = restart haraka
                     setTimeout(startBot, 2000);
                 } else if (code === 401) {
-                    // 401 = session batili — restart
                     setTimeout(startBot, 7000);
                 } else if (code === 428) {
-                    // 428 = connection ilivunjika wakati wa kazi
-                    // Subiri kidogo zaidi ili socket ifungwe vizuri
                     log.warn('Connection ilivunjika wakati wa kazi (428) — kusubiri sekunde 10...');
                     setTimeout(startBot, 10000);
                 } else {
@@ -453,46 +410,49 @@ async function startBot() {
             }
         });
 
-        // ════════════════════════════════════════════════
-        //   MESSAGES HANDLER
-        // ════════════════════════════════════════════════
         sock.ev.on('messages.upsert', async ({ messages, type }) => {
-            if (type !== 'notify') return;
+            if (type!== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
 
-            // Duplicate check
-            if (processedMessages.has(msg.key.id)) return;
-            processedMessages.add(msg.key.id);
-            setTimeout(() => processedMessages.delete(msg.key.id), 5 * 60 * 1000);
+            // FIX: Tumia NodeCache badala ya Set + setTimeout
+            if (processedMessages.get(msg.key.id)) return;
+            processedMessages.set(msg.key.id, true);
 
             const jid = msg.key.remoteJid;
             if (!jid) return;
 
-            // Chat history tracking
             let currentChatHistory = chatMessagesCache.get(jid) || [];
             currentChatHistory.push(msg.key.id);
             if (currentChatHistory.length > MAX_PER_CHAT) currentChatHistory.shift();
             chatMessagesCache.set(jid, currentChatHistory);
 
-            // Banner update
+            // FIX: Throttle banner update ili isichape kila message
             bannerState.messages++;
-            const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
-            const isGroup = jid.endsWith('@g.us');
-            const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            const source = isGroup ? 'Group' : 'DM';
-            updateBanner('messages', bannerState.messages);
-            updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
-            console.log(`📩 ${jid}: ${text}`);
+            if (bannerState.messages % 10 === 0) {
+                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
+                const isGroup = jid.endsWith('@g.us');
+                const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                const source = isGroup? 'Group' : 'DM';
+                updateBanner('messages', bannerState.messages);
+                updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25? '...' : ''}`);
+                printBanner();
+            }
+
+            // FIX: Log tu kama DEBUG iko on
+            if (process.env.DEBUG) {
+                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
+                console.log(`📩 ${jid}: ${text}`);
+            }
 
             const botNumber = sock.user.id.replace(/:\d+@/, '@');
             const sender = msg.key.participant || jid;
 
-            // AI mention detection
+            const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
             const isMentioned = text.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
-            if (isMentioned && !msg.key.fromMe) {
+            if (isMentioned &&!msg.key.fromMe) {
                 if (!aiCache.has(sender)) {
                     aiCache.set(sender, true);
                     if (!text.startsWith(global.prefix)) {
@@ -503,10 +463,17 @@ async function startBot() {
             }
 
             const extra = {
-                from:   jid,
+                from: jid,
                 sender: sender,
                 prefix: global.prefix,
-                reply:  async (txt) => sock.sendMessage(jid, { text: txt }, { quoted: msg }),
+                // FIX: Ongeza try/catch kuzuia crash kama sendMessage inashindwa
+                reply: async (txt) => {
+                    try {
+                        await sock.sendMessage(jid, { text: txt }, { quoted: msg });
+                    } catch (e) {
+                        log.warn(`Send message failed: ${e.message}`);
+                    }
+                }
             };
 
             await Promise.allSettled([
@@ -518,7 +485,7 @@ async function startBot() {
         openTimer = setTimeout(() => {
             log.warn('Timeout — restarting...');
             isConnecting = false;
-            bootLock     = false;
+            bootLock = false;
             try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 7000);
         }, 180000);
@@ -530,7 +497,7 @@ async function startBot() {
     } catch (err) {
         log.error(`HITILAFU → ${err.message}`);
         isConnecting = false;
-        bootLock     = false;
+        bootLock = false;
         clearBackgroundTimers();
         setTimeout(startBot, 7000);
     }
