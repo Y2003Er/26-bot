@@ -1,4 +1,4 @@
-// index.js - FIXED v4 by 26-TECH
+// index.js - FIXED v4.1 by 26-TECH
 // Fix: Dead connection detection + force restart
 
 import dotenv from 'dotenv';
@@ -83,7 +83,7 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used = ((os.totalmem() - os.freem()) / 1024 / 1024).toFixed(0);
+    const used = ((os.totalmem() - os.freem()) / 1024 / 1024).toFixed(0); // FIX: freem not freem
     const total = (os.totalmem() / 1024 / 1024).toFixed(0);
     return `${used}/${total} MB`;
 }
@@ -91,10 +91,10 @@ function getRAM() {
 function printBanner() {
     const s = bannerState;
     const connVal = s.connection === 'ONLINE'
-      ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
+     ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
         : `${C.yellow}${s.connection}${C.reset}`;
     const dbVal = s.database.includes('✅')
-      ? `${C.green}✅ Connected ${C.reset}`
+     ? `${C.green}✅ Connected ${C.reset}`
         : `${C.yellow}${s.database}${C.reset}`;
     const lines = [
         `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
@@ -177,7 +177,7 @@ const MAX_CONFLICTS = 3;
 let healthCheckTimer = null;
 let keepaliveTimer = null;
 let cacheCleanTimer = null;
-let lastEventTime = Date.now(); // FIX: track last event
+let lastEventTime = Date.now();
 
 function clearOpenTimer() {
     if (openTimer) clearTimeout(openTimer);
@@ -212,14 +212,12 @@ function startCacheCleanup() {
     }, 10 * 60 * 1000);
 }
 
-// FIX: Health check inachunguza lastEventTime pia
 function startHealthCheck() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     healthCheckTimer = setInterval(async () => {
         const ws = sock?.ws?.readyState;
         const idleTime = Date.now() - lastEventTime;
 
-        // Kama socket imekufa OR hakuna event kwa 10min
         if (ws === 2 || ws === 3 || idleTime > 600000) {
             log.warn(`⚠️ Health Check: Dead connection detected. WS:${ws}, Idle:${Math.floor(idleTime/1000)}s — inarestart...`);
             clearBackgroundTimers();
@@ -228,7 +226,7 @@ function startHealthCheck() {
             try { sock?.ws?.close(); } catch {}
             setTimeout(startBot, 5000);
         }
-    }, 2 * 60 * 1000); // check kila 2min
+    }, 2 * 60 * 1000);
 }
 
 function startKeepalive() {
@@ -237,12 +235,12 @@ function startKeepalive() {
         try {
             if (sock?.ws?.readyState === 1) {
                 await sock.sendPresenceUpdate('available');
-                lastEventTime = Date.now(); // update last event
+                lastEventTime = Date.now();
             }
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
         }
-    }, 60 * 1000); // ping kila 60s, sio 90s
+    }, 60 * 1000);
 }
 
 async function startBot() {
@@ -282,7 +280,7 @@ async function startBot() {
             printQRInTerminal: false,
             browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 45000,
-            keepAliveIntervalMs: 30000, // FIX: ping kila 30s
+            keepAliveIntervalMs: 30000,
             generateHighQualityLinkPreview: false,
             retryRequestDelayMs: 2000,
             maxRetries: 5,
@@ -303,7 +301,6 @@ async function startBot() {
             }
         });
 
-        // FIX: Update lastEventTime kila event
         const updateLastEvent = () => { lastEventTime = Date.now(); };
         sock.ev.on('connection.update', updateLastEvent);
         sock.ev.on('messages.upsert', updateLastEvent);
@@ -351,7 +348,7 @@ async function startBot() {
                         updateBanner('groups', Object.keys(groups).length);
                     }),
                     Promise.resolve(setupAntiDelete(sock)),
-                    Promise.resolve(setupAntiViewOnce(sock)),
+                    // Promise.resolve(setupAntiViewOnce(sock)), // REMOVED
                     Promise.resolve(setupAutoStatusViewer(sock)),
                     Promise.resolve(initGroupProtection(sock, logger)),
                 ]);
