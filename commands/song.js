@@ -54,7 +54,6 @@ export async function execute(sock, msg, args) {
             return '';
         };
 
-        // 1. Tafuta Video kwenye YouTube
         if (text.startsWith('http://') || text.startsWith('https://')) {
             videoUrl = text;
             try {
@@ -90,7 +89,6 @@ export async function execute(sock, msg, args) {
         const finalAuthor = videoAuthor || 'Haijulikani';
         const finalDuration = videoDuration || '--:--';
 
-        // Kikomo cha urefu
         if (finalDuration && finalDuration!== '--:--') {
             const parts = finalDuration.split(':');
             if (parts.length > 2) {
@@ -106,7 +104,6 @@ export async function execute(sock, msg, args) {
             }
         }
 
-        // Tuma Thumbnail
         if (videoThumb && typeof videoThumb === 'string' && videoThumb.startsWith('http')) {
             try {
                 await sock.sendMessage(from, {
@@ -128,16 +125,15 @@ export async function execute(sock, msg, args) {
                 'referer:youtube.com',
                 'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
             ],
-            format: 'bestaudio[ext=m4a]/bestaudio/best'
+            format: 'bestaudio/best'
         };
 
-        // Ongeza cookies kama ipo
         const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesTxt)) {
             options.cookies = cookiesTxt;
             console.log(`✅ [26-TECH] Cookies imepachikwa`);
         } else {
-            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani - YouTube inaweza kukublock`);
+            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani`);
         }
 
         const execOptions = {
@@ -201,11 +197,11 @@ export async function execute(sock, msg, args) {
         const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
 
         if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot au jaribu tena baadaye.';
+            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot.';
+        } else if (allOutput.includes('format is not available')) {
+            errMsg = '❌ Format haipatikani. Jaribu wimbo mwingine.';
         } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
             errMsg = '❌ Video hii haipatikani au imefungwa.';
-        } else if (error?.code === 'ENOENT') {
-            errMsg = '❌ YT-DLP binary haipatikani. Rejesha container upya.';
         }
 
         await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
