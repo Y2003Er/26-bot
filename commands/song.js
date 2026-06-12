@@ -1,7 +1,12 @@
 import yts from 'yt-search';
 import axios from 'axios';
 
-export default async function execute(sock, msg, args) {
+export const name = 'song';
+export const desc = 'Download audio from YouTube';
+export const category = 'download';
+export const use = '.song <jina au link>';
+
+export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     const text = args.join(' ').trim();
 
