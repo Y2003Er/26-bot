@@ -131,6 +131,15 @@ export async function execute(sock, msg, args) {
             format: 'bestaudio[ext=m4a]/bestaudio/best'
         };
 
+        // Ongeza cookies kama ipo
+        const cookiesTxt = path.resolve(__dirname, '../cookies.txt');
+        if (fs.existsSync(cookiesTxt)) {
+            options.cookies = cookiesTxt;
+            console.log(`✅ [26-TECH] Cookies imepachikwa`);
+        } else {
+            console.warn(`⚠️ [26-TECH] cookies.txt haipatikani - YouTube inaweza kukublock`);
+        }
+
         const execOptions = {
             executablePath: '/app/node_modules/yt-dlp-exec/bin/yt-dlp'
         };
@@ -152,7 +161,7 @@ export async function execute(sock, msg, args) {
             }
         } catch (e) {
             const msg2 = (e?.stderr || '') + (e?.stdout || '');
-            console.warn(`⚠️ Imeshindwa: ${msg2.slice(0, 120)}`);
+            console.warn(`⚠️ Imeshindwa: ${msg2.slice(0, 200)}`);
             throw e;
         }
 
@@ -192,7 +201,7 @@ export async function execute(sock, msg, args) {
         const allOutput = (error?.stderr || '') + (error?.stdout || '') + (error?.message || '');
 
         if (allOutput.includes('Sign in') || allOutput.includes('bot')) {
-            errMsg = '❌ YouTube imeblock. Jaribu tena baada ya dakika chache.';
+            errMsg = '❌ YouTube imeblock. Weka cookies.txt kwenye bot au jaribu tena baadaye.';
         } else if (allOutput.includes('Video unavailable') || allOutput.includes('Private video')) {
             errMsg = '❌ Video hii haipatikani au imefungwa.';
         } else if (error?.code === 'ENOENT') {
