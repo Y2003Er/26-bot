@@ -26,11 +26,12 @@ const songCommand = {
             });
 
             let videoUrl;
-            let videoTitle = text;
-            let videoThumbnail = '';
+            let videoDataYT;
 
             if (text.startsWith('http')) {
                 videoUrl = text;
+                const { videos } = await yts({ videoId: videoUrl.split('v=')[1] });
+                videoDataYT = videos[0];
             } else {
                 const { videos } = await yts(text);
                 if (!videos?.length) {
@@ -38,24 +39,22 @@ const songCommand = {
                         text: '❌ Wimbo haukupatikana, jaribu jina jengine.'
                     }, { quoted: msg });
                 }
-                videoUrl = videos[0].url;
-                videoTitle = videos[0].title;
-                videoThumbnail = videos[0].thumbnail;
+                videoDataYT = videos[0];
+                videoUrl = videoDataYT.url;
             }
 
             // Thumbnail + info
             try {
-                const ytId = (videoUrl.match(/(?:youtu\.be\/|v=)([a-zA-Z0-9_-]{11})/) || [])[1];
-                const thumb = videoThumbnail || (ytId? `https://i.ytimg.com/vi/${ytId}/sddefault.jpg` : null);
-                if (thumb) {
-                    await sock.sendMessage(from, {
-                        image: { url: thumb },
-                        caption: `✼ ••๑⋯ ❀ Y O U T U B E A U D I O ❀ ⋯⋅๑•• ✼
-❏ Title: ${videoTitle}
+                await sock.sendMessage(from, {
+                    image: { url: videoDataYT.thumbnail },
+                    caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
+❏ Title: ${videoDataYT.title}
+❐ Duration: ${videoDataYT.timestamp}
+❑ Views: ${videoDataYT.views.toLocaleString()}
+❒ Uploaded: ${videoDataYT.ago}
 ❒ Link: ${videoUrl}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
-                    }, { quoted: msg });
-                }
+                }, { quoted: msg });
             } catch (e) {}
 
             // Fallback chain: EliteProTech → Yupra → Okatsu
@@ -63,35 +62,45 @@ const songCommand = {
             try {
                 videoData = await APIs.getEliteProTechVideoByUrl(videoUrl);
             } catch (e1) {
-                console.error('[SONG] EliteProTech failed:', e1.message);
+                console.error('EliteProTech failed:', e1.message);
                 try {
                     videoData = await APIs.getYupraVideoByUrl(videoUrl);
                 } catch (e2) {
-                    console.error('[SONG] Yupra failed:', e2.message);
+                    console.error('Yupra failed:', e2.message);
                     videoData = await APIs.getOkatsuVideoByUrl(videoUrl);
                 }
             }
 
-            const finalTitle = videoData.title || videoTitle;
-            const finalThumb = videoData.thumbnail || videoThumbnail;
+            const finalTitle = videoData.title || videoDataYT.title;
+            const finalThumb = videoData.thumbnail || videoDataYT.thumbnail;
 
-            // Tuma kama audio
-            await sock.sendMessage(from, {
-                audio: { url: videoData.download },
-                mimetype: 'audio/mpeg',
-                fileName: `${finalTitle}.mp3`,
-                contextInfo: {
-                    externalAdReply: {
-                        showAdAttribution: true,
-                        mediaType: 2,
-                        mediaUrl: videoUrl,
-                        title: finalTitle,
-                        body: '⚡ Powered by 26-𝐓𝐄𝐂𝐇',
-                        sourceUrl: videoUrl,
-                        thumbnailUrl: finalThumb,
+            // Jaribu kutuma kama audio, ikishindwa tuma kama file
+            try {
+                await sock.sendMessage(from, {
+                    audio: { url: videoData.download },
+                    mimetype: 'audio/mpeg',
+                    fileName: `${finalTitle}.mp3`,
+                    contextInfo: {
+                        externalAdReply: {
+                            showAdAttribution: true,
+                            mediaType: 2,
+                            mediaUrl: videoUrl,
+                            title: finalTitle,
+                            body: '⚡ Powered by 26-𝐓𝐄𝐂𝐇',
+                            sourceUrl: videoUrl,
+                            thumbnailUrl: finalThumb,
+                        },
                     },
-                },
-            }, { quoted: msg });
+                }, { quoted: msg });
+            } catch (err) {
+                console.error('Audio send failed, sending as file:', err.message);
+                await sock.sendMessage(from, {
+                    document: { url: videoData.download },
+                    mimetype: 'audio/mpeg',
+                    fileName: `${finalTitle}.mp3`,
+                    caption: `🎵 ${finalTitle}`
+                }, { quoted: msg });
+            }
 
             await sock.sendMessage(from, {
                 react: { text: '✅', key: msg.key }
