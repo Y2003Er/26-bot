@@ -2,115 +2,108 @@ import axios from 'axios';
 import yts from 'yt-search';
 import APIs from '../api.js';
 
-const playCommand = {
-    name: 'play',
-    alias: ['song', 'wimbo'],
-    description: 'Tafuta na upakue wimbo kutoka YouTube',
+const songCommand = {
+    name: 'song',
+    alias: ['play', 'song', 'ytaudio'],
+    description: 'Download audio from YouTube',
     category: 'downloader',
-    use: '<jina la wimbo>',
+    use: '<jina au link>',
     ownerOnly: false,
     adminOnly: false,
     execute: async (sock, msg, args) => {
-        const text = args.join(' ');
+        const from = msg.key.remoteJid;
+        const text = args.join(' ').trim();
 
         if (!text) {
-            return await sock.sendMessage(msg.key.remoteJid, {
-                text: `❌ Tafadhali weka jina la wimbo.\n\nMfano: .play marioo unanionea`
+            return await sock.sendMessage(from, {
+                text: '❌ Andika jina la wimbo\nMfano:.song one dance'
             }, { quoted: msg });
         }
 
         try {
-            await sock.sendMessage(msg.key.remoteJid, {
+            await sock.sendMessage(from, {
                 react: { text: '⏳', key: msg.key }
             });
-        } catch (e) {}
 
-        try {
-            // Search YouTube
-            const search = await yts(`${text} Song`);
-            if (!search.videos.length) {
-                return await sock.sendMessage(msg.key.remoteJid, {
-                    text: '❌ Wimbo haujapatikana, jaribu jina jengine.'
-                }, { quoted: msg });
+            let videoUrl;
+            let videoTitle = text;
+            let videoThumbnail = '';
+
+            if (text.startsWith('http')) {
+                videoUrl = text;
+            } else {
+                const { videos } = await yts(text);
+                if (!videos?.length) {
+                    return await sock.sendMessage(from, {
+                        text: '❌ Wimbo haukupatikana, jaribu jina jengine.'
+                    }, { quoted: msg });
+                }
+                videoUrl = videos[0].url;
+                videoTitle = videos[0].title;
+                videoThumbnail = videos[0].thumbnail;
             }
 
-            const vid = search.videos[0];
-            const { title, thumbnail, timestamp, views, ago, url } = vid;
-
-            // ✅ Thumbnail + info
-            await sock.sendMessage(msg.key.remoteJid, {
-                image: { url: thumbnail },
-                caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
-❏ Title: ${title}
-❐ Duration: ${timestamp}
-❑ Views: ${views}
-❒ Uploaded: ${ago}
-❒ Link: ${url}
-⊱─━━━━⊱༻●༺⊰━━━━─⊰`
-            }, { quoted: msg });
-
-            // ✅ Fallback chain: EliteProTech → Yupra → Okatsu → Izumi
-            let audioData;
+            // Thumbnail + info
             try {
-                audioData = await APIs.getEliteProTechDownloadByUrl(url);
+                const ytId = (videoUrl.match(/(?:youtu\.be\/|v=)([a-zA-Z0-9_-]{11})/) || [])[1];
+                const thumb = videoThumbnail || (ytId? `https://i.ytimg.com/vi/${ytId}/sddefault.jpg` : null);
+                if (thumb) {
+                    await sock.sendMessage(from, {
+                        image: { url: thumb },
+                        caption: `✼ ••๑⋯ ❀ Y O U T U B E A U D I O ❀ ⋯⋅๑•• ✼
+❏ Title: ${videoTitle}
+❒ Link: ${videoUrl}
+⊱─━━━━⊱༻●༺⊰━━━━─⊰`
+                    }, { quoted: msg });
+                }
+            } catch (e) {}
+
+            // Fallback chain: EliteProTech → Yupra → Okatsu
+            let videoData;
+            try {
+                videoData = await APIs.getEliteProTechVideoByUrl(videoUrl);
             } catch (e1) {
-                console.error('[PLAY] EliteProTech failed:', e1.message);
+                console.error('[SONG] EliteProTech failed:', e1.message);
                 try {
-                    audioData = await APIs.getYupraDownloadByUrl(url);
+                    videoData = await APIs.getYupraVideoByUrl(videoUrl);
                 } catch (e2) {
-                    console.error('[PLAY] Yupra failed:', e2.message);
-                    try {
-                        audioData = await APIs.getOkatsuDownloadByUrl(url);
-                    } catch (e3) {
-                        console.error('[PLAY] Okatsu failed:', e3.message);
-                        audioData = await APIs.getIzumiDownloadByUrl(url);
-                    }
+                    console.error('[SONG] Yupra failed:', e2.message);
+                    videoData = await APIs.getOkatsuVideoByUrl(videoUrl);
                 }
             }
 
-            // Download audio buffer
-            const audioRes = await axios.get(audioData.download, {
-                responseType: 'arraybuffer',
-                timeout: 120000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
+            const finalTitle = videoData.title || videoTitle;
+            const finalThumb = videoData.thumbnail || videoThumbnail;
 
-            const audioBuffer = Buffer.from(audioRes.data);
-            const finalTitle = audioData.title || title;
-            const finalThumb = audioData.thumbnail || thumbnail;
-
-            // ✅ Send audio with branding
-            await sock.sendMessage(msg.key.remoteJid, {
-                audio: audioBuffer,
+            // Tuma kama audio
+            await sock.sendMessage(from, {
+                audio: { url: videoData.download },
                 mimetype: 'audio/mpeg',
-                ptt: false,
                 fileName: `${finalTitle}.mp3`,
                 contextInfo: {
                     externalAdReply: {
                         showAdAttribution: true,
                         mediaType: 2,
-                        mediaUrl: url,
+                        mediaUrl: videoUrl,
                         title: finalTitle,
                         body: '⚡ Powered by 26-𝐓𝐄𝐂𝐇',
-                        sourceUrl: url,
+                        sourceUrl: videoUrl,
                         thumbnailUrl: finalThumb,
                     },
                 },
             }, { quoted: msg });
 
-            await sock.sendMessage(msg.key.remoteJid, {
+            await sock.sendMessage(from, {
                 react: { text: '✅', key: msg.key }
             });
 
         } catch (error) {
-            console.error('Play command error:', error.message);
-            await sock.sendMessage(msg.key.remoteJid, {
-                text: '❌ Hitilafu imetokea wakati wa kupakua wimbo huo. Tafadhali jaribu tena.'
+            console.error('Song Error:', error.message);
+            await sock.sendMessage(from, {
+                text: '❌ Imeshindwa kupakua wimbo. Tafadhali jaribu tena.'
             }, { quoted: msg });
             try {
-                await sock.sendMessage(msg.key.remoteJid, {
+                await sock.sendMessage(from, {
                     react: { text: '❌', key: msg.key }
                 });
             } catch (_) {}
@@ -118,4 +111,4 @@ const playCommand = {
     }
 };
 
-export default playCommand;
+export default songCommand;
