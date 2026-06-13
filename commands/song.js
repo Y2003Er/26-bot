@@ -21,6 +21,7 @@ const songCommand = {
         }
 
         try {
+            console.log('[SONG] Anza process kwa:', text);
             await sock.sendMessage(from, {
                 react: { text: '⏳', key: msg.key }
             });
@@ -30,11 +31,14 @@ const songCommand = {
 
             if (text.startsWith('http')) {
                 videoUrl = text;
+                console.log('[SONG] Ni link direct:', videoUrl);
                 const { videos } = await yts({ videoId: videoUrl.split('v=')[1] });
                 videoDataYT = videos[0];
             } else {
+                console.log('[SONG] Tafuta kwenye YouTube:', text);
                 const { videos } = await yts(text);
                 if (!videos?.length) {
+                    console.log('[SONG] Hakuna matokeo');
                     return await sock.sendMessage(from, {
                         text: '❌ Wimbo haukupatikana, jaribu jina jengine.'
                     }, { quoted: msg });
@@ -42,6 +46,8 @@ const songCommand = {
                 videoDataYT = videos[0];
                 videoUrl = videoDataYT.url;
             }
+
+            console.log('[SONG] Video kupakua:', videoDataYT.title, videoUrl);
 
             // Thumbnail + info
             try {
@@ -55,27 +61,38 @@ const songCommand = {
 ❒ Link: ${videoUrl}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
                 }, { quoted: msg });
-            } catch (e) {}
+                console.log('[SONG] Thumbnail imetumwa');
+            } catch (e) {
+                console.log('[SONG] Thumbnail failed:', e.message);
+            }
 
             // Fallback chain: EliteProTech → Yupra → Okatsu
             let videoData;
             try {
+                console.log('[SONG] Jaribu EliteProTech...');
                 videoData = await APIs.getEliteProTechVideoByUrl(videoUrl);
+                console.log('[SONG] ✅ EliteProTech imefanikiwa');
             } catch (e1) {
-                console.error('EliteProTech failed:', e1.message);
+                console.error('[SONG] ❌ EliteProTech failed:', e1.message);
                 try {
+                    console.log('[SONG] Jaribu Yupra...');
                     videoData = await APIs.getYupraVideoByUrl(videoUrl);
+                    console.log('[SONG] ✅ Yupra imefanikiwa');
                 } catch (e2) {
-                    console.error('Yupra failed:', e2.message);
+                    console.error('[SONG] ❌ Yupra failed:', e2.message);
+                    console.log('[SONG] Jaribu Okatsu...');
                     videoData = await APIs.getOkatsuVideoByUrl(videoUrl);
+                    console.log('[SONG] ✅ Okatsu imefanikiwa');
                 }
             }
 
             const finalTitle = videoData.title || videoDataYT.title;
             const finalThumb = videoData.thumbnail || videoDataYT.thumbnail;
+            console.log('[SONG] Download URL:', videoData.download);
 
             // Jaribu kutuma kama audio, ikishindwa tuma kama file
             try {
+                console.log('[SONG] Tuma kama audio...');
                 await sock.sendMessage(from, {
                     audio: { url: videoData.download },
                     mimetype: 'audio/mpeg',
@@ -92,14 +109,17 @@ const songCommand = {
                         },
                     },
                 }, { quoted: msg });
+                console.log('[SONG] ✅ Audio imetumwa');
             } catch (err) {
-                console.error('Audio send failed, sending as file:', err.message);
+                console.error('[SONG] ❌ Audio failed:', err.message);
+                console.log('[SONG] Tuma kama document...');
                 await sock.sendMessage(from, {
                     document: { url: videoData.download },
                     mimetype: 'audio/mpeg',
                     fileName: `${finalTitle}.mp3`,
                     caption: `🎵 ${finalTitle}`
                 }, { quoted: msg });
+                console.log('[SONG] ✅ Document imetumwa');
             }
 
             await sock.sendMessage(from, {
@@ -107,7 +127,7 @@ const songCommand = {
             });
 
         } catch (error) {
-            console.error('Song Error:', error.message);
+            console.error('[SONG] ❌ Error kubwa:', error.message);
             await sock.sendMessage(from, {
                 text: '❌ Imeshindwa kupakua wimbo. Tafadhali jaribu tena.'
             }, { quoted: msg });
