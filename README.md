@@ -57,7 +57,7 @@
 
 
 
-![Visitor Count](https://profile-counter.glitch.me/Y2003Er/count.svg)
+![Visitor Count](https://komarev.com/ghpvc/?username=Y2003Er&color=red&style=flat-square&label=PROFILE+VIEWS)
 
 
 
