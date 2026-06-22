@@ -4,9 +4,7 @@
 <u>⚡ A simple WhatsApp User Bot Coded By 26 TECH SOLUTION ⚡</u>
 </p>
 <p align="center">
-<video src="https://raw.githubusercontent.com/Y2003Er/26-bot/main/assets/26-bot.mp4" 
-width="600" autoplay loop muted playsinline>
-</video>
+<img src="https://raw.githubusercontent.com/Y2003Er/26-bot/main/assets/26-Tech-Bot.gif" width="600"/>
 </p>
 <p align="center">
   <a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=EB+Garamond&weight=800&size=28&duration=4000&pause=1000&random=false&width=435&lines=+•26+TECH+BOT•;MULTI-DEVICE+WHATSAPP+BOT;DEVELOPED+BY+26+TECH+SOLUTION;RELEASED+DATE+05%2F12%2F2024." alt="Typing SVG" /></a>
@@ -57,7 +55,11 @@ width="600" autoplay loop muted playsinline>
   #### `TOTAL PROFILE VIEWS 🧚`
 
 
+
+
 ![Visitor Count](https://profile-counter.glitch.me/Y2003Er/count.svg)
+
+
 
 
 
