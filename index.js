@@ -5,7 +5,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-// FIX 1: Catch unhandled errors so bot doesn't die
 process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ Unhandled Rejection:', reason);
 });
@@ -40,7 +39,6 @@ import {
 import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
 
-// ── Database Pool kwa $db commands ──
 import pg from 'pg';
 const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
@@ -51,11 +49,9 @@ const pool = new pg.Pool({
 });
 global.dbPool = pool;
 
-// ── Fix MaxListeners Warning ──
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
 
-// ── Caches ──
 const aiCache = new NodeCache({ stdTTL: 60 });
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
@@ -69,7 +65,7 @@ const PAIRING_DELAY = 5000;
 global.prefix = process.env.PREFIX || '.';
 
 // ════════════════════════════════════════
-// BANNER SYSTEM — chapisha tu state ikibadilika kweli
+// BANNER SYSTEM — 26-TECH Premium Dashboard v2.6.0
 // ════════════════════════════════════════
 const C = {
     reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -89,6 +85,8 @@ const bannerState = {
     messages: 0,
     groups: 0,
     lastMsg: '—',
+    lastSource: '—',
+    lastTime: '—',
     ai: process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime: Date.now(),
 };
@@ -106,45 +104,127 @@ function getUptime() {
 function getRAM() {
     const used = (os.totalmem() - os.freemem()) / 1024 / 1024;
     const total = os.totalmem() / 1024 / 1024;
-    return { used: used.toFixed(0), total: total.toFixed(0), pct: (used / total) * 100 };
+    const pct = (used / total) * 100;
+    return { used: used.toFixed(0), total: total.toFixed(0), pct };
 }
 
-function ramBar(pct, width = 12) {
+function getCPU() {
+    const cpus = os.cpus();
+    const avg = cpus.reduce((acc, cpu) => {
+        const total = Object.values(cpu.times).reduce((a, b) => a + b, 0);
+        const idle = cpu.times.idle;
+        return acc + ((total - idle) / total) * 100;
+    }, 0) / cpus.length;
+    return avg.toFixed(1);
+}
+
+function makeBar(pct, width = 10) {
     const filled = Math.round((pct / 100) * width);
+    const empty = width - filled;
     const color = pct > 85 ? C.redBright : pct > 60 ? C.yellowBright : C.greenBright;
-    return `${color}${'━'.repeat(filled)}${C.gray}${'━'.repeat(width - filled)}${C.reset}`;
+    return `${color}${'▰'.repeat(filled)}${C.gray}${'▱'.repeat(empty)}${C.reset}`;
 }
 
 function connectionLine() {
     const s = bannerState.connection;
-    if (s === 'ONLINE') return `${C.greenBright}${C.bold}● ONLINE${C.reset}`;
-    if (s === 'connecting' || s === 'close' || s === 'OFFLINE') return `${C.yellowBright}◌ Connecting...${C.reset}`;
-    return `${C.redBright}● ${s}${C.reset}`;
+    if (s === 'ONLINE')      return `${C.greenBright}${C.bold}● ONLINE${C.reset}`;
+    if (s === 'connecting')  return `${C.yellowBright}◌ CONNECTING${C.reset}`;
+    if (s === 'OFFLINE')     return `${C.redBright}✖ OFFLINE${C.reset}`;
+    return                          `${C.magentaBright}◈ MAINTENANCE${C.reset}`;
 }
 
-// Banner — function ya kawaida, HAINA interval, HAINA cursor escape codes
+function databaseLine() {
+    const d = bannerState.database;
+    if (d.includes('✅')) return `${C.greenBright}● Connected${C.reset}`;
+    if (d.includes('⏳')) return `${C.yellowBright}◌ Connecting...${C.reset}`;
+    return                       `${C.redBright}✖ Disconnected${C.reset}`;
+}
+
+function pad(str, len) {
+    // Strip ANSI codes for length calculation
+    const plain = str.replace(/\x1b\[[0-9;]*m/g, '');
+    const spaces = Math.max(0, len - plain.length);
+    return str + ' '.repeat(spaces);
+}
+
 function printBanner() {
     const s = bannerState;
     const ram = getRAM();
-    const dbVal = s.database.includes('✅')
-        ? `${C.greenBright}● Connected${C.reset}`
-        : `${C.yellowBright}◌ Connecting...${C.reset}`;
+    const cpu = parseFloat(getCPU());
+    const W = 45; // inner width
+
+    const border  = `${C.cyanBright}`;
+    const pipe    = `${C.cyanBright}┃${C.reset}`;
+    const sep     = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
+
+    const row = (label, value) => {
+        const labelStr = `${C.bold}${C.white}${label}${C.reset}`;
+        const plainLabel = label;
+        const plainValue = value.replace(/\x1b\[[0-9;]*m/g, '');
+        const gap = W - plainLabel.length - plainValue.length - 4;
+        return `${pipe}  ${labelStr}  ${value}${' '.repeat(Math.max(0, gap))} ${pipe}`;
+    };
+
+    const center = (text) => {
+        const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
+        const total = W - plain.length;
+        const left  = Math.floor(total / 2);
+        const right = total - left;
+        return `${pipe}${' '.repeat(left)}${text}${' '.repeat(right)}${pipe}`;
+    };
+
+    const blank = `${pipe}${' '.repeat(W)}${pipe}`;
+
+    const ramBar   = makeBar(ram.pct);
+    const ramBarPlain = '▰'.repeat(Math.round((ram.pct/100)*10)) + '▱'.repeat(10 - Math.round((ram.pct/100)*10));
+    const ramLine  = `  ${ramBar}  ${C.blueBright}${ram.pct.toFixed(0)}%${C.reset}`;
+    const ramInfo  = `  ${C.dim}${ram.used} MB / ${ram.total} MB${C.reset}`;
+
+    const cpuBar   = makeBar(cpu);
+    const cpuLine  = `  ${cpuBar}  ${C.blueBright}${cpu}%${C.reset}`;
 
     const lines = [
-        `${C.cyanBright}╭─────────────────────────────────────────────╮${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}${C.yellowBright}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}  ${C.dim}up ${getUptime()}${C.reset}`,
-        `${C.cyanBright}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}Connection${C.reset}   ${connectionLine()}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}Database  ${C.reset}   ${dbVal}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}Commands  ${C.reset}   ${C.greenBright}${s.commands}${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}Messages  ${C.reset}   ${C.white}${s.messages}${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}Groups    ${C.reset}   ${C.white}${s.groups}${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}AI Engine ${C.reset}   ${C.magentaBright}${s.ai}${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.bold}RAM       ${C.reset}   ${ramBar(ram.pct)} ${C.blueBright}${ram.used}/${ram.total}MB${C.reset}`,
-        `${C.cyanBright}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyanBright}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
-        `${C.cyanBright}╰─────────────────────────────────────────────╯${C.reset}`,
+        `${border}╭${'━'.repeat(W)}╮${C.reset}`,
+        blank,
+        center(`${C.yellowBright}${C.bold}⚡ 26-𝐓𝐄𝐂𝐇  𝐁𝐎𝐓${C.reset}`),
+        center(`${C.dim}◈  Advanced AI System Monitor  ◈${C.reset}`),
+        blank,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        `${pipe}  ${C.bold}${C.cyanBright}◉ SYSTEM STATUS${C.reset}${' '.repeat(W - 17)}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        row('🟢 Connection ', connectionLine()),
+        row('🗄️  Database  ', databaseLine()),
+        row('⏱️  Uptime    ', `${C.greenBright}${getUptime()}${C.reset}`),
+        row('📡 Ping       ', `${C.yellowBright}— ms${C.reset}`),
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        `${pipe}  ${C.bold}${C.cyanBright}◈ BOT STATISTICS${C.reset}${' '.repeat(W - 18)}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        row('⚙️  Commands  ', `${C.greenBright}${s.commands}${C.reset}`),
+        row('💬 Messages   ', `${C.white}${s.messages} total${C.reset}`),
+        row('👥 Groups     ', `${C.white}${s.groups} active${C.reset}`),
+        row('🤖 AI Engine  ', `${C.magentaBright}${s.ai}${C.reset}`),
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        `${pipe}  ${C.bold}${C.cyanBright}◈ RESOURCE MONITOR${C.reset}${' '.repeat(W - 20)}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        `${pipe}  ${C.bold}🧠 RAM Usage${C.reset}${' '.repeat(W - 13)}${pipe}`,
+        `${pipe}${ramLine}${' '.repeat(Math.max(0, W - 18))}${pipe}`,
+        `${pipe}${ramInfo}${' '.repeat(Math.max(0, W - ram.used.length - ram.total.length - 10))}${pipe}`,
+        blank,
+        `${pipe}  ${C.bold}⚡ CPU Usage${C.reset}${' '.repeat(W - 13)}${pipe}`,
+        `${pipe}${cpuLine}${' '.repeat(Math.max(0, W - 18))}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        `${pipe}  ${C.bold}${C.cyanBright}◈ LAST ACTIVITY${C.reset}${' '.repeat(W - 17)}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        row('📨 Source     ', `${C.white}${s.lastSource}${C.reset}`),
+        row('🕐 Time       ', `${C.white}${s.lastTime}${C.reset}`),
+        `${pipe}  ${C.dim}💭 "${s.lastMsg.slice(0, 35)}${s.lastMsg.length > 35 ? '...' : ''}"${C.reset}${' '.repeat(Math.max(0, W - s.lastMsg.slice(0,35).length - 7))}${pipe}`,
+        `${border}├${'─'.repeat(W)}┤${C.reset}`,
+        center(`${C.dim}⚡ Powered by 26-TECH AI Infrastructure${C.reset}`),
+        center(`${C.gray}◈ v2.6.0  •  2026 Edition  •  🔒 SEC${C.reset}`),
+        `${border}╰${'━'.repeat(W)}╯${C.reset}`,
     ];
+
+    console.log('');
     lines.forEach(line => console.log(line));
     console.log('');
 }
@@ -418,7 +498,6 @@ async function startBot() {
                 startCacheCleanup();
                 log.success('⚡ Health Check + Keepalive + Cache Cleanup — Zimeanzishwa');
 
-                // TUMA UJUMBE KWA OWNER: Bot iko active
                 try {
                     const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
                     await global.sock.sendMessage(ownerJid, { text: '✅ *Bot iko active*' });
@@ -477,9 +556,11 @@ async function startBot() {
                 const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
                 const isGroup = jid.endsWith('@g.us');
                 const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                const source = isGroup ? 'Group' : 'DM';
+                const source = isGroup ? '👥 Group' : '💬 DM';
                 updateBanner('messages', bannerState.messages);
-                updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
+                updateBanner('lastMsg', text.slice(0, 35));
+                updateBanner('lastSource', source);
+                updateBanner('lastTime', time);
                 printBanner();
             }
 
@@ -535,7 +616,6 @@ async function startBot() {
     }
 }
 
-// 🔥 HII NDIO FIX YA RESTART: weka startBot kwenye global
 global.startBot = startBot;
 
 (async () => {
