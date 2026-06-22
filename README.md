@@ -32,7 +32,7 @@
 3. **Deploy on [TALKDROVE](https://host.talkdrove.com)**
 3. **Deploy on [BOT HOSTING PANEL(DISCORD)](https://bot-hosting.net/?aff=1251693529084723300)**
 3. **Deploy on [KATBUMP PANEL(DISCORD)](https://dashboard.katabump.com/auth/login#1ae56c)**
-8. **You can visit Bot whatsapp channel [BY CLICKING HERE](https://whatsapp.com/channel/0029VaeRru3ADTOEKPCPom0L) for more**
+8. **You can visit Bot whatsapp channel [BY CLICKING HERE](https://whatsapp.com/channel/0029VbDt4yWD8SDrWJQ3Yc3l) for more**
 
 <a><img src='https://i.imgur.com/LyHic3i.gif'/></a><a><img src='https://i.imgur.com/LyHic3i.gif'/></a>
 
@@ -43,7 +43,7 @@
 </p>
 <p align="center">
 <a href="https://wa.me/message/SQNPGC2SNDJQN1"><img src="https://img.shields.io/badge/Message 26 Kipaji Co.Ltd-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" /></a>
-<a href="https://whatsapp.com/channel/0029VaeRru3ADTOEKPCPom0L"><img src="https://img.shields.io/badge/Join Official Channel-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" /></a>
+<a href="https://whatsapp.com/channel/0029VbDt4yWD8SDrWJQ3Yc3l"><img src="https://img.shields.io/badge/Join Official Channel-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" /></a>
 <a href="https://github.com/Y2003Er"><img src="https://img.shields.io/badge/GitHub-Y2003Er-black?style=for-the-badge&logo=github&logoColor=white" /></a>
 </p>
 <a><img src='https://i.imgur.com/LyHic3i.gif'/></a><a><img src='https://i.imgur.com/LyHic3i.gif'/></a>
