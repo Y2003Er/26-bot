@@ -26,13 +26,13 @@
 ---
 1. **Fork Repo First, [CLICK HERE](https://github.com/Y2003Er/26-bot/fork) (A MUST) and Star ⭐ Repository for Courage.**
 2. **Get SESSION ID BY [PAIRING CODE](https://pair.david-cyril.net.ng)**
-3. **Deploy on [HEROKU](https://dashboard.heroku.com/new?template=https://github.com/Y2003Er/26-bot)**
-4. **Deploy on [RENDER](https://dashboard.render.com/signup)**
-5. **Deploy on [KOYEB](https://app.koyeb.com/services/deploy/?type=git&repository=github.com%2FY2003Er%2F26-bot&branch=main&name=26-bot&builder=dockerfile&env%5BAUTO_STATUS_REACT=false%5D=&env%5BSESSION_ID%5D=your%20sessionid%20here&env%5BPUBLIC%5D=true&env=%5BAUTO_TYPING%5D%3Dfalse&env%5BAUTO_STATUS_VIEW%5D=true)**
-6. **Deploy on [RAILWAY](https://railway.app/new/template?template=https://github.com/Y2003Er/26-bot)**
-7. **Deploy on [TALKDROVE](https://host.talkdrove.com)**
-8. **Deploy on [BOT HOSTING PANEL(DISCORD)](https://bot-hosting.net/?aff=1251693529084723300)**
-9. **Deploy on [KATBUMP PANEL(DISCORD)](https://dashboard.katabump.com/auth/login#1ae56c)**
+3. **Deploy on [HEROKU](https://dashboard.heroku.com/new?template=https://github.com/Y2003Er/26-bot)** *(One-click deploy)*
+4. **Deploy on [RENDER](https://dashboard.render.com/signup)** *(Sign up, then connect your forked repo)*
+5. **Deploy on [KOYEB](https://app.koyeb.com/services/deploy/?type=git&repository=github.com%2FY2003Er%2F26-bot&branch=main&name=26-bot&builder=dockerfile&env%5BAUTO_STATUS_REACT=false%5D=&env%5BSESSION_ID%5D=your%20sessionid%20here&env%5BPUBLIC%5D=true&env=%5BAUTO_TYPING%5D%3Dfalse&env%5BAUTO_STATUS_VIEW%5D=true)** *(One-click deploy)*
+6. **Deploy on [RAILWAY](https://railway.com/dashboard)** *(Sign up, then connect your forked repo)*
+7. **Deploy on [TALKDROVE](https://host.talkdrove.com)** *(Sign up, then connect your forked repo)*
+8. **Deploy on [BOT HOSTING PANEL(DISCORD)](https://bot-hosting.net/?aff=1251693529084723300)** *(Sign up, then connect your forked repo)*
+9. **Deploy on [KATBUMP PANEL(DISCORD)](https://dashboard.katabump.com/auth/login#1ae56c)** *(Sign up, then connect your forked repo)*
 10. **You can visit Bot whatsapp channel [BY CLICKING HERE](https://whatsapp.com/channel/0029VbDt4yWD8SDrWJQ3Yc3l) for more**
 
 <a><img src='https://i.imgur.com/LyHic3i.gif'/></a><a><img src='https://i.imgur.com/LyHic3i.gif'/></a>
