@@ -66,9 +66,6 @@ const PAIRING_DELAY = 5000;
 
 global.prefix = process.env.PREFIX || '.';
 
-// ════════════════════════════════════════
-// BANNER SYSTEM — 26-TECH Premium Dashboard v2.6.0
-// ════════════════════════════════════════
 const C = {
     reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
     cyan: '\x1b[36m', cyanBright: '\x1b[96m',
@@ -283,9 +280,6 @@ function updateBanner(key, value) {
         bannerState[key] = value;
     }
 }
-// ════════════════════════════════════════
-// END BANNER SYSTEM
-// ════════════════════════════════════════
 
 const log = {
     info: (msg) => console.log(` ✦ ${msg}`),
@@ -688,6 +682,16 @@ app.use(express.json());
 const pairRequests = new Map();
 const PAIR_RATE_LIMIT = 60000;
 
+// ✅ FIX: Route ya nyumbani — inaondoa "Cannot GET /"
+app.get('/', (req, res) => {
+    res.json({
+        status: 'ok',
+        message: '⚡ 26-TECH Bot API iko online',
+        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
+        uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
+    });
+});
+
 app.post('/pair', async (req, res) => {
     try {
         const { number } = req.body;
@@ -701,7 +705,6 @@ app.post('/pair', async (req, res) => {
 
         const cleanNumber = number.trim();
 
-        // ✅ Zuia nambari ya bot yenyewe
         if (cleanNumber === PHONE_NUMBER) {
             return res.status(400).json({
                 success: false,
@@ -752,9 +755,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     log.success(`⚡ Pairing API iko live → Port ${PORT}`);
 });
-// ════════════════════════════════════════
-// END EXPRESS PAIRING SERVER
-// ════════════════════════════════════════
 
 (async () => {
     try {
