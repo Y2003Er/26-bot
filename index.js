@@ -69,7 +69,7 @@ const PAIRING_DELAY = 5000;
 global.prefix = process.env.PREFIX || '.';
 
 // ════════════════════════════════════════
-// BANNER SYSTEM — Static, self-updating
+// BANNER SYSTEM — chapisha tu state ikibadilika kweli
 // ════════════════════════════════════════
 const C = {
     reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -92,11 +92,6 @@ const bannerState = {
     ai: process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime: Date.now(),
 };
-
-let _lastLineCount = 0;
-let _spinFrame = 0;
-let _pulseOn = true;
-const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 function getUptime() {
     const sec = Math.floor((Date.now() - bannerState.startTime) / 1000);
@@ -122,24 +117,20 @@ function ramBar(pct, width = 12) {
 
 function connectionLine() {
     const s = bannerState.connection;
-    if (s === 'ONLINE') {
-        _pulseOn = !_pulseOn;
-        return `${C.greenBright}${C.bold}${_pulseOn ? '●' : '○'} ONLINE${C.reset}`;
-    }
-    if (s === 'connecting' || s === 'close' || s === 'OFFLINE') {
-        return `${C.yellowBright}${SPIN[_spinFrame % SPIN.length]} Connecting...${C.reset}`;
-    }
+    if (s === 'ONLINE') return `${C.greenBright}${C.bold}● ONLINE${C.reset}`;
+    if (s === 'connecting' || s === 'close' || s === 'OFFLINE') return `${C.yellowBright}◌ Connecting...${C.reset}`;
     return `${C.redBright}● ${s}${C.reset}`;
 }
 
-function buildBannerLines() {
+// Banner — function ya kawaida, HAINA interval, HAINA cursor escape codes
+function printBanner() {
     const s = bannerState;
     const ram = getRAM();
     const dbVal = s.database.includes('✅')
         ? `${C.greenBright}● Connected${C.reset}`
-        : `${C.yellowBright}${SPIN[_spinFrame % SPIN.length]} Connecting...${C.reset}`;
+        : `${C.yellowBright}◌ Connecting...${C.reset}`;
 
-    return [
+    const lines = [
         `${C.cyanBright}╭─────────────────────────────────────────────╮${C.reset}`,
         `${C.cyanBright}│${C.reset}  ${C.bold}${C.yellowBright}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}  ${C.dim}up ${getUptime()}${C.reset}`,
         `${C.cyanBright}├─────────────────────────────────────────────┤${C.reset}`,
@@ -154,21 +145,8 @@ function buildBannerLines() {
         `${C.cyanBright}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
         `${C.cyanBright}╰─────────────────────────────────────────────╯${C.reset}`,
     ];
-}
-
-function renderBanner() {
-    const lines = buildBannerLines();
-    _spinFrame++;
-    if (_lastLineCount > 0) process.stdout.write(`\x1b[${_lastLineCount}A`);
-    lines.forEach(line => process.stdout.write(`\x1b[2K${line}\n`));
-    _lastLineCount = lines.length;
-}
-
-let _renderTimer = null;
-function startBannerRenderer() {
-    if (_renderTimer) return;
-    renderBanner();
-    _renderTimer = setInterval(renderBanner, 400);
+    lines.forEach(line => console.log(line));
+    console.log('');
 }
 
 function updateBanner(key, value) {
@@ -318,7 +296,7 @@ async function startBot() {
         await loadCommands();
         const cmdCount = global.allCommands?.size || 0;
         updateBanner('commands', `${cmdCount} loaded`);
-        startBannerRenderer();
+        printBanner();
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
         const isRegistered = !!(state.creds?.me || state.creds?.account || state.creds?.registered);
@@ -450,6 +428,7 @@ async function startBot() {
                 }
 
                 log.success('BOT IMEUNGANIKA ✔');
+                printBanner();
 
                 isConnecting = false;
                 bootLock = false;
@@ -501,6 +480,7 @@ async function startBot() {
                 const source = isGroup ? 'Group' : 'DM';
                 updateBanner('messages', bannerState.messages);
                 updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
+                printBanner();
             }
 
             const botNumber = global.sock.user.id.replace(/:\d+@/, '@');
