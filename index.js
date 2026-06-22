@@ -87,9 +87,38 @@ const bannerState = {
     lastMsg: '—',
     lastSource: '—',
     lastTime: '—',
+    ping: '—',
+    restarts: 0,
     ai: process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime: Date.now(),
 };
+
+// ── Pulse Animation ──
+let pulseState = 0;
+const pulseFrames = [
+    `\x1b[92m\x1b[1m●\x1b[0m`,
+    `\x1b[32m●\x1b[0m`,
+    `\x1b[92m\x1b[1m●\x1b[0m`,
+    `\x1b[32m\x1b[2m●\x1b[0m`,
+];
+let pulseTimer = null;
+
+function startPulse() {
+    if (pulseTimer) clearInterval(pulseTimer);
+    pulseTimer = setInterval(() => {
+        if (bannerState.connection !== 'ONLINE') {
+            stopPulse();
+            return;
+        }
+        pulseState = (pulseState + 1) % pulseFrames.length;
+    }, 600);
+}
+
+function stopPulse() {
+    if (pulseTimer) clearInterval(pulseTimer);
+    pulseTimer = null;
+    pulseState = 0;
+}
 
 function getUptime() {
     const sec = Math.floor((Date.now() - bannerState.startTime) / 1000);
@@ -102,10 +131,11 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used = (os.totalmem() - os.freemem()) / 1024 / 1024;
-    const total = os.totalmem() / 1024 / 1024;
+    const mem = process.memoryUsage();
+    const used = mem.heapUsed / 1024 / 1024;
+    const total = mem.heapTotal / 1024 / 1024;
     const pct = (used / total) * 100;
-    return { used: used.toFixed(0), total: total.toFixed(0), pct };
+    return { used: used.toFixed(1), total: total.toFixed(1), pct };
 }
 
 function getCPU() {
@@ -118,6 +148,19 @@ function getCPU() {
     return avg.toFixed(1);
 }
 
+async function measurePing() {
+    const start = Date.now();
+    try {
+        if (global.sock?.ws?.readyState === 1) {
+            await global.sock.sendPresenceUpdate('available');
+            return Date.now() - start;
+        }
+        return '—';
+    } catch {
+        return '—';
+    }
+}
+
 function makeBar(pct, width = 10) {
     const filled = Math.round((pct / 100) * width);
     const empty = width - filled;
@@ -127,10 +170,10 @@ function makeBar(pct, width = 10) {
 
 function connectionLine() {
     const s = bannerState.connection;
-    if (s === 'ONLINE')      return `${C.greenBright}${C.bold}● ONLINE${C.reset}`;
-    if (s === 'connecting')  return `${C.yellowBright}◌ CONNECTING${C.reset}`;
-    if (s === 'OFFLINE')     return `${C.redBright}✖ OFFLINE${C.reset}`;
-    return                          `${C.magentaBright}◈ MAINTENANCE${C.reset}`;
+    if (s === 'ONLINE')     return `${pulseFrames[pulseState]} ${C.greenBright}${C.bold}ONLINE${C.reset}`;
+    if (s === 'connecting') return `${C.yellowBright}◌ CONNECTING${C.reset}`;
+    if (s === 'OFFLINE')    return `${C.redBright}✖ OFFLINE${C.reset}`;
+    return                         `${C.magentaBright}◈ MAINTENANCE${C.reset}`;
 }
 
 function databaseLine() {
@@ -140,30 +183,18 @@ function databaseLine() {
     return                       `${C.redBright}✖ Disconnected${C.reset}`;
 }
 
-function pad(str, len) {
-    // Strip ANSI codes for length calculation
-    const plain = str.replace(/\x1b\[[0-9;]*m/g, '');
-    const spaces = Math.max(0, len - plain.length);
-    return str + ' '.repeat(spaces);
-}
-
 function printBanner() {
     const s = bannerState;
     const ram = getRAM();
     const cpu = parseFloat(getCPU());
-    const W = 45; // inner width
+    const W = 45;
 
-    const border  = `${C.cyanBright}`;
-    const pipe    = `${C.cyanBright}┃${C.reset}`;
-    const sep     = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
+    const pipe  = `${C.cyanBright}┃${C.reset}`;
+    const topB  = `${C.cyanBright}╭${'━'.repeat(W)}╮${C.reset}`;
+    const botB  = `${C.cyanBright}╰${'━'.repeat(W)}╯${C.reset}`;
+    const sep   = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
 
-    const row = (label, value) => {
-        const labelStr = `${C.bold}${C.white}${label}${C.reset}`;
-        const plainLabel = label;
-        const plainValue = value.replace(/\x1b\[[0-9;]*m/g, '');
-        const gap = W - plainLabel.length - plainValue.length - 4;
-        return `${pipe}  ${labelStr}  ${value}${' '.repeat(Math.max(0, gap))} ${pipe}`;
-    };
+    const blank = `${pipe}${' '.repeat(W)}${pipe}`;
 
     const center = (text) => {
         const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
@@ -173,59 +204,77 @@ function printBanner() {
         return `${pipe}${' '.repeat(left)}${text}${' '.repeat(right)}${pipe}`;
     };
 
-    const blank = `${pipe}${' '.repeat(W)}${pipe}`;
+    const row = (emoji, label, value) => {
+        const plainValue = value.replace(/\x1b\[[0-9;]*m/g, '');
+        const lineContent = `  ${emoji} ${C.bold}${C.white}${label}${C.reset}  ${value}`;
+        const plainLine = `  ${emoji} ${label}  ${plainValue}`;
+        const pad = Math.max(0, W - plainLine.length - 1);
+        return `${pipe}${lineContent}${' '.repeat(pad)}${pipe}`;
+    };
 
-    const ramBar   = makeBar(ram.pct);
-    const ramBarPlain = '▰'.repeat(Math.round((ram.pct/100)*10)) + '▱'.repeat(10 - Math.round((ram.pct/100)*10));
-    const ramLine  = `  ${ramBar}  ${C.blueBright}${ram.pct.toFixed(0)}%${C.reset}`;
-    const ramInfo  = `  ${C.dim}${ram.used} MB / ${ram.total} MB${C.reset}`;
+    const sectionHeader = (icon, title) => {
+        const text = `${icon} ${C.bold}${C.cyanBright}${title}${C.reset}`;
+        const plain = `${icon} ${title}`;
+        const pad = Math.max(0, W - plain.length - 2);
+        return `${pipe}  ${text}${' '.repeat(pad)}${pipe}`;
+    };
 
-    const cpuBar   = makeBar(cpu);
-    const cpuLine  = `  ${cpuBar}  ${C.blueBright}${cpu}%${C.reset}`;
+    const ramBar  = makeBar(ram.pct);
+    const cpuBar  = makeBar(cpu);
 
-    const lines = [
-        `${border}╭${'━'.repeat(W)}╮${C.reset}`,
-        blank,
-        center(`${C.yellowBright}${C.bold}⚡ 26-𝐓𝐄𝐂𝐇  𝐁𝐎𝐓${C.reset}`),
-        center(`${C.dim}◈  Advanced AI System Monitor  ◈${C.reset}`),
-        blank,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        `${pipe}  ${C.bold}${C.cyanBright}◉ SYSTEM STATUS${C.reset}${' '.repeat(W - 17)}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        row('🟢 Connection ', connectionLine()),
-        row('🗄️  Database  ', databaseLine()),
-        row('⏱️  Uptime    ', `${C.greenBright}${getUptime()}${C.reset}`),
-        row('📡 Ping       ', `${C.yellowBright}— ms${C.reset}`),
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        `${pipe}  ${C.bold}${C.cyanBright}◈ BOT STATISTICS${C.reset}${' '.repeat(W - 18)}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        row('⚙️  Commands  ', `${C.greenBright}${s.commands}${C.reset}`),
-        row('💬 Messages   ', `${C.white}${s.messages} total${C.reset}`),
-        row('👥 Groups     ', `${C.white}${s.groups} active${C.reset}`),
-        row('🤖 AI Engine  ', `${C.magentaBright}${s.ai}${C.reset}`),
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        `${pipe}  ${C.bold}${C.cyanBright}◈ RESOURCE MONITOR${C.reset}${' '.repeat(W - 20)}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        `${pipe}  ${C.bold}🧠 RAM Usage${C.reset}${' '.repeat(W - 13)}${pipe}`,
-        `${pipe}${ramLine}${' '.repeat(Math.max(0, W - 18))}${pipe}`,
-        `${pipe}${ramInfo}${' '.repeat(Math.max(0, W - ram.used.length - ram.total.length - 10))}${pipe}`,
-        blank,
-        `${pipe}  ${C.bold}⚡ CPU Usage${C.reset}${' '.repeat(W - 13)}${pipe}`,
-        `${pipe}${cpuLine}${' '.repeat(Math.max(0, W - 18))}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        `${pipe}  ${C.bold}${C.cyanBright}◈ LAST ACTIVITY${C.reset}${' '.repeat(W - 17)}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        row('📨 Source     ', `${C.white}${s.lastSource}${C.reset}`),
-        row('🕐 Time       ', `${C.white}${s.lastTime}${C.reset}`),
-        `${pipe}  ${C.dim}💭 "${s.lastMsg.slice(0, 35)}${s.lastMsg.length > 35 ? '...' : ''}"${C.reset}${' '.repeat(Math.max(0, W - s.lastMsg.slice(0,35).length - 7))}${pipe}`,
-        `${border}├${'─'.repeat(W)}┤${C.reset}`,
-        center(`${C.dim}⚡ Powered by 26-TECH AI Infrastructure${C.reset}`),
-        center(`${C.gray}◈ v2.6.0  •  2026 Edition  •  🔒 SEC${C.reset}`),
-        `${border}╰${'━'.repeat(W)}╯${C.reset}`,
-    ];
+    const ramBarLine = `  ${ramBar}  ${C.blueBright}${ram.pct.toFixed(0)}%${C.reset}`;
+    const ramBarPlain = `  ${'▰'.repeat(10)}  ${ram.pct.toFixed(0)}%`;
+
+    const cpuBarLine = `  ${cpuBar}  ${C.blueBright}${cpu}%${C.reset}`;
+    const cpuBarPlain = `  ${'▰'.repeat(10)}  ${cpu}%`;
+
+    const ramInfoLine = `  ${C.dim}${ram.used} MB / ${ram.total} MB${C.reset}`;
+    const ramInfoPlain = `  ${ram.used} MB / ${ram.total} MB`;
+
+    const lastMsgTxt = s.lastMsg.slice(0, 32);
+    const lastMsgLine = `  ${C.dim}💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"${C.reset}`;
+    const lastMsgPlain = `  💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"`;
 
     console.log('');
-    lines.forEach(line => console.log(line));
+    console.log(topB);
+    console.log(blank);
+    console.log(center(`${C.yellowBright}${C.bold}⚡ 26-𝐓𝐄𝐂𝐇  𝐁𝐎𝐓${C.reset}`));
+    console.log(center(`${C.dim}◈  Advanced AI System Monitor  ◈${C.reset}`));
+    console.log(blank);
+    console.log(sep);
+    console.log(sectionHeader('◉', 'SYSTEM STATUS'));
+    console.log(sep);
+    console.log(row('🟢', 'Connection ', connectionLine()));
+    console.log(row('🗄️ ', 'Database   ', databaseLine()));
+    console.log(row('⏱️ ', 'Uptime     ', `${C.greenBright}${getUptime()}${C.reset}`));
+    console.log(row('📡', 'Ping       ', `${C.yellowBright}${s.ping}${typeof s.ping === 'number' ? ' ms' : ''}${C.reset}`));
+    console.log(row('🔄', 'Restarts   ', `${C.white}${s.restarts}x${C.reset}`));
+    console.log(sep);
+    console.log(sectionHeader('◈', 'BOT STATISTICS'));
+    console.log(sep);
+    console.log(row('⚙️ ', 'Commands   ', `${C.greenBright}${s.commands}${C.reset}`));
+    console.log(row('💬', 'Messages   ', `${C.white}${s.messages} total${C.reset}`));
+    console.log(row('👥', 'Groups     ', `${C.white}${s.groups} active${C.reset}`));
+    console.log(row('🤖', 'AI Engine  ', `${C.magentaBright}${s.ai}${C.reset}`));
+    console.log(sep);
+    console.log(sectionHeader('◈', 'RESOURCE MONITOR'));
+    console.log(sep);
+    console.log(`${pipe}  ${C.bold}🧠 RAM Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
+    console.log(`${pipe}${ramBarLine}${' '.repeat(Math.max(0, W - ramBarPlain.length))}${pipe}`);
+    console.log(`${pipe}${ramInfoLine}${' '.repeat(Math.max(0, W - ramInfoPlain.length))}${pipe}`);
+    console.log(blank);
+    console.log(`${pipe}  ${C.bold}⚡ CPU Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
+    console.log(`${pipe}${cpuBarLine}${' '.repeat(Math.max(0, W - cpuBarPlain.length))}${pipe}`);
+    console.log(sep);
+    console.log(sectionHeader('◈', 'LAST ACTIVITY'));
+    console.log(sep);
+    console.log(row('📨', 'Source     ', `${C.white}${s.lastSource}${C.reset}`));
+    console.log(row('🕐', 'Time       ', `${C.white}${s.lastTime}${C.reset}`));
+    console.log(`${pipe}${lastMsgLine}${' '.repeat(Math.max(0, W - lastMsgPlain.length))}${pipe}`);
+    console.log(sep);
+    console.log(center(`${C.dim}⚡ Powered by 26-TECH AI Infrastructure${C.reset}`));
+    console.log(center(`${C.gray}◈ v2.6.0  •  2026 Edition  •  🔒 SEC${C.reset}`));
+    console.log(botB);
     console.log('');
 }
 
@@ -306,6 +355,7 @@ function clearBackgroundTimers() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     if (keepaliveTimer) clearInterval(keepaliveTimer);
     if (cacheCleanTimer) clearInterval(cacheCleanTimer);
+    stopPulse();
     healthCheckTimer = keepaliveTimer = cacheCleanTimer = null;
 }
 
@@ -355,6 +405,10 @@ function startKeepalive() {
                 await global.sock.sendPresenceUpdate('available');
                 await global.sock.sendPresenceUpdate('unavailable');
                 lastEventTime = Date.now();
+
+                // Update ping kila keepalive
+                const ping = await measurePing();
+                updateBanner('ping', ping);
             }
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
@@ -480,9 +534,15 @@ async function startBot() {
                 pairingDone = true;
                 pairingRequested = true;
                 updateBanner('connection', 'ONLINE');
+                updateBanner('restarts', bannerState.restarts + 1);
 
                 resolveOwnerLid(global.sock);
                 global.owner = process.env.OWNER_NUMBER || "255753495142";
+
+                // Pima ping mara tu baada ya kuunganika
+                measurePing().then(ms => {
+                    updateBanner('ping', ms);
+                });
 
                 await Promise.allSettled([
                     global.sock.groupFetchAllParticipating().then(groups => {
@@ -496,7 +556,8 @@ async function startBot() {
                 startHealthCheck();
                 startKeepalive();
                 startCacheCleanup();
-                log.success('⚡ Health Check + Keepalive + Cache Cleanup — Zimeanzishwa');
+                startPulse();
+                log.success('⚡ Health Check + Keepalive + Cache Cleanup + Pulse — Zimeanzishwa');
 
                 try {
                     const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
@@ -520,6 +581,7 @@ async function startBot() {
                 isConnecting = false;
                 bootLock = false;
                 updateBanner('connection', 'OFFLINE');
+                updateBanner('ping', '—');
 
                 log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
@@ -552,30 +614,31 @@ async function startBot() {
             chatMessagesCache.set(jid, currentChatHistory);
 
             bannerState.messages++;
-            if (bannerState.messages % 10 === 0) {
-                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
-                const isGroup = jid.endsWith('@g.us');
-                const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                const source = isGroup ? '👥 Group' : '💬 DM';
-                updateBanner('messages', bannerState.messages);
-                updateBanner('lastMsg', text.slice(0, 35));
-                updateBanner('lastSource', source);
-                updateBanner('lastTime', time);
+            const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
+            const isGroup = jid.endsWith('@g.us');
+            const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const source = isGroup ? '👥 Group' : '💬 DM';
+            updateBanner('messages', bannerState.messages);
+            updateBanner('lastMsg', text.slice(0, 35));
+            updateBanner('lastSource', source);
+            updateBanner('lastTime', time);
+
+            if (bannerState.messages % 5 === 0) {
                 printBanner();
             }
 
             const botNumber = global.sock.user.id.replace(/:\d+@/, '@');
             const sender = msg.key.participant || jid;
-            const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-            const isMentioned = text.toLowerCase().includes('26-tech') ||
+            const textRaw = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+            const isMentioned = textRaw.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
             if (isMentioned && !msg.key.fromMe) {
                 if (!aiCache.has(sender)) {
                     aiCache.set(sender, true);
-                    if (!text.startsWith(global.prefix)) {
-                        if (msg.message.conversation) msg.message.conversation = `${global.prefix}ai ${text}`;
-                        else if (msg.message.extendedTextMessage) msg.message.extendedTextMessage.text = `${global.prefix}ai ${text}`;
+                    if (!textRaw.startsWith(global.prefix)) {
+                        if (msg.message.conversation) msg.message.conversation = `${global.prefix}ai ${textRaw}`;
+                        else if (msg.message.extendedTextMessage) msg.message.extendedTextMessage.text = `${global.prefix}ai ${textRaw}`;
                     }
                 }
             }
