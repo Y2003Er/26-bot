@@ -61,29 +61,42 @@ const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 const processedMessages = new NodeCache({ stdTTL: 120, checkperiod: 60 });
 
-const logger = pino({ level: process.env.DEBUG? 'info' : 'silent' });
+const logger = pino({ level: process.env.DEBUG ? 'info' : 'silent' });
 const PHONE_NUMBER = process.env.PHONE_NUMBER?.trim();
 const SESSION_ID = process.env.SESSION_ID || '26_tech_v5';
 const PAIRING_DELAY = 5000;
 
 global.prefix = process.env.PREFIX || '.';
 
+// ════════════════════════════════════════
+// BANNER SYSTEM — Static, self-updating
+// ════════════════════════════════════════
 const C = {
-    reset: '\x1b[0m', bold: '\x1b[1m', cyan: '\x1b[36m', green: '\x1b[32m',
-    yellow: '\x1b[33m', red: '\x1b[31m', gray: '\x1b[90m', white: '\x1b[97m',
-    blue: '\x1b[34m', magenta: '\x1b[35m',
+    reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
+    cyan: '\x1b[36m', cyanBright: '\x1b[96m',
+    green: '\x1b[32m', greenBright: '\x1b[92m',
+    yellow: '\x1b[33m', yellowBright: '\x1b[93m',
+    red: '\x1b[31m', redBright: '\x1b[91m',
+    gray: '\x1b[90m', white: '\x1b[97m',
+    blue: '\x1b[34m', blueBright: '\x1b[94m',
+    magenta: '\x1b[35m', magentaBright: '\x1b[95m',
 };
 
 const bannerState = {
-    connection: '⏳ Starting...',
+    connection: 'connecting',
     database: '⏳ Connecting...',
     commands: '0 loaded',
     messages: 0,
     groups: 0,
     lastMsg: '—',
-    ai: process.env.GROQ_API_KEY? 'Groq + Gemini' : process.env.GEMINI_API_KEY? 'Gemini' : '—',
+    ai: process.env.GROQ_API_KEY ? 'Groq + Gemini' : process.env.GEMINI_API_KEY ? 'Gemini' : '—',
     startTime: Date.now(),
 };
+
+let _lastLineCount = 0;
+let _spinFrame = 0;
+let _pulseOn = true;
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 function getUptime() {
     const sec = Math.floor((Date.now() - bannerState.startTime) / 1000);
@@ -96,43 +109,76 @@ function getUptime() {
 }
 
 function getRAM() {
-    const used = ((os.totalmem() - os.freemem()) / 1024 / 1024).toFixed(0);
-    const total = (os.totalmem() / 1024 / 1024).toFixed(0);
-    return `${used}/${total} MB`;
+    const used = (os.totalmem() - os.freemem()) / 1024 / 1024;
+    const total = os.totalmem() / 1024 / 1024;
+    return { used: used.toFixed(0), total: total.toFixed(0), pct: (used / total) * 100 };
 }
 
-function printBanner() {
+function ramBar(pct, width = 12) {
+    const filled = Math.round((pct / 100) * width);
+    const color = pct > 85 ? C.redBright : pct > 60 ? C.yellowBright : C.greenBright;
+    return `${color}${'━'.repeat(filled)}${C.gray}${'━'.repeat(width - filled)}${C.reset}`;
+}
+
+function connectionLine() {
+    const s = bannerState.connection;
+    if (s === 'ONLINE') {
+        _pulseOn = !_pulseOn;
+        return `${C.greenBright}${C.bold}${_pulseOn ? '●' : '○'} ONLINE${C.reset}`;
+    }
+    if (s === 'connecting' || s === 'close' || s === 'OFFLINE') {
+        return `${C.yellowBright}${SPIN[_spinFrame % SPIN.length]} Connecting...${C.reset}`;
+    }
+    return `${C.redBright}● ${s}${C.reset}`;
+}
+
+function buildBannerLines() {
     const s = bannerState;
-    const connVal = s.connection === 'ONLINE'
-       ? `${C.green}${C.bold}🟢 ONLINE${C.reset}`
-        : `${C.yellow}${s.connection}${C.reset}`;
+    const ram = getRAM();
     const dbVal = s.database.includes('✅')
-       ? `${C.green}✅ Connected ${C.reset}`
-        : `${C.yellow}${s.database}${C.reset}`;
-    const lines = [
-        `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}${C.yellow}⚡ 26-𝐓𝐄𝐂𝐇${C.reset} ${C.gray}uptime: ${getUptime()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}◈ Connection ${C.reset} → ${connVal}`,
-        `${C.cyan}│${C.reset} ${C.bold}🗄️ Database ${C.reset} → ${dbVal}`,
-        `${C.cyan}│${C.reset} ${C.bold}⚡ Commands ${C.reset} → ${C.green}${s.commands}${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}📨 Messages ${C.reset} → ${C.white}${s.messages}${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}👥 Groups ${C.reset} → ${C.white}${s.groups}${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}🤖 AI ${C.reset} → ${C.magenta}${s.ai}${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.bold}💾 RAM ${C.reset} → ${C.blue}${getRAM()}${C.reset}`,
-        `${C.cyan}├─────────────────────────────────────────────┤${C.reset}`,
-        `${C.cyan}│${C.reset} ${C.gray}Last: ${s.lastMsg}${C.reset}`,
-        `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
+        ? `${C.greenBright}● Connected${C.reset}`
+        : `${C.yellowBright}${SPIN[_spinFrame % SPIN.length]} Connecting...${C.reset}`;
+
+    return [
+        `${C.cyanBright}╭─────────────────────────────────────────────╮${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}${C.yellowBright}⚡ 26-𝐓𝐄𝐂𝐇${C.reset}  ${C.dim}up ${getUptime()}${C.reset}`,
+        `${C.cyanBright}├─────────────────────────────────────────────┤${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}Connection${C.reset}   ${connectionLine()}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}Database  ${C.reset}   ${dbVal}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}Commands  ${C.reset}   ${C.greenBright}${s.commands}${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}Messages  ${C.reset}   ${C.white}${s.messages}${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}Groups    ${C.reset}   ${C.white}${s.groups}${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}AI Engine ${C.reset}   ${C.magentaBright}${s.ai}${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.bold}RAM       ${C.reset}   ${ramBar(ram.pct)} ${C.blueBright}${ram.used}/${ram.total}MB${C.reset}`,
+        `${C.cyanBright}├─────────────────────────────────────────────┤${C.reset}`,
+        `${C.cyanBright}│${C.reset}  ${C.gray}Last: ${s.lastMsg}${C.reset}`,
+        `${C.cyanBright}╰─────────────────────────────────────────────╯${C.reset}`,
     ];
-    lines.forEach(line => console.log(line));
-    console.log('');
+}
+
+function renderBanner() {
+    const lines = buildBannerLines();
+    _spinFrame++;
+    if (_lastLineCount > 0) process.stdout.write(`\x1b[${_lastLineCount}A`);
+    lines.forEach(line => process.stdout.write(`\x1b[2K${line}\n`));
+    _lastLineCount = lines.length;
+}
+
+let _renderTimer = null;
+function startBannerRenderer() {
+    if (_renderTimer) return;
+    renderBanner();
+    _renderTimer = setInterval(renderBanner, 400);
 }
 
 function updateBanner(key, value) {
-    if (value!== null && value!== undefined && key in bannerState) {
+    if (value !== null && value !== undefined && key in bannerState) {
         bannerState[key] = value;
     }
 }
+// ════════════════════════════════════════
+// END BANNER SYSTEM
+// ════════════════════════════════════════
 
 const log = {
     info: (msg) => console.log(` ✦ ${msg}`),
@@ -161,7 +207,7 @@ global.isSockReady = () => global.sock?.ws && global.sock.ws.readyState === 1;
 function resolveOwnerLid(sock) {
     let lid = sock.user?.lid || sock.authState?.creds?.me?.lid;
     if (lid) {
-        const fullLid = lid.endsWith('@lid')? lid : `${lid}@lid`;
+        const fullLid = lid.endsWith('@lid') ? lid : `${lid}@lid`;
         global.ownerLid = fullLid;
         log.success(`Owner LID imesetiwa: ${fullLid}`);
         return fullLid;
@@ -173,7 +219,7 @@ if (!process.env.DATABASE_URL) {
     log.error('DATABASE_URL haipo — Bot imesimama.');
     process.exit(1);
 }
-if (!PHONE_NUMBER ||!/^\d{10,15}$/.test(PHONE_NUMBER)) {
+if (!PHONE_NUMBER || !/^\d{10,15}$/.test(PHONE_NUMBER)) {
     log.error('PHONE_NUMBER si sahihi (mfano: 255753495142)');
     process.exit(1);
 }
@@ -272,10 +318,10 @@ async function startBot() {
         await loadCommands();
         const cmdCount = global.allCommands?.size || 0;
         updateBanner('commands', `${cmdCount} loaded`);
-        printBanner();
+        startBannerRenderer();
 
         const { state, saveCreds } = await usePostgresAuthState(SESSION_ID);
-        const isRegistered =!!(state.creds?.me || state.creds?.account || state.creds?.registered);
+        const isRegistered = !!(state.creds?.me || state.creds?.account || state.creds?.registered);
 
         if (isRegistered) {
             log.success('✅ DATABASE CHECK: Session ipo hai. Amri zote za pairing zimefungwa.');
@@ -345,11 +391,11 @@ async function startBot() {
             const { connection, lastDisconnect } = update;
 
             if (connection) {
-                updateBanner('connection', connection === 'open'? 'ONLINE' : connection);
+                updateBanner('connection', connection === 'open' ? 'ONLINE' : connection);
                 log.state(`Connection → ${connection}`);
             }
 
-            if (connection === 'connecting' &&!isRegistered &&!pairingRequested &&!pairingDone) {
+            if (connection === 'connecting' && !isRegistered && !pairingRequested && !pairingDone) {
                 pairingRequested = true;
                 log.info(`Subiri sekunde ${PAIRING_DELAY / 1000} kabla ya kuomba pairing code...`);
                 setTimeout(async () => {
@@ -404,7 +450,6 @@ async function startBot() {
                 }
 
                 log.success('BOT IMEUNGANIKA ✔');
-                printBanner();
 
                 isConnecting = false;
                 bootLock = false;
@@ -418,11 +463,11 @@ async function startBot() {
                 bootLock = false;
                 updateBanner('connection', 'OFFLINE');
 
-                log.error(`Muunganiko Umevunjika → [${code?? '?'}]`);
+                log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
 
                 if (code === 440) {
                     consecutiveConflicts++;
-                    const waitMs = consecutiveConflicts >= MAX_CONFLICTS? 60000 : 15000;
+                    const waitMs = consecutiveConflicts >= MAX_CONFLICTS ? 60000 : 15000;
                     log.warn(`⚠️ Session conflict (${consecutiveConflicts}/${MAX_CONFLICTS}) — kusubiri ${waitMs / 1000}s...`);
                     if (consecutiveConflicts >= MAX_CONFLICTS) consecutiveConflicts = 0;
                     setTimeout(startBot, waitMs);
@@ -433,7 +478,7 @@ async function startBot() {
         });
 
         global.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-            if (type!== 'notify') return;
+            if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
 
@@ -453,10 +498,9 @@ async function startBot() {
                 const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
                 const isGroup = jid.endsWith('@g.us');
                 const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-                const source = isGroup? 'Group' : 'DM';
+                const source = isGroup ? 'Group' : 'DM';
                 updateBanner('messages', bannerState.messages);
-                updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25? '...' : ''}`);
-                printBanner();
+                updateBanner('lastMsg', `${time} · ${source} · ${text.slice(0, 25)}${text.length > 25 ? '...' : ''}`);
             }
 
             const botNumber = global.sock.user.id.replace(/:\d+@/, '@');
@@ -465,7 +509,7 @@ async function startBot() {
             const isMentioned = text.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
-            if (isMentioned &&!msg.key.fromMe) {
+            if (isMentioned && !msg.key.fromMe) {
                 if (!aiCache.has(sender)) {
                     aiCache.set(sender, true);
                     if (!text.startsWith(global.prefix)) {
