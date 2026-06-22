@@ -16,6 +16,8 @@ process.on('uncaughtException', (err) => {
 import os from 'os';
 import pino from 'pino';
 import NodeCache from 'node-cache';
+import express from 'express';
+import cors from 'cors';
 import {
     default as makeWASocket,
     DisconnectReason,
@@ -93,7 +95,6 @@ const bannerState = {
     startTime: Date.now(),
 };
 
-// ── Pulse Animation ──
 let pulseState = 0;
 const pulseFrames = [
     `\x1b[92m\x1b[1m●\x1b[0m`,
@@ -133,7 +134,7 @@ function getUptime() {
 function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
-    const total = mem.heapTotal / 1024 / 1024;
+                const total = mem.heapTotal / 1024 / 1024;
     const pct = (used / total) * 100;
     return { used: used.toFixed(1), total: total.toFixed(1), pct };
 }
@@ -193,7 +194,6 @@ function printBanner() {
     const topB  = `${C.cyanBright}╭${'━'.repeat(W)}╮${C.reset}`;
     const botB  = `${C.cyanBright}╰${'━'.repeat(W)}╯${C.reset}`;
     const sep   = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
-
     const blank = `${pipe}${' '.repeat(W)}${pipe}`;
 
     const center = (text) => {
@@ -405,8 +405,6 @@ function startKeepalive() {
                 await global.sock.sendPresenceUpdate('available');
                 await global.sock.sendPresenceUpdate('unavailable');
                 lastEventTime = Date.now();
-
-                // Update ping kila keepalive
                 const ping = await measurePing();
                 updateBanner('ping', ping);
             }
@@ -539,7 +537,6 @@ async function startBot() {
                 resolveOwnerLid(global.sock);
                 global.owner = process.env.OWNER_NUMBER || "255753495142";
 
-                // Pima ping mara tu baada ya kuunganika
                 measurePing().then(ms => {
                     updateBanner('ping', ms);
                 });
@@ -680,6 +677,83 @@ async function startBot() {
 }
 
 global.startBot = startBot;
+
+// ════════════════════════════════════════
+// EXPRESS PAIRING SERVER — 26-TECH v1.0
+// ════════════════════════════════════════
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Rate limiting — kuzuia abuse
+const pairRequests = new Map();
+const PAIR_RATE_LIMIT = 60000; // 1 dakika kati ya requests
+
+app.post('/pair', async (req, res) => {
+    try {
+        const { number } = req.body;
+
+        // Validate number
+        if (!number || !/^\d{10,15}$/.test(number.trim())) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Nambari si sahihi. Tumia format: 255712345678' 
+            });
+        }
+
+        const cleanNumber = number.trim();
+
+        // Rate limiting per number
+        const lastRequest = pairRequests.get(cleanNumber);
+        if (lastRequest && (Date.now() - lastRequest) < PAIR_RATE_LIMIT) {
+            const wait = Math.ceil((PAIR_RATE_LIMIT - (Date.now() - lastRequest)) / 1000);
+            return res.status(429).json({ 
+                success: false, 
+                error: `Subiri sekunde ${wait} kabla ya kujaribu tena` 
+            });
+        }
+
+        // Hakikisha sock ipo ready
+        if (!global.sock || global.sock.ws?.readyState !== 1) {
+            return res.status(503).json({ 
+                success: false, 
+                error: 'Bot haiko ready. Jaribu tena baadaye' 
+            });
+        }
+
+        // Omba pairing code
+        const code = await global.sock.requestPairingCode(cleanNumber);
+        pairRequests.set(cleanNumber, Date.now());
+
+        log.success(`Pairing code imetolewa kwa: ${cleanNumber}`);
+
+        return res.json({ success: true, code });
+
+    } catch (err) {
+        log.error(`Pair API error: ${err.message}`);
+        return res.status(500).json({ 
+            success: false, 
+            error: 'Imeshindwa kupata code. Jaribu tena' 
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
+        uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    log.success(`⚡ Pairing API iko live → Port ${PORT}`);
+});
+// ════════════════════════════════════════
+// END EXPRESS PAIRING SERVER
+// ════════════════════════════════════════
 
 (async () => {
     try {
