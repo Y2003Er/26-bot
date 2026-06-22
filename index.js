@@ -134,7 +134,7 @@ function getUptime() {
 function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
-                const total = mem.heapTotal / 1024 / 1024;
+    const total = mem.heapTotal / 1024 / 1024;
     const pct = (used / total) * 100;
     return { used: used.toFixed(1), total: total.toFixed(1), pct };
 }
@@ -685,60 +685,61 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting — kuzuia abuse
 const pairRequests = new Map();
-const PAIR_RATE_LIMIT = 60000; // 1 dakika kati ya requests
+const PAIR_RATE_LIMIT = 60000;
 
 app.post('/pair', async (req, res) => {
     try {
         const { number } = req.body;
 
-        // Validate number
         if (!number || !/^\d{10,15}$/.test(number.trim())) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Nambari si sahihi. Tumia format: 255712345678' 
+            return res.status(400).json({
+                success: false,
+                error: 'Nambari si sahihi. Tumia format: 255712345678'
             });
         }
 
         const cleanNumber = number.trim();
 
-        // Rate limiting per number
+        // ✅ Zuia nambari ya bot yenyewe
+        if (cleanNumber === PHONE_NUMBER) {
+            return res.status(400).json({
+                success: false,
+                error: 'Nambari hii haiwezi kutumika kwa pairing'
+            });
+        }
+
         const lastRequest = pairRequests.get(cleanNumber);
         if (lastRequest && (Date.now() - lastRequest) < PAIR_RATE_LIMIT) {
             const wait = Math.ceil((PAIR_RATE_LIMIT - (Date.now() - lastRequest)) / 1000);
-            return res.status(429).json({ 
-                success: false, 
-                error: `Subiri sekunde ${wait} kabla ya kujaribu tena` 
+            return res.status(429).json({
+                success: false,
+                error: `Subiri sekunde ${wait} kabla ya kujaribu tena`
             });
         }
 
-        // Hakikisha sock ipo ready
         if (!global.sock || global.sock.ws?.readyState !== 1) {
-            return res.status(503).json({ 
-                success: false, 
-                error: 'Bot haiko ready. Jaribu tena baadaye' 
+            return res.status(503).json({
+                success: false,
+                error: 'Bot haiko ready. Jaribu tena baadaye'
             });
         }
 
-        // Omba pairing code
         const code = await global.sock.requestPairingCode(cleanNumber);
         pairRequests.set(cleanNumber, Date.now());
 
         log.success(`Pairing code imetolewa kwa: ${cleanNumber}`);
-
         return res.json({ success: true, code });
 
     } catch (err) {
         log.error(`Pair API error: ${err.message}`);
-        return res.status(500).json({ 
-            success: false, 
-            error: 'Imeshindwa kupata code. Jaribu tena' 
+        return res.status(500).json({
+            success: false,
+            error: 'Imeshindwa kupata code. Jaribu tena'
         });
     }
 });
 
-// Health check endpoint
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
