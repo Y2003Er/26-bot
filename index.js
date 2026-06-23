@@ -60,6 +60,20 @@ pairApp.use(cors());
 pairApp.use(express.json());
 pairApp.use(pairingRouter);
 
+// ─── HEALTH ENDPOINT ───────────────────────────────────────────────────────
+pairApp.get("/health", (req, res) => {
+    res.json({
+        status: "ok",
+        botName: "26-TECH BOT",
+        uptime: process.uptime(),
+        connection: bannerState.connection,
+        messages: bannerState.messages,
+        groups: bannerState.groups,
+        ping: bannerState.ping,
+    });
+});
+// ──────────────────────────────────────────────────────────────────────────
+
 const PORT = process.env.PORT || 8080;
 pairApp.listen(PORT, () => {
     log.success(`⚡ Pairing API imeanza kwenye port ${PORT}`);
