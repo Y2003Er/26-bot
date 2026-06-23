@@ -1,4 +1,4 @@
-// index.js - FIXED v4.4.2 by 26-TECH (Pairing API Integrated)
+// index.js - FIXED v4.4.3 by 26-TECH (Performance Fix)
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -43,7 +43,7 @@ import pg from 'pg';
 const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: 5,
+    max: 10, // ✅ 5 → 10
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
 });
@@ -60,7 +60,6 @@ pairApp.use(cors());
 pairApp.use(express.json());
 pairApp.use(pairingRouter);
 
-// ─── HEALTH ENDPOINT ───────────────────────────────────────────────────────
 pairApp.get("/health", (req, res) => {
     res.json({
         status: "ok",
@@ -72,12 +71,12 @@ pairApp.get("/health", (req, res) => {
         ping: bannerState.ping,
     });
 });
-// ──────────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 8080;
 pairApp.listen(PORT, () => {
-    log.success(`⚡ Pairing API imeanza kwenye port ${PORT}`);
+    console.log(` ✔ ⚡ Pairing API imeanza kwenye port ${PORT}`);
 });
+
 const aiCache = new NodeCache({ stdTTL: 60 });
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
@@ -194,7 +193,7 @@ function makeBar(pct, width = 10) {
 }
 
 function connectionLine() {
-    const s = bannerState;
+    const s = bannerState.connection;
     if (s === 'ONLINE') return `${pulseFrames[pulseState]} ${C.greenBright}${C.bold}ONLINE${C.reset}`;
     if (s === 'connecting') return `${C.yellowBright}◌ CONNECTING${C.reset}`;
     if (s === 'OFFLINE') return `${C.redBright}✖ OFFLINE${C.reset}`;
@@ -677,10 +676,14 @@ async function startBot() {
                 }
             };
 
-            await Promise.allSettled([
-                handleAntiLink(global.sock, msg, logger),
-                handleMessage(global.sock, msg, extra),
-            ]);
+            // ✅ setImmediate — message inashughulikiwa background
+            // Haizuii event loop — commands zingine zinaendelea haraka
+            setImmediate(async () => {
+                await Promise.allSettled([
+                    handleAntiLink(global.sock, msg, logger),
+                    handleMessage(global.sock, msg, extra),
+                ]);
+            });
         });
 
         openTimer = setTimeout(() => {
