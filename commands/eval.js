@@ -1932,7 +1932,7 @@ export async function execute(sock, msg, args) {
                 const procMsg = await sock.sendMessage(from, { text: '⏳ *Processing:* _Help_...' }, { quoted: msg });
                 try {
                     // ── FIXED: assets folder path ──
-                    const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
+                   const imagePath = path.join(__dirname, '../assets/eval.gif');
                     if (fs.existsSync(imagePath)) {
                         await sock.sendMessage(from, { image: fs.readFileSync(imagePath), caption: helpText, mentions: [msg.key.participant || msg.key.remoteJid] }, { quoted: msg });
                     } else {
