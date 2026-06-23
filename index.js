@@ -1,7 +1,4 @@
-// index.js - FIXED v4.4.1 by 26-TECH (Updated with Active Notification + Restart Fix)
-// Fix: Conditional Database Boot + Pairing Code Loop Deadlock Eliminated
-// Hotfix: UnhandledRejection handler + Keepalive 4min + DB Pool max + Cache TTL
-
+// index.js - FIXED v4.4.2 by 26-TECH (Pairing API Integrated)
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -40,6 +37,7 @@ import {
 
 import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
+import pairingRouter from './pairing.js';
 
 import pg from 'pg';
 const pool = new pg.Pool({
@@ -54,6 +52,18 @@ global.dbPool = pool;
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
 
+// ═══════════════════════════════
+// PAIRING API SERVER
+// ═══════════════════════════════
+const pairApp = express();
+pairApp.use(cors());
+pairApp.use(express.json());
+pairApp.use(pairingRouter);
+
+const PORT = process.env.PORT || 8080;
+pairApp.listen(PORT, () => {
+    log.success(`⚡ Pairing API imeanza kwenye port ${PORT}`);
+});
 const aiCache = new NodeCache({ stdTTL: 60 });
 const MAX_PER_CHAT = 20;
 const chatMessagesCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
@@ -66,6 +76,9 @@ const PAIRING_DELAY = 5000;
 
 global.prefix = process.env.PREFIX || '.';
 
+// ════════════════
+// BANNER SYSTEM — 26-TECH Premium Dashboard v2.6.0
+// ════════════════
 const C = {
     reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
     cyan: '\x1b[36m', cyanBright: '\x1b[96m',
@@ -167,18 +180,18 @@ function makeBar(pct, width = 10) {
 }
 
 function connectionLine() {
-    const s = bannerState.connection;
-    if (s === 'ONLINE')     return `${pulseFrames[pulseState]} ${C.greenBright}${C.bold}ONLINE${C.reset}`;
+    const s = bannerState;
+    if (s === 'ONLINE') return `${pulseFrames[pulseState]} ${C.greenBright}${C.bold}ONLINE${C.reset}`;
     if (s === 'connecting') return `${C.yellowBright}◌ CONNECTING${C.reset}`;
-    if (s === 'OFFLINE')    return `${C.redBright}✖ OFFLINE${C.reset}`;
-    return                         `${C.magentaBright}◈ MAINTENANCE${C.reset}`;
+    if (s === 'OFFLINE') return `${C.redBright}✖ OFFLINE${C.reset}`;
+    return `${C.magentaBright}◈ MAINTENANCE${C.reset}`;
 }
 
 function databaseLine() {
     const d = bannerState.database;
     if (d.includes('✅')) return `${C.greenBright}● Connected${C.reset}`;
     if (d.includes('⏳')) return `${C.yellowBright}◌ Connecting...${C.reset}`;
-    return                       `${C.redBright}✖ Disconnected${C.reset}`;
+    return `${C.redBright}✖ Disconnected${C.reset}`;
 }
 
 function printBanner() {
@@ -187,24 +200,24 @@ function printBanner() {
     const cpu = parseFloat(getCPU());
     const W = 45;
 
-    const pipe  = `${C.cyanBright}┃${C.reset}`;
-    const topB  = `${C.cyanBright}╭${'━'.repeat(W)}╮${C.reset}`;
-    const botB  = `${C.cyanBright}╰${'━'.repeat(W)}╯${C.reset}`;
-    const sep   = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
+    const pipe = `${C.cyanBright}┃${C.reset}`;
+    const topB = `${C.cyanBright}╭${'━'.repeat(W)}╮${C.reset}`;
+    const botB = `${C.cyanBright}╰${'━'.repeat(W)}╯${C.reset}`;
+    const sep = `${C.cyanBright}├${'─'.repeat(W)}┤${C.reset}`;
     const blank = `${pipe}${' '.repeat(W)}${pipe}`;
 
     const center = (text) => {
         const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
         const total = W - plain.length;
-        const left  = Math.floor(total / 2);
+        const left = Math.floor(total / 2);
         const right = total - left;
         return `${pipe}${' '.repeat(left)}${text}${' '.repeat(right)}${pipe}`;
     };
 
     const row = (emoji, label, value) => {
         const plainValue = value.replace(/\x1b\[[0-9;]*m/g, '');
-        const lineContent = `  ${emoji} ${C.bold}${C.white}${label}${C.reset}  ${value}`;
-        const plainLine = `  ${emoji} ${label}  ${plainValue}`;
+        const lineContent = ` ${emoji} ${C.bold}${C.white}${label}${C.reset} ${value}`;
+        const plainLine = ` ${emoji} ${label} ${plainValue}`;
         const pad = Math.max(0, W - plainLine.length - 1);
         return `${pipe}${lineContent}${' '.repeat(pad)}${pipe}`;
     };
@@ -213,64 +226,64 @@ function printBanner() {
         const text = `${icon} ${C.bold}${C.cyanBright}${title}${C.reset}`;
         const plain = `${icon} ${title}`;
         const pad = Math.max(0, W - plain.length - 2);
-        return `${pipe}  ${text}${' '.repeat(pad)}${pipe}`;
+        return `${pipe} ${text}${' '.repeat(pad)}${pipe}`;
     };
 
-    const ramBar  = makeBar(ram.pct);
-    const cpuBar  = makeBar(cpu);
+    const ramBar = makeBar(ram.pct);
+    const cpuBar = makeBar(cpu);
 
-    const ramBarLine = `  ${ramBar}  ${C.blueBright}${ram.pct.toFixed(0)}%${C.reset}`;
-    const ramBarPlain = `  ${'▰'.repeat(10)}  ${ram.pct.toFixed(0)}%`;
+    const ramBarLine = ` ${ramBar} ${C.blueBright}${ram.pct.toFixed(0)}%${C.reset}`;
+    const ramBarPlain = ` ${'▰'.repeat(10)} ${ram.pct.toFixed(0)}%`;
 
-    const cpuBarLine = `  ${cpuBar}  ${C.blueBright}${cpu}%${C.reset}`;
-    const cpuBarPlain = `  ${'▰'.repeat(10)}  ${cpu}%`;
+    const cpuBarLine = ` ${cpuBar} ${C.blueBright}${cpu}%${C.reset}`;
+    const cpuBarPlain = ` ${'▰'.repeat(10)} ${cpu}%`;
 
-    const ramInfoLine = `  ${C.dim}${ram.used} MB / ${ram.total} MB${C.reset}`;
-    const ramInfoPlain = `  ${ram.used} MB / ${ram.total} MB`;
+    const ramInfoLine = ` ${C.dim}${ram.used} MB / ${ram.total} MB${C.reset}`;
+    const ramInfoPlain = ` ${ram.used} MB / ${ram.total} MB`;
 
     const lastMsgTxt = s.lastMsg.slice(0, 32);
-    const lastMsgLine = `  ${C.dim}💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"${C.reset}`;
-    const lastMsgPlain = `  💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"`;
+    const lastMsgLine = ` ${C.dim}💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"${C.reset}`;
+    const lastMsgPlain = ` 💭 "${lastMsgTxt}${s.lastMsg.length > 32 ? '...' : ''}"`;
 
     console.log('');
     console.log(topB);
     console.log(blank);
-    console.log(center(`${C.yellowBright}${C.bold}⚡ 26-𝐓𝐄𝐂𝐇  𝐁𝐎𝐓${C.reset}`));
-    console.log(center(`${C.dim}◈  Advanced AI System Monitor  ◈${C.reset}`));
+    console.log(center(`${C.yellowBright}${C.bold}⚡ 26-𝐓𝐄𝐂𝐇 𝐁𝐎𝐓${C.reset}`));
+    console.log(center(`${C.dim}◈ Advanced AI System Monitor ◈${C.reset}`));
     console.log(blank);
     console.log(sep);
     console.log(sectionHeader('◉', 'SYSTEM STATUS'));
     console.log(sep);
     console.log(row('🟢', 'Connection ', connectionLine()));
-    console.log(row('🗄️ ', 'Database   ', databaseLine()));
-    console.log(row('⏱️ ', 'Uptime     ', `${C.greenBright}${getUptime()}${C.reset}`));
-    console.log(row('📡', 'Ping       ', `${C.yellowBright}${s.ping}${typeof s.ping === 'number' ? ' ms' : ''}${C.reset}`));
-    console.log(row('🔄', 'Restarts   ', `${C.white}${s.restarts}x${C.reset}`));
+    console.log(row('🗄️ ', 'Database ', databaseLine()));
+    console.log(row('⏱️ ', 'Uptime ', `${C.greenBright}${getUptime()}${C.reset}`));
+    console.log(row('📡', 'Ping ', `${C.yellowBright}${s.ping}${typeof s.ping === 'number' ? ' ms' : ''}${C.reset}`));
+    console.log(row('🔄', 'Restarts ', `${C.white}${s.restarts}x${C.reset}`));
     console.log(sep);
     console.log(sectionHeader('◈', 'BOT STATISTICS'));
     console.log(sep);
-    console.log(row('⚙️ ', 'Commands   ', `${C.greenBright}${s.commands}${C.reset}`));
-    console.log(row('💬', 'Messages   ', `${C.white}${s.messages} total${C.reset}`));
-    console.log(row('👥', 'Groups     ', `${C.white}${s.groups} active${C.reset}`));
-    console.log(row('🤖', 'AI Engine  ', `${C.magentaBright}${s.ai}${C.reset}`));
+    console.log(row('⚙️ ', 'Commands ', `${C.greenBright}${s.commands}${C.reset}`));
+    console.log(row('💬', 'Messages ', `${C.white}${s.messages} total${C.reset}`));
+    console.log(row('👥', 'Groups ', `${C.white}${s.groups} active${C.reset}`));
+    console.log(row('🤖', 'AI Engine ', `${C.magentaBright}${s.ai}${C.reset}`));
     console.log(sep);
     console.log(sectionHeader('◈', 'RESOURCE MONITOR'));
     console.log(sep);
-    console.log(`${pipe}  ${C.bold}🧠 RAM Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
+    console.log(`${pipe} ${C.bold}🧠 RAM Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
     console.log(`${pipe}${ramBarLine}${' '.repeat(Math.max(0, W - ramBarPlain.length))}${pipe}`);
     console.log(`${pipe}${ramInfoLine}${' '.repeat(Math.max(0, W - ramInfoPlain.length))}${pipe}`);
     console.log(blank);
-    console.log(`${pipe}  ${C.bold}⚡ CPU Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
+    console.log(`${pipe} ${C.bold}⚡ CPU Usage${C.reset}${' '.repeat(W - 13)}${pipe}`);
     console.log(`${pipe}${cpuBarLine}${' '.repeat(Math.max(0, W - cpuBarPlain.length))}${pipe}`);
     console.log(sep);
     console.log(sectionHeader('◈', 'LAST ACTIVITY'));
     console.log(sep);
-    console.log(row('📨', 'Source     ', `${C.white}${s.lastSource}${C.reset}`));
-    console.log(row('🕐', 'Time       ', `${C.white}${s.lastTime}${C.reset}`));
+    console.log(row('📨', 'Source ', `${C.white}${s.lastSource}${C.reset}`));
+    console.log(row('🕐', 'Time ', `${C.white}${s.lastTime}${C.reset}`));
     console.log(`${pipe}${lastMsgLine}${' '.repeat(Math.max(0, W - lastMsgPlain.length))}${pipe}`);
     console.log(sep);
     console.log(center(`${C.dim}⚡ Powered by 26-TECH AI Infrastructure${C.reset}`));
-    console.log(center(`${C.gray}◈ v2.6.0  •  2026 Edition  •  🔒 SEC${C.reset}`));
+    console.log(center(`${C.gray}◈ v2.6.0 • 2026 Edition • 🔒 SEC${C.reset}`));
     console.log(botB);
     console.log('');
 }
@@ -280,6 +293,9 @@ function updateBanner(key, value) {
         bannerState[key] = value;
     }
 }
+// ════════════════
+// END BANNER SYSTEM
+// ════════════════
 
 const log = {
     info: (msg) => console.log(` ✦ ${msg}`),
@@ -671,90 +687,6 @@ async function startBot() {
 }
 
 global.startBot = startBot;
-
-// ════════════════════════════════════════
-// EXPRESS PAIRING SERVER — 26-TECH v1.0
-// ════════════════════════════════════════
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const pairRequests = new Map();
-const PAIR_RATE_LIMIT = 60000;
-
-// ✅ FIX: Route ya nyumbani — inaondoa "Cannot GET /"
-app.get('/', (req, res) => {
-    res.json({
-        status: 'ok',
-        message: '⚡ 26-TECH Bot API iko online',
-        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
-        uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
-    });
-});
-
-app.post('/pair', async (req, res) => {
-    try {
-        const { number } = req.body;
-
-        if (!number || !/^\d{10,15}$/.test(number.trim())) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nambari si sahihi. Tumia format: 255712345678'
-            });
-        }
-
-        const cleanNumber = number.trim();
-
-        if (cleanNumber === PHONE_NUMBER) {
-            return res.status(400).json({
-                success: false,
-                error: 'Nambari hii haiwezi kutumika kwa pairing'
-            });
-        }
-
-        const lastRequest = pairRequests.get(cleanNumber);
-        if (lastRequest && (Date.now() - lastRequest) < PAIR_RATE_LIMIT) {
-            const wait = Math.ceil((PAIR_RATE_LIMIT - (Date.now() - lastRequest)) / 1000);
-            return res.status(429).json({
-                success: false,
-                error: `Subiri sekunde ${wait} kabla ya kujaribu tena`
-            });
-        }
-
-        if (!global.sock || global.sock.ws?.readyState !== 1) {
-            return res.status(503).json({
-                success: false,
-                error: 'Bot haiko ready. Jaribu tena baadaye'
-            });
-        }
-
-        const code = await global.sock.requestPairingCode(cleanNumber);
-        pairRequests.set(cleanNumber, Date.now());
-
-        log.success(`Pairing code imetolewa kwa: ${cleanNumber}`);
-        return res.json({ success: true, code });
-
-    } catch (err) {
-        log.error(`Pair API error: ${err.message}`);
-        return res.status(500).json({
-            success: false,
-            error: 'Imeshindwa kupata code. Jaribu tena'
-        });
-    }
-});
-
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
-        uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    log.success(`⚡ Pairing API iko live → Port ${PORT}`);
-});
 
 (async () => {
     try {
