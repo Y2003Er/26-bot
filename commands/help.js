@@ -125,7 +125,7 @@ export async function execute(sock, msg, args) {
   menuText += `_⚡ Powered by 26-𝚃𝙴𝙲𝙷_`;
 
   // ── 5. Tuma picha na menu ──
-  const imagePath = path.join(__dirname, '../bot_image.jpg');
+  const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
 
   if (fs.existsSync(imagePath)) {
     const imageBuffer = fs.readFileSync(imagePath);
