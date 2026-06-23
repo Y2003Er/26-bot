@@ -1,9 +1,10 @@
 /**
  * commands/facebook.js
- * Download video kutoka Facebook — Toleo la 26-TECH
+ * Download video kutoka Facebook — Inajitegemea (No External API)
  */
 
-import APIs from '../api.js';
+import axios from 'axios';
+import cheerio from 'cheerio';
 
 export const name        = 'facebook';
 export const description = 'Download video kutoka Facebook';
@@ -11,6 +12,34 @@ export const category    = 'media';
 export const use         = '<link ya video ya facebook>';
 export const alias       = ['fb', 'fbdl', 'onheza'];
 export const adminOnly   = false;
+
+function extractVideoFromHTML(html, url) {
+    const $ = cheerio.load(html);
+    
+    // 1. Tafuta kupitia meta tagi za Open Graph
+    let videoUrl = $('meta[property="og:video"]').attr('content');
+    let title    = $('meta[property="og:title"]').attr('content') || 'Facebook Video';
+
+    // 2. Kama hakuna, tafuta vyanzo vya video vya moja kwa moja (FB huzipachika hivi)
+    if (!videoUrl) {
+        // Tafuta HD kwanza
+        const hdMatch = html.match(/"hd_src":"(.*?)"/);
+        if (hdMatch) videoUrl = hdMatch[1];
+        
+        // Kama hakuna HD, tumia SD
+        if (!videoUrl) {
+            const sdMatch = html.match(/"sd_src":"(.*?)"/);
+            if (sdMatch) videoUrl = sdMatch[1];
+        }
+    }
+
+    // 3. Safisha URL (baadhi ya viungo huwa na escapement)
+    if (videoUrl) {
+        videoUrl = videoUrl.replace(/\\/g, '').replace(/&amp;/g, '&');
+    }
+
+    return { videoUrl, title };
+}
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
@@ -33,7 +62,20 @@ export async function execute(sock, msg, args) {
     }, { quoted: msg });
 
     try {
-        const { videoUrl, title } = await APIs.facebookDownload(url);
+        // Chukua HTML ya ukurasa kama kivinjari cha kawaida
+        const { data: html } = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5'
+            }
+        });
+
+        const { videoUrl, title } = extractVideoFromHTML(html, url);
+
+        if (!videoUrl) {
+            throw new Error('Video haipatikani. Inaweza kuwa ya faragha au kiungo si sahihi.');
+        }
 
         await sock.sendMessage(from, {
             video: { url: videoUrl },
