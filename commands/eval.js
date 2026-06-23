@@ -8,6 +8,8 @@
  *    killProcess 9/15 signals, multi-statement SQL protection,
  *    ReDoS protection improved
  * 🔧 RAILWAY: Changed endpoint to backboard.railway.com + Project-Access-Token
+ * 🔧 ASSETS: imagePath → ../assets/bot_image.jpg
+ * 🔧 CONFIRM: 1 = confirm, 0 = cancel
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -19,6 +21,10 @@ import path from 'path';
 import crypto from 'crypto';
 import zlib from 'zlib';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
 
 /* ── polyfills ── */
 let performance;
@@ -78,7 +84,6 @@ function getOwnersList() {
 
 function isOwner(msg, sock) {
     if (!msg || !sock) return false;
-    // #3: Removed early OWNER_NUMBER-only check — now supports all sources
     const isGroup = msg.key.remoteJid?.endsWith('@g.us');
     let senderJid = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
     if (!senderJid) return false;
@@ -116,7 +121,6 @@ function addToHistory(type, input, output, timeMs = 0) {
     };
     evalHistory.unshift(entry);
     if (evalHistory.length > MAX_HISTORY) evalHistory.pop();
-    // #2: Table now exists via ensureEvalHistoryTable()
     if (global.dbPool) {
         global.dbPool.query(
             'INSERT INTO eval_history (type, input, output) VALUES ($1, $2, $3)',
@@ -142,7 +146,6 @@ if (!global.evalVars)              global.evalVars              = new Map();
 if (!global.evalScheduledJobs)     global.evalScheduledJobs     = new Map();
 if (!global.evalReminders)         global.evalReminders         = new Map();
 if (!global.evalWatchers)          global.evalWatchers          = new Map();
-// encrypt key: validate length if from env
 if (process.env.EVAL_ENCRYPT_KEY) {
     const key = Buffer.from(process.env.EVAL_ENCRYPT_KEY, 'hex');
     if (key.length === 32) {
@@ -292,7 +295,7 @@ function registerConfirm(from, description, action, timeoutMs = 30000) {
     if (existing) clearTimeout(existing.timeoutId);
     const timeoutId = setTimeout(() => global.evalPendingConfirm.delete(from), timeoutMs);
     global.evalPendingConfirm.set(from, { description, action, timeoutId });
-    return `⚠️ *Thibitisho Inahitajika*\n\n*Hatua:* ${description}\n\n▸ \`.eval $confirm\` kuthibitisha\n▸ \`.eval $cancel\` kughairi\n\n_(Itatoweka baada ya sekunde 30)_`;
+    return `⚠️ *Thibitisho Inahitajika*\n\n*Hatua:* ${description}\n\n▸ \`.eval 1\` kuthibitisha\n▸ \`.eval 0\` kughairi\n\n_(Itatoweka baada ya sekunde 30)_`;
 }
 
 async function executeConfirm(from) {
@@ -349,7 +352,6 @@ function killProcess(pid, signal = 'SIGTERM') {
     const VALID = ['SIGTERM','SIGKILL','SIGINT','SIGHUP','SIGSTOP','SIGCONT','SIGUSR1','SIGUSR2','9','15'];
     let sig = signal.toUpperCase();
     if (!VALID.includes(sig)) return `❌ Signal isiyojulikana: ${sig}`;
-    // #6: Convert numeric strings to numbers for process.kill
     if (sig === '9') sig = 9;
     if (sig === '15') sig = 15;
     try { process.kill(pidNum, sig); return `✅ Signal ${sig} → PID ${pidNum}`; }
@@ -550,7 +552,6 @@ async function runDB(query) {
     try {
         const pool = global.dbPool;
         if (!pool) return '❌ Database pool haipatikani';
-        // #7: Stronger multi-statement + destructive prevention
         const dangerous = /;\s*(DROP|TRUNCATE|DELETE\s+FROM\s+\w+\s*(WHERE\s+1\s*=\s*1|;|$))/i;
         if (dangerous.test(query) || /;\s*$/.test(query.trim())) {
             return '🛡️ Multi-statement au destructive query imezuiwa kwa usalama';
@@ -630,7 +631,6 @@ async function dbExtended(subcommand, query) {
         }
         if (sub === 'explain') {
             if (!query) return '❓ $db explain <SQL>';
-            // #7: Stronger sanitization before EXPLAIN
             let cleanQuery = query.replace(/^\s*EXPLAIN(\s+ANALYZE)?\s*/i, '').trim();
             if (/;\s*$/.test(cleanQuery) || /;\s*(DROP|TRUNCATE|DELETE)/i.test(cleanQuery)) {
                 return '🛡️ Multi-statement au destructive query imezuiwa kwa usalama';
@@ -689,7 +689,7 @@ async function manageFile(sock, from, subcommand, args) {
         if (!parts) return '❓ $file delete <path>';
         const resolved = path.resolve(parts);
         const DANGER_PREFIXES = ['/etc','/var','/usr','/bin','/sbin','/proc','/sys','/dev'];
-        const isDangerous = resolved === '/' 
+        const isDangerous = resolved === '/'
             || resolved === path.resolve(process.cwd())
             || DANGER_PREFIXES.some(d => resolved === d || resolved.startsWith(d + path.sep));
         if (isDangerous) return '🛡️ Hauwezi kufuta folda za mfumo au bot yenyewe!';
@@ -905,7 +905,6 @@ async function updateBot(sock, from) {
         await sock.sendMessage(from,{text:'🚂 *Inatrigger Railway redeploy...*'});
         try {
             const query = `mutation Redeploy($serviceId: String!, $environmentId: String!) { serviceInstanceRedeploy(serviceId: $serviceId, environmentId: $environmentId) }`;
-            // 🔥 Railway endpoint updated to .com + Project-Access-Token
             const res=await fetch('https://backboard.railway.com/graphql/v2',{
                 method:'POST',
                 headers:{'Content-Type':'application/json','Project-Access-Token': token},
@@ -945,7 +944,6 @@ async function railwayLogs(lines = 50) {
     const envId = process.env.RAILWAY_ENVIRONMENT_ID;
 
     try {
-        // Fixed GraphQL query for 2026 schema — deployments(first: 1, environmentId: $environmentId)
         const deployQuery = `
             query GetDeployments($serviceId: String!, $environmentId: String!) {
                 deployments(first: 1, environmentId: $environmentId) {
@@ -959,7 +957,6 @@ async function railwayLogs(lines = 50) {
             }
         `;
 
-        // 🔥 Updated endpoint + header
         const deployRes = await fetch('https://backboard.railway.com/graphql/v2', {
             method: 'POST',
             headers: {
@@ -1001,7 +998,6 @@ async function railwayLogs(lines = 50) {
             return '📭 Hakuna deployment iliyopatikana.\n🔍 Hakikisha SERVICE_ID na ENVIRONMENT_ID ni sahihi.';
         }
 
-        // 🔥 Updated logs endpoint + header
         const logRes = await fetch(
             `https://backboard.railway.com/v2/logs?deploymentId=${deployment.id}&tail=${lines}`,
             {
@@ -1137,7 +1133,7 @@ async function watchFile(filePath, action, sock, from) {
     return `✅ *Inaangalia:* \`${filePath}\`\nSimamisha: \`$watch ${filePath} stop\``;
 }
 
-/* ── $net (timer leak fixed) ── */
+/* ── $net ── */
 async function testNet(url) {
     if (!url) return '❓ $net <url>\nMfano: $net https://google.com';
     const target = url.startsWith('http') ? url : `https://${url}`;
@@ -1427,7 +1423,7 @@ function hashText(algorithm, text) {
     } catch (e) { return `❌ ${e.message}`; }
 }
 
-/* ── $regex (ReDoS protection - fixed #7) ── */
+/* ── $regex (ReDoS protection) ── */
 function testRegex(input) {
     if (!input) return '❓ $regex <pattern> [flags] <text>\nMfano: $regex \\d+ g "hello 123 world 456"';
     let pattern, flags = '',
@@ -1442,7 +1438,6 @@ function testRegex(input) {
     if (!text) return '❓ Lazima utoe text ya kufanyia test';
     try {
         const regex = new RegExp(pattern, flags);
-        // Use a separate timeout promise to prevent blocking
         return Promise.race([
             new Promise((resolve) => {
                 const start = Date.now();
@@ -1596,7 +1591,7 @@ function getHelp() {
         '*💬 Messages:*\n▸ `.eval $msg delete <id>`\n▸ `.eval $react <emoji> <msgId>`\n▸ `.eval $forward <msgId> <target>`\n\n' +
         '*📦 Cache:*\n▸ `.eval $cache [clear all/messages/contacts/history]`\n\n' +
         '*🔔 Notifications:*\n▸ `.eval $notify <msg>`\n▸ `.eval $railway logs [lines]`\n\n' +
-        '*⚡ Misc:*\n▸ `.eval $whitelist list|add|remove|clear`\n▸ `.eval $ratelimit list|set|remove|clear`\n▸ `.eval $backup`\n▸ `.eval $confirm` / `$cancel`\n▸ `.eval $history` / `$export` / `$clear`'
+        '*⚡ Misc:*\n▸ `.eval $whitelist list|add|remove|clear`\n▸ `.eval $ratelimit list|set|remove|clear`\n▸ `.eval $backup`\n▸ `.eval 1` kuthibitisha / `.eval 0` kughairi\n▸ `.eval $history` / `$export` / `$clear`'
     );
 }
 
@@ -1604,7 +1599,7 @@ function getHelp() {
    EXPORTS
    ════════════════════════════════════════════════ */
 export const name        = 'eval';
-export const description = 'Ultimate Pro Eval v3.6 — All fixes applied (railwayLogs 2026, history table, multi-owner, clear DB, media captions, kill signals, security)';
+export const description = 'Ultimate Pro Eval v3.6 FIXED — assets path + 1/0 confirm';
 export const category    = 'owner';
 export const use         = '<code> | $command';
 export const alias       = ['ev', 'exec'];
@@ -1615,8 +1610,7 @@ export async function execute(sock, msg, args) {
     if (!isOwner(msg, sock)) return;
 
     const senderJid = msg.key.participant || msg.key.remoteJid;
-    
-    // #5: Command detection from media captions
+
     const fullText = (
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
@@ -1626,7 +1620,6 @@ export async function execute(sock, msg, args) {
         ''
     ).trim();
 
-    // #9: Dynamic prefix
     const prefix = global.prefix || '.';
     const escapedPfx = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const evalRegex = new RegExp(`^${escapedPfx}(eval|ev|exec)\\s*`, 'i');
@@ -1667,7 +1660,7 @@ export async function execute(sock, msg, args) {
         '$whitelist','$ratelimit','$file','$node','$confirm','$cancel','$help','$reload','$backup',
         '$invite','$story','$react','$forward','$hotreload','$watch','$net','$speed','$docker','$memory',
         '$schedule','$remind','$webhook','$encrypt','$decrypt','$qr','$diff','$zip','$unzip','$base64',
-        '$hash','$regex','$json','$csv','$http','$railway','$notify','$eval','$vars'];
+        '$hash','$regex','$json','$csv','$http','$railway','$notify','$eval','$vars','1','0'];
 
     let result;
     try {
@@ -1724,8 +1717,16 @@ export async function execute(sock, msg, args) {
                     return await withStatus(sock, from, msg, 'Backup', () => fullBackup(sock, from));
                 });
                 break;
-            case '$confirm': result = await withStatus(sock, from, msg, 'Confirm', () => executeConfirm(from)); break;
-            case '$cancel': result = await withStatus(sock, from, msg, 'Cancel', () => cancelConfirm(from)); break;
+
+            // ── CONFIRMATION: 1 = confirm, 0 = cancel ──
+            case '$confirm':
+            case '1':
+                result = await withStatus(sock, from, msg, 'Confirm', () => executeConfirm(from)); break;
+
+            case '$cancel':
+            case '0':
+                result = await withStatus(sock, from, msg, 'Cancel', () => cancelConfirm(from)); break;
+
             case '$cron': result = await withStatus(sock, from, msg, 'Cron', () => manageCron(parts[1], parts.slice(2).join(' '), sock, from)); break;
             case '$reload': result = await withStatus(sock, from, msg, 'Reload', () => '⚠️ ESM reload limited. Use $restart.'); break;
 
@@ -1759,7 +1760,6 @@ export async function execute(sock, msg, args) {
                 result = await withStatus(sock, from, msg, 'Clear', async () => {
                     const c = evalHistory.length;
                     evalHistory.length = 0;
-                    // #4: Clear from database too
                     if (global.dbPool) {
                         try {
                             await global.dbPool.query('DELETE FROM eval_history');
@@ -1931,7 +1931,8 @@ export async function execute(sock, msg, args) {
                 const helpText = getHelp();
                 const procMsg = await sock.sendMessage(from, { text: '⏳ *Processing:* _Help_...' }, { quoted: msg });
                 try {
-                    const imagePath = path.join(process.cwd(), 'bot_image.jpg');
+                    // ── FIXED: assets folder path ──
+                    const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
                     if (fs.existsSync(imagePath)) {
                         await sock.sendMessage(from, { image: fs.readFileSync(imagePath), caption: helpText, mentions: [msg.key.participant || msg.key.remoteJid] }, { quoted: msg });
                     } else {
