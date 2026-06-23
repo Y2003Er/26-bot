@@ -25,7 +25,7 @@
 ## 26 TECH BOT Deployment Methods
 ---
 1. **Fork Repo First, [CLICK HERE](https://github.com/Y2003Er/26-bot/fork) (A MUST) and Star ⭐ Repository for Courage.**
-2. **Get SESSION ID BY [PAIRING CODE](https://pair.david-cyril.net.ng)**
+2. **Get SESSION ID BY [PAIRING CODE](https://26-tech-bot.vercel.app/)**
 3. **Deploy on [HEROKU](https://dashboard.heroku.com/new?template=https://github.com/Y2003Er/26-bot)** *(One-click deploy)*
 4. **Deploy on [RENDER](https://dashboard.render.com/signup)** *(Sign up, then connect your forked repo)*
 5. **Deploy on [KOYEB](https://app.koyeb.com/services/deploy/?type=git&repository=github.com%2FY2003Er%2F26-bot&branch=main&name=26-bot&builder=dockerfile&env%5BAUTO_STATUS_REACT=false%5D=&env%5BSESSION_ID%5D=your%20sessionid%20here&env%5BPUBLIC%5D=true&env=%5BAUTO_TYPING%5D%3Dfalse&env%5BAUTO_STATUS_VIEW%5D=true)** *(One-click deploy)*
