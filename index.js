@@ -1,5 +1,6 @@
-// index.js - FIXED v4.4.2 by 26-TECH
-// Fix: global.sock?.user?.id check badala ya ws.readyState === 1
+// index.js - FIXED v4.4.1 by 26-TECH (Updated with Active Notification + Restart Fix)
+// Fix: Conditional Database Boot + Pairing Code Loop Deadlock Eliminated
+// Hotfix: UnhandledRejection handler + Keepalive 4min + DB Pool max + Cache TTL
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -302,7 +303,7 @@ global.isOwner = (jid) => {
     return false;
 };
 
-global.isSockReady = () => !!global.sock?.user?.id;
+global.isSockReady = () => global.sock?.ws && global.sock.ws.readyState === 1;
 
 function resolveOwnerLid(sock) {
     let lid = sock.user?.lid || sock.authState?.creds?.me?.lid;
@@ -394,7 +395,7 @@ function startKeepalive() {
     if (keepaliveTimer) clearInterval(keepaliveTimer);
     keepaliveTimer = setInterval(async () => {
         try {
-            if (global.sock?.user?.id) {
+            if (global.sock?.ws?.readyState === 1) {
                 await global.sock.sendPresenceUpdate('available');
                 await global.sock.sendPresenceUpdate('unavailable');
                 lastEventTime = Date.now();
@@ -409,7 +410,7 @@ function startKeepalive() {
 
 async function startBot() {
     if (bootLock || isConnecting) return;
-    if (global.sock?.user?.id && (Date.now() - lastEventTime) < 600000) return;
+    if (global.sock?.ws?.readyState === 1 && (Date.now() - lastEventTime) < 600000) return;
 
     bootLock = true;
     isConnecting = true;
@@ -503,7 +504,7 @@ async function startBot() {
                 log.info(`Subiri sekunde ${PAIRING_DELAY / 1000} kabla ya kuomba pairing code...`);
                 setTimeout(async () => {
                     try {
-                        if (global.sock?.user?.id || state.creds?.me) {
+                        if (global.sock?.authState?.creds?.me || state.creds?.me) {
                             log.success('Session imepatikana sekunde ya mwisho! Pairing imesitishwa.');
                             pairingDone = true;
                             return;
@@ -681,11 +682,12 @@ app.use(express.json());
 const pairRequests = new Map();
 const PAIR_RATE_LIMIT = 60000;
 
+// ✅ FIX: Route ya nyumbani — inaondoa "Cannot GET /"
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
         message: '⚡ 26-TECH Bot API iko online',
-        bot: global.sock?.user?.id ? 'connected' : 'disconnected',
+        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
         uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
     });
 });
@@ -719,7 +721,7 @@ app.post('/pair', async (req, res) => {
             });
         }
 
-        if (!global.sock?.user?.id) {
+        if (!global.sock || global.sock.ws?.readyState !== 1) {
             return res.status(503).json({
                 success: false,
                 error: 'Bot haiko ready. Jaribu tena baadaye'
@@ -744,7 +746,7 @@ app.post('/pair', async (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        bot: global.sock?.user?.id ? 'connected' : 'disconnected',
+        bot: global.sock?.ws?.readyState === 1 ? 'connected' : 'disconnected',
         uptime: Math.floor((Date.now() - bannerState.startTime) / 1000)
     });
 });
