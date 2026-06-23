@@ -4,7 +4,7 @@
  */
 
 import axios from 'axios';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 export const name        = 'facebook';
 export const description = 'Download video kutoka Facebook';
@@ -14,7 +14,7 @@ export const alias       = ['fb', 'fbdl', 'onheza'];
 export const adminOnly   = false;
 
 function extractVideoFromHTML(html, url) {
-    const $ = cheerio.load(html);
+    const $ = load(html);
     
     // 1. Tafuta kupitia meta tagi za Open Graph
     let videoUrl = $('meta[property="og:video"]').attr('content');
