@@ -1,4 +1,4 @@
-// pairing.js - Router Version v3.2 by 26-TECH
+// pairing.js - Router Version v3.3 by 26-TECH
 import express from 'express';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -10,7 +10,7 @@ import {
 import { usePostgresAuthState } from './session-db.js';
 
 const router = express.Router();
-const logger = pino({ level: 'info' });
+const logger = pino({ level: 'silent' });
 const PAIR_RATE_LIMIT = 120000;
 const pairRequests = new Map();
 const activeSockets = new Map();
@@ -40,6 +40,22 @@ function safeEnd(sock, number) {
     try { sock.end(); } catch {}
     if (number) activeSockets.delete(number);
     console.log(`[PAIR] 🔌 Socket imefungwa kwa ${number}`);
+}
+
+function createSock(state) {
+    return makeWASocket({
+        auth: state,
+        logger,
+        printQRInTerminal: false,
+        browser: Browsers.ubuntu('Chrome'),
+        connectTimeoutMs: 45000,
+        keepAliveIntervalMs: 30000,
+        generateHighQualityLinkPreview: false,
+        retryRequestDelayMs: 2000,
+        maxRetries: 5,
+        syncFullHistory: false,
+        shouldSyncHistory: () => false,
+    });
 }
 
 router.post('/pair', async (req, res) => {
@@ -81,19 +97,7 @@ router.post('/pair', async (req, res) => {
 
         console.log(`[PAIR] 🚀 Inaanza socket kwa ${number} method=${method}`);
 
-        const sock = makeWASocket({
-            auth: state,
-            logger,
-            printQRInTerminal: false,
-            browser: Browsers.ubuntu('Chrome'),
-            connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 30000,
-            keepAliveIntervalMs: 30000,
-            retryRequestDelayMs: 2000,
-            generateHighQualityLinkPreview: false,
-            syncFullHistory: false,
-        });
-
+        let sock = createSock(state);
         activeSockets.set(number, sock);
         sock.ev.on('creds.update', saveCreds);
 
@@ -102,6 +106,7 @@ router.post('/pair', async (req, res) => {
         // ════════════════
         if (method === 'qr') {
             let qrSent = false;
+            let opened = false;
 
             const qrTimeout = setTimeout(() => {
                 console.log(`[PAIR] ⏰ QR timeout kwa ${number}`);
@@ -113,7 +118,8 @@ router.post('/pair', async (req, res) => {
 
             sock.ev.on('connection.update', async (update) => {
                 const { qr, connection } = update;
-                console.log(`[PAIR QR] connection=${connection} qr=${!!qr}`);
+                const statusCode = update.lastDisconnect?.error?.output?.statusCode;
+                console.log(`[PAIR QR] connection=${connection} status=${statusCode} qr=${!!qr}`);
 
                 if (qr && !qrSent) {
                     qrSent = true;
@@ -136,25 +142,39 @@ router.post('/pair', async (req, res) => {
                         safeEnd(sock, number);
                         return;
                     }
-                    setTimeout(() => safeEnd(sock, number), 120000);
+                    setTimeout(() => {
+                        if (!opened) safeEnd(sock, number);
+                    }, 120000);
                 }
 
                 if (connection === 'open') {
                     clearTimeout(qrTimeout);
+                    opened = true;
                     console.log(`[PAIR] ✅ QR scan imefanikiwa kwa ${number}`);
-                    console.log(`[PAIR] Creds me:`, sock.authState?.creds?.me?.id);
                     await delay(15000);
                     await sendSessionToUser(sock, number);
                     setTimeout(() => safeEnd(sock, number), 15000);
                 }
 
                 if (connection === 'close') {
-                    console.log(`[PAIR] ❌ QR connection imefungwa kwa ${number}`);
+                    console.log(`[PAIR] QR close status=${statusCode}`);
+
+                    // ✅ 515 = restart required — reconnect
+                    if (statusCode === 515 && !opened) {
+                        console.log(`[PAIR] 🔄 QR restart required — inareconnect...`);
+                        try { sock.end(); } catch {}
+                        await delay(2000);
+                        sock = createSock(state);
+                        activeSockets.set(number, sock);
+                        sock.ev.on('creds.update', saveCreds);
+                        return;
+                    }
+
                     if (!qrSent && !res.headersSent) {
                         clearTimeout(qrTimeout);
                         res.status(500).json({ success: false, error: 'Imeshindwa kuunganika — jaribu tena' });
                     }
-                    safeEnd(sock, number);
+                    if (!opened) safeEnd(sock, number);
                 }
             });
 
@@ -170,6 +190,7 @@ router.post('/pair', async (req, res) => {
         // ════════════════
         if (method === 'code') {
             let codeSent = false;
+            let opened = false;
 
             const codeTimeout = setTimeout(() => {
                 console.log(`[PAIR] ⏰ Code timeout kwa ${number}`);
@@ -181,7 +202,8 @@ router.post('/pair', async (req, res) => {
 
             sock.ev.on('connection.update', async (update) => {
                 const { connection } = update;
-                console.log(`[PAIR CODE] connection=${connection}`);
+                const statusCode = update.lastDisconnect?.error?.output?.statusCode;
+                console.log(`[PAIR CODE] connection=${connection} status=${statusCode}`);
 
                 if (connection === 'connecting' && !codeSent) {
                     codeSent = true;
@@ -202,8 +224,9 @@ router.post('/pair', async (req, res) => {
                             });
                         }
 
-                        // ✅ Dakika 5 — muda wa kutosha
-                        setTimeout(() => safeEnd(sock, number), 300000);
+                        setTimeout(() => {
+                            if (!opened) safeEnd(sock, number);
+                        }, 300000);
 
                     } catch (err) {
                         console.error(`[PAIR] ❌ Code error:`, err.message);
@@ -214,18 +237,43 @@ router.post('/pair', async (req, res) => {
                     }
                 }
 
-                // ✅ Mtumiaji ameweka code
+                // ✅ 515 = restart required — reconnect na subiri open
+                if (connection === 'close' && statusCode === 515) {
+                    console.log(`[PAIR] 🔄 Restart required (515) — inareconnect...`);
+                    try { sock.end(); } catch {}
+                    await delay(2000);
+                    sock = createSock(state);
+                    activeSockets.set(number, sock);
+                    sock.ev.on('creds.update', saveCreds);
+
+                    // ✅ Sikiliza open kwenye sock mpya
+                    sock.ev.on('connection.update', async (u) => {
+                        console.log(`[PAIR CODE RECONNECT] connection=${u.connection}`);
+                        if (u.connection === 'open') {
+                            opened = true;
+                            console.log(`[PAIR] ✅ Reconnect imefanikiwa kwa ${number}`);
+                            await delay(15000);
+                            await sendSessionToUser(sock, number);
+                            setTimeout(() => safeEnd(sock, number), 15000);
+                        }
+                        if (u.connection === 'close') {
+                            console.log(`[PAIR] ❌ Reconnect imeshindwa kwa ${number}`);
+                            safeEnd(sock, number);
+                        }
+                    });
+                    return;
+                }
+
                 if (connection === 'open') {
+                    opened = true;
                     console.log(`[PAIR] ✅ Code link imefanikiwa kwa ${number}`);
-                    console.log(`[PAIR] Creds me:`, sock.authState?.creds?.me?.id);
                     await delay(15000);
-                    console.log(`[PAIR] Inatuma session kwa ${number}...`);
                     await sendSessionToUser(sock, number);
                     setTimeout(() => safeEnd(sock, number), 15000);
                 }
 
-                if (connection === 'close') {
-                    console.log(`[PAIR] ❌ Connection imefungwa kwa ${number} baada ya code`);
+                if (connection === 'close' && statusCode !== 515) {
+                    console.log(`[PAIR] ❌ Connection imefungwa kwa ${number}`);
                 }
             });
         }
