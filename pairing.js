@@ -1,4 +1,4 @@
-// pairing.js - Router Version v3.1 by 26-TECH (Debug)
+// pairing.js - Router Version v3.2 by 26-TECH
 import express from 'express';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -10,7 +10,7 @@ import {
 import { usePostgresAuthState } from './session-db.js';
 
 const router = express.Router();
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'info' });
 const PAIR_RATE_LIMIT = 120000;
 const pairRequests = new Map();
 const activeSockets = new Map();
@@ -88,8 +88,8 @@ router.post('/pair', async (req, res) => {
             browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 30000,
+            keepAliveIntervalMs: 30000,
             retryRequestDelayMs: 2000,
-            maxRetries: 3,
             generateHighQualityLinkPreview: false,
             syncFullHistory: false,
         });
@@ -149,7 +149,7 @@ router.post('/pair', async (req, res) => {
                 }
 
                 if (connection === 'close') {
-                    console.log(`[PAIR] ❌ Connection imefungwa kwa ${number}`);
+                    console.log(`[PAIR] ❌ QR connection imefungwa kwa ${number}`);
                     if (!qrSent && !res.headersSent) {
                         clearTimeout(qrTimeout);
                         res.status(500).json({ success: false, error: 'Imeshindwa kuunganika — jaribu tena' });
@@ -202,6 +202,7 @@ router.post('/pair', async (req, res) => {
                             });
                         }
 
+                        // ✅ Dakika 5 — muda wa kutosha
                         setTimeout(() => safeEnd(sock, number), 300000);
 
                     } catch (err) {
@@ -213,6 +214,7 @@ router.post('/pair', async (req, res) => {
                     }
                 }
 
+                // ✅ Mtumiaji ameweka code
                 if (connection === 'open') {
                     console.log(`[PAIR] ✅ Code link imefanikiwa kwa ${number}`);
                     console.log(`[PAIR] Creds me:`, sock.authState?.creds?.me?.id);
