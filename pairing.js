@@ -1,4 +1,4 @@
-// pairing.js - Router Version v3.0 by 26-TECH
+// pairing.js - Router Version v3.1 by 26-TECH (Debug)
 import express from 'express';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -30,14 +30,16 @@ async function sendSessionToUser(sock, number) {
                   `\`\`\`${sessionJson.slice(0, 1000)}\`\`\`\n\n` +
                   `> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*`
         });
+        console.log(`[PAIR] ✅ Session imetumwa kwa ${number}`);
     } catch (e) {
-        console.error('Send session error:', e.message);
+        console.error(`[PAIR] ❌ Send session error:`, e.message);
     }
 }
 
 function safeEnd(sock, number) {
     try { sock.end(); } catch {}
     if (number) activeSockets.delete(number);
+    console.log(`[PAIR] 🔌 Socket imefungwa kwa ${number}`);
 }
 
 router.post('/pair', async (req, res) => {
@@ -77,6 +79,8 @@ router.post('/pair', async (req, res) => {
             state.creds.registered = false;
         }
 
+        console.log(`[PAIR] 🚀 Inaanza socket kwa ${number} method=${method}`);
+
         const sock = makeWASocket({
             auth: state,
             logger,
@@ -100,6 +104,7 @@ router.post('/pair', async (req, res) => {
             let qrSent = false;
 
             const qrTimeout = setTimeout(() => {
+                console.log(`[PAIR] ⏰ QR timeout kwa ${number}`);
                 if (!res.headersSent) {
                     res.status(408).json({ success: false, error: 'QR imeisha muda — jaribu tena' });
                 }
@@ -108,6 +113,7 @@ router.post('/pair', async (req, res) => {
 
             sock.ev.on('connection.update', async (update) => {
                 const { qr, connection } = update;
+                console.log(`[PAIR QR] connection=${connection} qr=${!!qr}`);
 
                 if (qr && !qrSent) {
                     qrSent = true;
@@ -121,7 +127,9 @@ router.post('/pair', async (req, res) => {
                         if (!res.headersSent) {
                             res.json({ success: true, method: 'qr', qr: qrImage });
                         }
+                        console.log(`[PAIR] ✅ QR imetumwa kwa frontend`);
                     } catch (e) {
+                        console.error(`[PAIR] ❌ QR generation error:`, e.message);
                         if (!res.headersSent) {
                             res.status(500).json({ success: false, error: 'QR generation failed' });
                         }
@@ -133,14 +141,17 @@ router.post('/pair', async (req, res) => {
 
                 if (connection === 'open') {
                     clearTimeout(qrTimeout);
+                    console.log(`[PAIR] ✅ QR scan imefanikiwa kwa ${number}`);
+                    console.log(`[PAIR] Creds me:`, sock.authState?.creds?.me?.id);
                     await delay(15000);
                     await sendSessionToUser(sock, number);
                     setTimeout(() => safeEnd(sock, number), 15000);
                 }
 
-                if (connection === 'close' && !qrSent) {
-                    clearTimeout(qrTimeout);
-                    if (!res.headersSent) {
+                if (connection === 'close') {
+                    console.log(`[PAIR] ❌ Connection imefungwa kwa ${number}`);
+                    if (!qrSent && !res.headersSent) {
+                        clearTimeout(qrTimeout);
                         res.status(500).json({ success: false, error: 'Imeshindwa kuunganika — jaribu tena' });
                     }
                     safeEnd(sock, number);
@@ -161,6 +172,7 @@ router.post('/pair', async (req, res) => {
             let codeSent = false;
 
             const codeTimeout = setTimeout(() => {
+                console.log(`[PAIR] ⏰ Code timeout kwa ${number}`);
                 if (!res.headersSent) {
                     res.status(500).json({ success: false, error: 'Imeshindwa kuunganika — jaribu tena' });
                 }
@@ -169,15 +181,18 @@ router.post('/pair', async (req, res) => {
 
             sock.ev.on('connection.update', async (update) => {
                 const { connection } = update;
+                console.log(`[PAIR CODE] connection=${connection}`);
 
                 if (connection === 'connecting' && !codeSent) {
                     codeSent = true;
                     clearTimeout(codeTimeout);
+                    console.log(`[PAIR] 📱 Inaomba pairing code kwa ${number}...`);
 
                     try {
                         await delay(1500);
                         const code = await sock.requestPairingCode(number);
                         pairRequests.set(number, Date.now());
+                        console.log(`[PAIR] ✅ Code imepatikana: ${code}`);
 
                         if (!res.headersSent) {
                             res.json({
@@ -190,6 +205,7 @@ router.post('/pair', async (req, res) => {
                         setTimeout(() => safeEnd(sock, number), 300000);
 
                     } catch (err) {
+                        console.error(`[PAIR] ❌ Code error:`, err.message);
                         if (!res.headersSent) {
                             res.status(500).json({ success: false, error: 'Imeshindwa kupata code — jaribu tena' });
                         }
@@ -198,15 +214,22 @@ router.post('/pair', async (req, res) => {
                 }
 
                 if (connection === 'open') {
+                    console.log(`[PAIR] ✅ Code link imefanikiwa kwa ${number}`);
+                    console.log(`[PAIR] Creds me:`, sock.authState?.creds?.me?.id);
                     await delay(15000);
+                    console.log(`[PAIR] Inatuma session kwa ${number}...`);
                     await sendSessionToUser(sock, number);
                     setTimeout(() => safeEnd(sock, number), 15000);
+                }
+
+                if (connection === 'close') {
+                    console.log(`[PAIR] ❌ Connection imefungwa kwa ${number} baada ya code`);
                 }
             });
         }
 
     } catch (err) {
-        console.error('Pair error:', err.message);
+        console.error('[PAIR] ❌ Pair error:', err.message);
         if (!res.headersSent) {
             res.status(500).json({ success: false, error: 'Imeshindwa' });
         }
