@@ -10,7 +10,7 @@ import {
 import { usePostgresAuthState } from './session-db.js';
 
 const router = express.Router();
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'info' });
 const PAIR_RATE_LIMIT = 120000;
 const pairRequests = new Map();
 const activeSockets = new Map();
