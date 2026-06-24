@@ -1,4 +1,4 @@
-// index.js - FIXED v4.4.3 by 26-TECH (Performance Fix)
+// index.js - FIXED v4.4.2 by 26-TECH (Pairing API Integrated)
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -43,7 +43,7 @@ import pg from 'pg';
 const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: 10, // ✅ 5 → 10
+    max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
 });
@@ -98,7 +98,7 @@ const C = {
     green: '\x1b[32m', greenBright: '\x1b[92m',
     yellow: '\x1b[33m', yellowBright: '\x1b[93m',
     red: '\x1b[31m', redBright: '\x1b[91m',
-    gray: '\x1b[90m', white: '\x1b[97m',
+    gray: '\x1b[90m', white: '\x1b[97w',
     blue: '\x1b[34m', blueBright: '\x1b[94m',
     magenta: '\x1b[35m', magentaBright: '\x1b[95m',
 };
@@ -306,9 +306,6 @@ function updateBanner(key, value) {
         bannerState[key] = value;
     }
 }
-// ════════════════
-// END BANNER SYSTEM
-// ════════════════
 
 const log = {
     info: (msg) => console.log(` ✦ ${msg}`),
@@ -676,14 +673,10 @@ async function startBot() {
                 }
             };
 
-            // ✅ setImmediate — message inashughulikiwa background
-            // Haizuii event loop — commands zingine zinaendelea haraka
-            setImmediate(async () => {
-                await Promise.allSettled([
-                    handleAntiLink(global.sock, msg, logger),
-                    handleMessage(global.sock, msg, extra),
-                ]);
-            });
+            await Promise.allSettled([
+                handleAntiLink(global.sock, msg, logger),
+                handleMessage(global.sock, msg, extra),
+            ]);
         });
 
         openTimer = setTimeout(() => {
