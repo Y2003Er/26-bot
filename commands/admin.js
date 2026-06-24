@@ -10,9 +10,8 @@ export const category    = 'group';
 export const use         = '';
 export const alias       = ['admins', 'getadmin'];
 export const adminOnly   = false;
-export const ownerOnly   = true; // Owner peke yake — usalama wa account
+export const ownerOnly   = true;
 
-// Owner JID kutoka .env
 const RAW_OWNER = (process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '');
 const OWNER_JID = `${RAW_OWNER}@s.whatsapp.net`;
 
@@ -31,11 +30,8 @@ function isOwner(msg) {
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
 
-    // ── Owner peke yake — DM au Group ──
-    // Jibu kimya kimya — usimwambie mtu kwamba command ipo
     if (!isOwner(msg)) return;
 
-    // Group tu
     if (!from.endsWith('@g.us')) {
         return sock.sendMessage(from, {
             text: '*_Command hii ni ya group tu!_*'
@@ -46,7 +42,6 @@ export async function execute(sock, msg, args) {
         const meta         = await sock.groupMetadata(from);
         const participants = meta.participants || [];
 
-        // Tenganisha superadmins na admins
         const superAdmins = participants.filter(p => p.admin === 'superadmin');
         const admins      = participants.filter(p => p.admin === 'admin');
         const allAdmins   = [...superAdmins, ...admins];
@@ -57,14 +52,12 @@ export async function execute(sock, msg, args) {
             }, { quoted: msg });
         }
 
-        // Jenga ujumbe
         let text  = `╔═══════════════════════╗\n`;
         text     += `║  🛡️  *GROUP ADMINS*    ║\n`;
         text     += `╚═══════════════════════╝\n\n`;
         text     += `👥 *Group:* ${meta.subject}\n`;
         text     += `📊 *Admins:* ${allAdmins.length}/${participants.length}\n\n`;
 
-        // Superadmins kwanza (group creator)
         if (superAdmins.length) {
             text += `👑 *Super Admin:*\n`;
             for (const p of superAdmins) {
@@ -74,7 +67,6 @@ export async function execute(sock, msg, args) {
             text += `\n`;
         }
 
-        // Admins wa kawaida
         if (admins.length) {
             text += `🛡️ *Admins (${admins.length}):*\n`;
             for (const p of admins) {
@@ -100,44 +92,39 @@ export async function execute(sock, msg, args) {
 // ════════════════════════════════════════════════
 // 🛡️ MFUMO WA ULINZI WA KIMAFIA (ANTI-KICK & ANTI-DEMOTE)
 // ════════════════════════════════════════════════
-export function initGroupProtection(sock, logger) {
+
+// ✅ FIX M-5: Pokea groupMetaCache kutoka handler
+export function initGroupProtection(sock, logger, groupMetaCache = null) {
     sock.ev.on('group-participants.update', async (update) => {
         const { id, participants, action, author } = update;
-        
-        // ✅ FIX 1 — botNumber ilikuwa ikivunja JID kwa kuondoa @s.whatsapp.net
-        // kisha kuiongeza tena — matokeo ilikuwa JID mbaya isiyofanana na yoyote.
-        // sock.user.id tayari ina format "2557xx:xx@s.whatsapp.net" —
-        // tunafuta ":xx" tu, tunaacha "@s.whatsapp.net" kama ilivyo.
-        const botNumber  = sock.user.id.replace(/:\d+@/, '@'); // ✅ FIXED
 
+        const botNumber  = sock.user.id.replace(/:\d+@/, '@');
         const superAdmin = normalizeJid(OWNER_JID);
 
-        // Kama aliyeleta mabadiliko ni Bot au ni hatua ya kawaida ya kuongeza watu, simama.
         if (author === botNumber || action === 'add' || action === 'promote') return;
 
         try {
-            // Kagua kama bot ni admin ili kuzuia makosa ya permissions
-            const groupMetadata = await sock.groupMetadata(id).catch(() => null);
+            // ✅ FIX M-5: Tumia cache kama ipo, vinginevyo fetch
+            let groupMetadata = groupMetaCache ? groupMetaCache.get(id) : null;
+            if (!groupMetadata) {
+                groupMetadata = await sock.groupMetadata(id).catch(() => null);
+                if (groupMetadata && groupMetaCache) {
+                    groupMetaCache.set(id, groupMetadata);
+                }
+            }
             if (!groupMetadata) return;
-            
+
             const botParticipant = groupMetadata.participants.find(p => p.id === botNumber);
             const isBotAdmin     = botParticipant?.admin === 'admin' || botParticipant?.admin === 'superadmin';
 
             if (!isBotAdmin) return;
 
-            // Walengwa wanaolindwa na huu mfumo (Wewe + Bot)
             const targetsProtected = [superAdmin, botNumber];
-
-            // ✅ FIX 2 — participants ni array ya JID strings, si objects.
-            // .includes(p) ilikuwa ikishindwa kwa sababu haikufanya normalize kwanza —
-            // JID kama "2557xx:xx@s.whatsapp.net" haikuwa inafanana na "2557xx@s.whatsapp.net".
-            // Sasa tunafanya normalizeJid(p) kabla ya kulinganisha.
-            const affectedTarget = participants.find(p => targetsProtected.includes(normalizeJid(p))); // ✅ FIXED
+            const affectedTarget = participants.find(p => targetsProtected.includes(normalizeJid(p)));
 
             if (affectedTarget) {
-                // 🛑 1. ANTI-KICK (Ulinzi wa kutolewa)
                 if (action === 'remove') {
-                    if (logger && logger.warn) {
+                    if (logger?.warn) {
                         logger.warn(`⚠️ Mapinduzi! Admin ${author} amemtoa @${affectedTarget.split('@')[0]}`);
                     }
 
@@ -152,9 +139,8 @@ export function initGroupProtection(sock, logger) {
                     });
                 }
 
-                // 📉 2. ANTI-DEMOTE (Ulinzi wa kushushwa cheo)
                 if (action === 'demote') {
-                    if (logger && logger.warn) {
+                    if (logger?.warn) {
                         logger.warn(`⚠️ Jaribio la Demotion kutoka kwa ${author} dhidi ya @${affectedTarget.split('@')[0]}`);
                     }
 
@@ -168,7 +154,7 @@ export function initGroupProtection(sock, logger) {
                 }
             }
         } catch (criticalError) {
-            if (logger && logger.error) {
+            if (logger?.error) {
                 logger.error(`Critical error kwenye ulinzi wa kundi: ${criticalError.message}`);
             }
         }
