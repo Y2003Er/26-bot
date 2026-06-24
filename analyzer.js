@@ -1,67 +1,88 @@
 import fs from 'fs-extra';
 import AdmZip from 'adm-zip';
-import { execa } from 'execa';
 import path from 'path';
+import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 
-export default {
-    name: 'chambua',
-    alias: ['analyzeapk', 'apk', 'checkapk'],
-    category: 'tools',
-    desc: 'Kuchambua faili la Android APK nyuma ya pazia.',
+export const name = 'chambua';
+export const alias = ['apk', 'analyzeapk'];
+export const description = 'Kuchambua faili la Android APK na kuona yaliyomo.';
+export const category = 'tools';
+
+export async function execute(sock, msg, args) {
+    const chatJid = msg.key.remoteJid;
     
-    async execute(m, { sock, args }) {
-        // 1. Angalia kama mtumiaji ametuma au ameku-quote faili (document)
-        const quoted = m.quoted ? m.quoted : m;
-        const mime = quoted.mimetype || '';
-
-        // Hakikisha ni faili la APK (mafaili mengi ya APK yanakuja kama 'application/vnd.android.package-archive')
-        if (!mime.includes('android') && !m.body.endsWith('.apk')) {
-            return m.reply('Tafadhali tuma faili la APK au tag faili la APK kisha uandike amri hii.');
-        }
-
-        await m.reply('⏳ Tunapakua na kuanza uchambuzi wa faili, subiri kidogo...');
-
-        try {
-            // 2. Pakua faili la APK kutoka WhatsApp kwenda kwenye seva yako
-            // Hapa tunatumia njia ya kawaida ya Baileys ya kudownload media
-            const buffer = await quoted.download();
-            const apkPath = path.join(process.cwd(), `temp_${Date.now()}.apk`);
-            await fs.writeFile(apkPath, buffer);
-
-            const outputDir = path.join(process.cwd(), 'extracted_apk');
-            
-            // 3. Hakikisha folda la kutolea faili lipo safi
-            await fs.emptyDir(outputDir);
-
-            // 4. Tumia adm-zip kufungua APK haraka
-            const zip = new AdmZip(apkPath);
-            const zipEntries = zip.getEntries();
-            
-            // Tafuta faili muhimu
-            const hasManifest = zipEntries.some(entry => entry.entryName === 'AndroidManifest.xml');
-            const dexFiles = zipEntries.filter(entry => entry.entryName.endsWith('.dex'));
-
-            if (!hasManifest) {
-                // Futa faili la temporary kabla ya kutoka
-                await fs.remove(apkPath);
-                return m.reply('❌ Hili halionekani kuwa faili halali la Android APK.');
-            }
-
-            // 5. Tengeneza ujumbe wa ripoti kwenda kwa mtumiaji
-            let ripoti = `*📊 MATOKEO YA UCHAMBUZI WA APK*\n\n`;
-            ripoti += `📝 *Jina la Faili:* ${m.body || 'WhatsApp_Document'}\n`;
-            ripoti += `📦 *AndroidManifest.xml:* ${hasManifest ? '✅ Ipo' : '❌ Haipo'}\n`;
-            ripoti += `🗂️ *Idadi ya faili za kodi (.dex):* ${dexFiles.length}\n\n`;
-            ripoti += `_Uchambuzi wa awali umekamilika. Hatua inayofuata ni kuunganisha jadx-cli kwa uchambuzi wa ndani zaidi._`;
-
-            await sock.sendMessage(m.from, { text: ripoti }, { quoted: m });
-
-            // 6. Futa faili la temporary lililopakuliwa kusafisha nafasi (storage)
-            await fs.remove(apkPath);
-
-        } catch (error) {
-            console.error(error);
-            m.reply(`❌ Hitilafu imetokea wakati wa kuchambua faili: ${error.message}`);
-        }
+    // 1. Tafuta ujumbe ulio na faili (iwe ni mpya au uliotagw/quoted)
+    const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+    const quotedMsg = contextInfo?.quotedMessage;
+    
+    // Angalia kama ujumbe wenyewe au ule uliotagwa una document/faili
+    const documentMessage = msg.message?.documentMessage || quotedMsg?.documentMessage;
+    
+    if (!documentMessage) {
+        return await sock.sendMessage(chatJid, {
+            text: '❌ Tafadhali tuma faili la APK au tag (quote) faili la APK kisha uandike amri hii.'
+        }, { quoted: msg });
     }
-};
+
+    const mime = documentMessage.mimetype || '';
+    const fileName = documentMessage.fileName || '';
+
+    // Hakikisha ni APK halisi
+    if (!mime.includes('android') && !fileName.endsWith('.apk')) {
+        return await sock.sendMessage(chatJid, {
+            text: '❌ Faili hili halionekani kuwa la Android (APK).'
+        }, { quoted: msg });
+    }
+
+    await sock.sendMessage(chatJid, { text: '⏳ *Tunapakua na kuanza uchambuzi wa APK, subiri kidogo...*' }, { quoted: msg });
+
+    const apkPath = path.join(process.cwd(), `temp_${Date.now()}.apk`);
+    const outputDir = path.join(process.cwd(), 'extracted_apk');
+
+    try {
+        // 2. Pakua faili kutoka WhatsApp kwa kutumia Baileys util iliyopo kwenye handler yako
+        const stream = await downloadContentFromMessage(documentMessage, 'document');
+        let buffer = Buffer.from([]);
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk]);
+        }
+        
+        // Hifadhi faili kwa muda
+        await fs.writeFile(apkPath, buffer);
+
+        // 3. Hakikisha folda la matokeo lipo safi
+        await fs.emptyDir(outputDir);
+
+        // 4. Fungua APK kama ZIP
+        const zip = new AdmZip(apkPath);
+        const zipEntries = zip.getEntries();
+        
+        const hasManifest = zipEntries.some(entry => entry.entryName === 'AndroidManifest.xml');
+        const dexFiles = zipEntries.filter(entry => entry.entryName.endsWith('.dex'));
+        const hasAssets = zipEntries.some(entry => entry.entryName.startsWith('assets/'));
+        const hasLib = zipEntries.some(entry => entry.entryName.startsWith('lib/'));
+
+        if (!hasManifest) {
+            await fs.remove(apkPath);
+            return await sock.sendMessage(chatJid, { text: '❌ Muundo wa faili umeharibika (AndroidManifest.xml haijapatikana).' }, { quoted: msg });
+        }
+
+        // 5. Tengeneza Ripoti
+        let ripoti = `📊 *MATOKEO YA UCHAMBUZI (26-BOT)*\n\n`;
+        ripoti += `📝 *Jina:* \`${fileName}\`\n`;
+        ripoti += `📦 *AndroidManifest.xml:* ✅ Ipo\n`;
+        ripoti += `🗂️ *Kodi (.dex files):* ${dexFiles.length}\n`;
+        ripoti += `📁 *Assets Folder:* ${hasAssets ? '✅ Lipo' : '❌ Halipo'}\n`;
+        ripoti += `⚙️ *Native Libraries (lib):* ${hasLib ? '✅ Zipo' : '❌ Hazipo'}\n\n`;
+        ripoti += `_Uchambuzi wa awali umekamilika kikamilika!_`;
+
+        await sock.sendMessage(chatJid, { text: ripoti }, { quoted: msg });
+
+    } catch (error) {
+        console.error('APK Analyzer Error:', error);
+        await sock.sendMessage(chatJid, { text: `❌ Hitilafu imetokea: ${error.message}` }, { quoted: msg });
+    } finally {
+        // Futa faili la temp kila mara ili kulinda RAM na Storage
+        await fs.remove(apkPath).catch(() => {});
+    }
+}
