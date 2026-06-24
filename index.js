@@ -27,6 +27,7 @@ import {
     handleMessage,
     setupContactListener,
     setupAntiDelete,
+    groupMetaCache,
     setupAutoStatusViewer
 } from './lib/handler.js';
 import {
