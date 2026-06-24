@@ -6,7 +6,7 @@ import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 const cmd = {
     name: 'chambua',
     alias: ['apk', 'analyzeapk'],
-    description: 'Uchambuzi wa kina wa APK ikiwemo mifumo ya malipo na URLs.',
+    description: 'Uchambuzi wa kina wa APK unaotaja faili zenye mifumo ya malipo.',
     category: 'tools',
     async execute(sock, msg, args) {
         const chatJid = msg.key.remoteJid;
@@ -30,7 +30,7 @@ const cmd = {
         }
 
         await sock.sendMessage(chatJid, { 
-            text: '🕵️‍♂️ *Tunaanza Uchambuzi wa Kina (Deep Scan)...*\n_Tunatafuta Ruhusa, Link, na Sehemu za Malipo (Payments)._' 
+            text: '🕵️‍♂️ *Tunaanza Uchambuzi wa Kina (Deep Scan)...*\n_Tunatafuta maeneo kamili na mafaili yenye mifumo ya malipo._' 
         }, { quoted: msg });
 
         const apkPath = path.join(process.cwd(), `temp_${Date.now()}.apk`);
@@ -49,19 +49,18 @@ const cmd = {
             zip.extractAllTo(outputDir, true);
 
             let foundUrls = new Set();
-            let paymentGateways = new Set();
+            // Hapa tutahifadhi vitu kwa muundo wa "NENO -> JINA LA FAILI"
+            let paymentMap = new Map(); 
             let permissions = [];
             let packageName = "Haijulikani (Imefichwa)";
 
-            // REGEX & KEYWORDS ZA MALIPO
             const urlRegex = /https?:\/\/[^\s"'`<>]+/g;
             const permissionRegex = /android\.permission\.[A-Z_]+/g;
             
-            // Maneno yanayoashiria mifumo ya malipo ya ndani na nje
             const paymentKeywords = [
                 'mpesa', 'pesa', 'tigopesa', 'airtelmoney', 'halo-pesa', 'selcom', 
                 'azampay', 'stripe', 'paypal', 'flutterwave', 'paystack', 'checkout', 
-                'billing', 'payment', 'transaction', 'invoice', 'wallet', 'api/v1/pay'
+                'billing', 'payment', 'transaction', 'invoice', 'wallet'
             ];
 
             const files = await fs.readdir(outputDir, { recursive: true });
@@ -71,16 +70,21 @@ const cmd = {
                 const stat = await fs.stat(fullPath);
 
                 if (stat.isFile()) {
+                    // Tunatafuta kwenye kodi zote (.dex), xml, json au kwenye mali zilizomo (assets)
                     if (file.endsWith('.xml') || file.endsWith('.dex') || file.includes('assets/') || file.endsWith('.json')) {
                         try {
                             const content = await fs.readFile(fullPath, 'utf8');
                             const lowerContent = content.toLowerCase();
+                            const baseFileName = path.basename(file); // Mfano: classes.dex au classes2.dex
 
-                            // 1. Winda Sehemu za Malipo
+                            // 1. Tafuta Malipo na Uhifadhi faili ilipopatikana
                             paymentKeywords.forEach(keyword => {
                                 if (lowerContent.includes(keyword)) {
-                                    // Kama neno limepatikana, tunanasa sehemu hiyo ilipo
-                                    paymentGateways.add(keyword.toUpperCase());
+                                    const keyUpper = keyword.toUpperCase();
+                                    if (!paymentMap.has(keyUpper)) {
+                                        paymentMap.set(keyUpper, new Set());
+                                    }
+                                    paymentMap.get(keyUpper).add(baseFileName);
                                 }
                             });
 
@@ -92,9 +96,12 @@ const cmd = {
                                         const cleanUrl = u.split(/[)"'`]/)[0];
                                         foundUrls.add(cleanUrl);
                                         
-                                        // Kama URL ina maneno ya malipo, iweke pia kwenye malipo
                                         if (paymentKeywords.some(k => cleanUrl.toLowerCase().includes(k))) {
-                                            paymentGateways.add(`API Link: ${cleanUrl}`);
+                                            const keyApi = `API: ${cleanUrl}`;
+                                            if (!paymentMap.has(keyApi)) {
+                                                paymentMap.set(keyApi, new Set());
+                                            }
+                                            paymentMap.get(keyApi).add(baseFileName);
                                         }
                                     }
                                 });
@@ -113,7 +120,7 @@ const cmd = {
                                 if (pkgMatch) packageName = pkgMatch[1];
                             }
                         } catch (e) {
-                            // Faili lisilosomeka linapitwa
+                            // Pitia mafaili yasiyosomika
                         }
                     }
                 }
@@ -125,20 +132,21 @@ const cmd = {
             ripoti += `📝 *Jina la Faili:* \`${fileName}\`\n`;
             ripoti += `🆔 *Package Name:* \`${packageName}\`\n\n`;
 
-            // 💰 SEHEMU YA MALIPO (PAYMENTS)
-            ripoti += `💰 *MIFUMO YA MALIPO / TRANSACTIONS:*\n`;
-            if (paymentGateways.size > 0) {
-                Array.from(paymentGateways).forEach(pg => {
-                    ripoti += `  💳 \`${pg}\`\n`;
-                });
+            // 💰 SEHEMU YA MALIPO (PAYMENTS & LOCATIONS)
+            ripoti += `💰 *MIFUMO YA MALIPO NA MAENEO YALIPO:*\n`;
+            if (paymentMap.size > 0) {
+                for (let [keyword, filesFound] of paymentMap.entries()) {
+                    const filesList = Array.from(filesFound).join(', ');
+                    ripoti += `  💳 \`${keyword}\` \n     📍 _Kwenye faili:_ [\`${filesList}\`]\n\n`;
+                }
             } else {
-                ripoti += `  🍃 _Hakuna viashiria vya wazi vya mifumo ya malipo vilivyopatikana._\n`;
+                ripoti += `  🍃 _Hakuna viashiria vya mifumo ya malipo vilivyopatikana._\n\n`;
             }
 
             // 🛡️ RUHUSA (PERMISSIONS)
-            ripoti += `\n🛡️ *RUHUSA ZILIZOPATIKANA (${permissions.length}):*\n`;
+            ripoti += `🛡️ *RUHUSA ZILIZOPATIKANA (${permissions.length}):*\n`;
             if (permissions.length > 0) {
-                permissions.slice(0, 10).forEach(p => {
+                permissions.slice(0, 8).forEach(p => {
                     const shortPerm = p.replace('android.permission.', '');
                     if (['READ_SMS', 'RECEIVE_SMS', 'RECORD_AUDIO', 'CAMERA', 'ACCESS_FINE_LOCATION'].some(danger => shortPerm.includes(danger))) {
                         ripoti += `  ⚠️ \`${shortPerm}\` *(Hatari)*\n`;
@@ -146,17 +154,17 @@ const cmd = {
                         ripoti += `  🔹 \`${shortPerm}\`\n`;
                     }
                 });
-                if (permissions.length > 10) ripoti += `  *...na zingine ${permissions.length - 10}*\n`;
+                if (permissions.length > 8) ripoti += `  *...na zingine ${permissions.length - 8}*\n`;
             }
 
             // 🔗 VIUNGO (URLs)
             ripoti += `\n🔗 *VIUNGO VYA NETWORK (URLs) [${foundUrls.size}]:*\n`;
             if (foundUrls.size > 0) {
-                const urlList = Array.from(foundUrls).slice(0, 8);
+                const urlList = Array.from(foundUrls).slice(0, 5);
                 urlList.forEach(u => {
                     ripoti += `  📌 ${u}\n`;
                 });
-                if (foundUrls.size > 8) ripoti += `  _...na link zingine ${foundUrls.size - 8} zimegundulika._\n`;
+                if (foundUrls.size > 5) ripoti += `  _...na link zingine ${foundUrls.size - 5} zimegundulika._\n`;
             }
 
             ripoti += `\n===============================\n`;
