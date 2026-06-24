@@ -39,15 +39,9 @@ import { initGroupProtection } from './commands/admin.js';
 import { handleAntiLink } from './lib/antilink.js';
 import pairingRouter from './pairing.js';
 
-import pg from 'pg';
-const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    max: 5,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000
-});
-global.dbPool = pool;
+// ✅ FIX C-2: Tumia shared pool badala ya pool mpya
+import { getPool } from './lib/db.js';
+global.dbPool = getPool();
 
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
@@ -98,7 +92,7 @@ const C = {
     green: '\x1b[32m', greenBright: '\x1b[92m',
     yellow: '\x1b[33m', yellowBright: '\x1b[93m',
     red: '\x1b[31m', redBright: '\x1b[91m',
-    gray: '\x1b[90m', white: '\x1b[97w',
+    gray: '\x1b[90m', white: '\x1b[97m',  // ✅ FIX L-1: 'w' → 'm'
     blue: '\x1b[34m', blueBright: '\x1b[94m',
     magenta: '\x1b[35m', magentaBright: '\x1b[95m',
 };
@@ -406,7 +400,8 @@ function startHealthCheck() {
         const ws = global.sock?.ws?.readyState;
         const idleTime = Date.now() - lastEventTime;
 
-        if (ws === 2 || ws === 3 || idleTime > 600000) {
+        // ✅ FIX M-1: Punguza kutoka 600000 (10min) → 300000 (5min)
+        if (ws === 2 || ws === 3 || idleTime > 300000) {
             log.warn(`⚠️ Health Check: Dead connection detected. WS:${ws}, Idle:${Math.floor(idleTime / 1000)}s — inarestart...`);
             clearBackgroundTimers();
             isConnecting = false;
@@ -422,8 +417,8 @@ function startKeepalive() {
     keepaliveTimer = setInterval(async () => {
         try {
             if (global.sock?.ws?.readyState === 1) {
+                // ✅ FIX M-2: Tuma 'available' mara moja tu, ondoa 'unavailable'
                 await global.sock.sendPresenceUpdate('available');
-                await global.sock.sendPresenceUpdate('unavailable');
                 lastEventTime = Date.now();
                 const ping = await measurePing();
                 updateBanner('ping', ping);
@@ -494,8 +489,14 @@ async function startBot() {
 
         global.sockInstance = global.sock;
 
+        // ✅ FIX C-8: Unganisha listeners mbili za creds.update kuwa moja
+        let preKeyCount = 0;
         global.sock.ev.on('creds.update', async (update) => {
             try {
+                preKeyCount++;
+                if (preKeyCount % 5 === 0) {
+                    log.info(`Pre-keys upload count: ${preKeyCount}`);
+                }
                 await saveCreds(update);
             } catch (err) {
                 log.error(`Creds save failed: ${err.message}`);
@@ -503,14 +504,6 @@ async function startBot() {
         });
 
         setupContactListener(global.sock);
-
-        let preKeyCount = 0;
-        global.sock.ev.on('creds.update', () => {
-            preKeyCount++;
-            if (preKeyCount % 5 === 0) {
-                log.info(`Pre-keys upload count: ${preKeyCount}`);
-            }
-        });
 
         const updateLastEvent = () => { lastEventTime = Date.now(); };
         global.sock.ev.on('connection.update', updateLastEvent);
