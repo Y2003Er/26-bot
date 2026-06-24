@@ -11,13 +11,8 @@ export const alias       = ['alive', 'test'];
 export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
-    const from  = msg.key.remoteJid;
-    const start = Date.now();
-
-    await sock.sendMessage(from, {
-        text: '🏓 Pong!'
-    }, { quoted: msg });
-
+    const from    = msg.key.remoteJid;
+    const start   = Date.now();
     const latency = Date.now() - start;
 
     await sock.sendMessage(from, {
