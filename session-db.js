@@ -1,29 +1,13 @@
-// session-db.js – FIXED v2.0 by 26-TECH
+// session-db.js – FIXED v2.1 by 26-TECH
 // FIX C-1: Debounce keys.set() — ilikuwa inafanya DB write kwa kila key update
+// FIX C-2: Tumia shared pool kutoka lib/db.js — inaondoa pool ya pili
 // FIX M-3: Debounce saveCreds — ilikuwa inaweza kufanya concurrent writes
-import { Pool } from 'pg';
+
+import { getPool } from './lib/db.js';
 import pino from 'pino';
 import { initAuthCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
 
 const logger = pino({ level: 'silent' });
-
-let pool = null;
-
-function getPool() {
-    if (pool) return pool;
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) throw new Error('DATABASE_URL missing');
-    pool = new Pool({
-        connectionString,
-        ssl: { rejectUnauthorized: false },
-        max: 5,
-        connectionTimeoutMillis: 30000,
-        keepAlive: true,
-        keepAliveInitialDelayMillis: 10000,
-    });
-    pool.on('error', (err) => console.error('[DB] Pool error:', err.message));
-    return pool;
-}
 
 function reviveBuffers(obj) {
     if (obj == null) return obj;
@@ -148,9 +132,7 @@ export async function usePostgresAuthState(sessionId) {
     const creds = reviveBuffers(fullState?.creds) || initAuthCreds();
     let keysStore = reviveBuffers(fullState?.keys) || {};
 
-    // ── FIX C-1: Timer ya debounce kwa keys.set()
-    // Ilikuwa: kila keys.set() → saveState() mara moja
-    // Sasa: inakusanya mabadiliko yote kwa ms 500, kisha inaandika mara moja tu
+    // ── FIX C-1: Debounce keys.set()
     let keysDebounceTimer = null;
 
     function scheduleKeysSave() {
@@ -190,7 +172,6 @@ export async function usePostgresAuthState(sessionId) {
                     }
                 }
             }
-            // FIX C-1: scheduleKeysSave() badala ya saveState() moja kwa moja
             if (changed) {
                 scheduleKeysSave();
             }
@@ -199,9 +180,7 @@ export async function usePostgresAuthState(sessionId) {
 
     const keys = makeCacheableSignalKeyStore(keyStore, logger);
 
-    // ── FIX M-3: Debounce saveCreds pia
-    // Ilikuwa: kila creds.update event → saveState() mara moja
-    // Sasa: inakusanya updates zote kwa ms 300, kisha inaandika mara moja tu
+    // ── FIX M-3: Debounce saveCreds
     let credsDebounceTimer = null;
 
     const saveCreds = async (update) => {
