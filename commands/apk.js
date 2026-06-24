@@ -294,12 +294,76 @@ const SECRET_PATTERNS = [
     { type: 'Bearer Token',       regex: /Bearer\s+[A-Za-z0-9\-_=+/]{20,}/ },
 ];
 
+// ─── LICENSE / PATCH DETECTION PATTERNS ──────────────────────────────────────
+
+const LICENSE_PATCH_PATTERNS = [
+    // ── Boolean flags za premium/paid status ─────────────────────────────────
+    { pattern: /isPremium|isPaid|isSubscribed|isPurchased/i,        label: 'Premium Status Flag' },
+    { pattern: /hasPurchased|hasSubscription|hasPro|hasLicense/i,   label: 'Purchase State Flag' },
+    { pattern: /isUnlocked|isActivated|isLicensed|isFull/i,         label: 'Unlock/License Flag' },
+    { pattern: /premiumUser|proUser|paidUser|vipUser/i,              label: 'User Tier Variable' },
+
+    // ── License validation logic ──────────────────────────────────────────────
+    { pattern: /LicenseChecker|LicenseValidator|LicenseManager/i,   label: 'License Checker Class' },
+    { pattern: /checkLicense|validateLicense|verifyLicense/i,        label: 'License Validation Method' },
+    { pattern: /LICENSED|NOT_LICENSED|RETRY/i,                       label: 'Android LVL Response Codes' },
+    { pattern: /com\.android\.vending\.licensing/i,                  label: 'Google Play License Verification Library (LVL)' },
+    { pattern: /Policy\.LICENSED/i,                                  label: 'LVL Policy Check' },
+    { pattern: /ServerManagedPolicy|StrictPolicy/i,                  label: 'LVL Policy Class' },
+    { pattern: /AESObfuscator/i,                                     label: 'LVL AES Obfuscator (license key storage)' },
+
+    // ── Server-side verification endpoints ───────────────────────────────────
+    { pattern: /verif(y|ication)[_\s]?(token|key|code|purchase)/i,  label: 'Server Verification Call' },
+    { pattern: /validatePurchase|verifyPurchase|verifyReceipt/i,     label: 'Purchase Verification' },
+    { pattern: /\/api\/.*(licen|verif|subscri|premium|paid)/i,       label: 'License/Premium API Endpoint' },
+    { pattern: /receipt[_\s]?validat/i,                              label: 'Receipt Validation' },
+    { pattern: /purchaseToken/i,                                     label: 'Purchase Token (Play Billing)' },
+    { pattern: /originalTransactionId/i,                             label: 'Original Transaction ID (iOS style)' },
+
+    // ── Google Play Billing confirmation ─────────────────────────────────────
+    { pattern: /acknowledgePurchase/i,                               label: 'Play Billing: acknowledgePurchase (CRITICAL)' },
+    { pattern: /onPurchasesUpdated/i,                                label: 'Play Billing: onPurchasesUpdated' },
+    { pattern: /BillingClient\.newBuilder/i,                         label: 'Play BillingClient Init' },
+    { pattern: /launchBillingFlow/i,                                 label: 'Play: launchBillingFlow (payment trigger)' },
+    { pattern: /queryPurchasesAsync|queryPurchaseHistoryAsync/i,     label: 'Play: Query Purchase History' },
+    { pattern: /Purchase\.PurchaseState\.PURCHASED/i,                label: 'Play: PURCHASED state check' },
+
+    // ── Activation codes / serial keys ───────────────────────────────────────
+    { pattern: /activationCode|serialKey|licenseKey|productKey/i,    label: 'Activation/Serial Key' },
+    { pattern: /activat(e|ion)[_\s]?(server|url|endpoint)/i,         label: 'Activation Server Call' },
+    { pattern: /registerDevice|deviceRegistration/i,                 label: 'Device Registration' },
+
+    // ── Trial / expiry logic ──────────────────────────────────────────────────
+    { pattern: /trialExpir|trialEnd|trialPeriod|trialDays/i,         label: 'Trial Expiry Logic' },
+    { pattern: /expiryDate|expirationDate|subscriptionEnd/i,         label: 'Subscription Expiry Date' },
+    { pattern: /gracePeriod/i,                                       label: 'Grace Period Logic' },
+    { pattern: /isExpired|hasExpired|checkExpiry/i,                  label: 'Expiry Check' },
+
+    // ── Feature gating ────────────────────────────────────────────────────────
+    { pattern: /featureFlag|featureGate|featureEnabled/i,            label: 'Feature Flag/Gate' },
+    { pattern: /isFeatureAvailable|isFeatureEnabled/i,               label: 'Feature Availability Check' },
+    { pattern: /premiumFeature|proFeature|paidFeature/i,             label: 'Premium Feature Gate' },
+    { pattern: /unlockFeature|lockFeature/i,                         label: 'Feature Lock/Unlock' },
+
+    // ── Anti-tamper / integrity checks ───────────────────────────────────────
+    { pattern: /checkSignature|verifySignature|getSignature/i,       label: '⚠️ Signature Integrity Check' },
+    { pattern: /PackageManager.*GET_SIGNATURES/i,                    label: '⚠️ APK Signature Verification' },
+    { pattern: /SafetyNet|PlayIntegrity|attestation/i,               label: '⚠️ Google SafetyNet/Play Integrity' },
+    { pattern: /isRooted|detectRoot|RootBeer/i,                      label: '⚠️ Root Detection' },
+    { pattern: /isEmulator|detectEmulator/i,                         label: '⚠️ Emulator Detection' },
+    { pattern: /tamper|integrity[_\s]?check/i,                       label: '⚠️ Tamper Detection' },
+    { pattern: /CRC|checksum/i,                                      label: '⚠️ Checksum Verification' },
+
+    // ── Obfuscation signs ─────────────────────────────────────────────────────
+    { pattern: /proguard|r8|obfuscat/i,                              label: 'Code Obfuscation (ProGuard/R8)' },
+];
+
 // ─── MAIN COMMAND ─────────────────────────────────────────────────────────────
 
 const cmd = {
     name: 'chambua',
     alias: ['apk', 'analyzeapk'],
-    description: 'Uchambuzi wa kina wa APK — malipo, signing, secrets, permissions.',
+    description: 'Uchambuzi wa kina wa APK — malipo, signing, secrets, permissions, license/patch detection.',
     category: 'tools',
 
     async execute(sock, msg, args) {
@@ -366,6 +430,7 @@ const cmd = {
                 const paymentMap   = new Map();
                 const confirmMap   = new Map();
                 const signingMap   = new Map();
+                const licenseMap   = new Map(); // ← MPYA
                 const secretsFound = [];
                 const permissions  = [];
                 let packageName    = 'Haijulikani';
@@ -387,15 +452,14 @@ const cmd = {
                     try {
                         if (ext === '.dex') {
                             const buf = await fs.readFile(fullPath);
-                            content   = extractStringsFromBuffer(buf).join('\n'); // array → string
+                            content   = extractStringsFromBuffer(buf).join('\n');
 
                         } else if (baseName === 'AndroidManifest.xml') {
                             const buf  = await fs.readFile(fullPath);
                             const text = buf.toString('utf8');
                             const isText = text.includes('<?xml') || text.includes('manifest');
-                            content = isText ? text : readManifestStrings(buf); // readManifestStrings does array.join internally
+                            content = isText ? text : readManifestStrings(buf);
 
-                            // Package name extraction — split from metadata block below
                             if (packageName === 'Haijulikani') {
                                 if (isText) {
                                     const pkgMatch = content.match(/package[=\s:]+["']?([a-z][a-z0-9_.]+)/i);
@@ -443,6 +507,14 @@ const cmd = {
                         }
                     }
 
+                    // ── License / Patch detection ────────────────────────────
+                    for (const { pattern, label } of LICENSE_PATCH_PATTERNS) {
+                        if (pattern.test(content)) {
+                            if (!licenseMap.has(label)) licenseMap.set(label, new Set());
+                            licenseMap.get(label).add(baseName);
+                        }
+                    }
+
                     // URLs
                     const urlRegex = /https?:\/\/[^\s"'`<>\\)]{8,}/g;
                     for (const u of (content.match(urlRegex) || [])) {
@@ -467,7 +539,7 @@ const cmd = {
                         if (!permissions.includes(m[1])) permissions.push(m[1]);
                     }
 
-                    // Manifest metadata (version/sdk only — package handled above)
+                    // Manifest metadata
                     if (baseName === 'AndroidManifest.xml') {
                         const verMatch = content.match(/versionName[=\s:]+["']?([\d.]+)/i);
                         if (verMatch) appVersion = verMatch[1];
@@ -598,6 +670,87 @@ const cmd = {
                     if (otherUrls.length > 4) r += `  _...na ${otherUrls.length - 4} zaidi_\n`;
                 }
                 if (foundUrls.size === 0) r += `  🍃 _Hakuna URLs._\n`;
+
+                // ── LICENSE / PATCH DETECTION ────────────────────────────────
+                const antiTamper    = [...licenseMap.entries()].filter(([l]) => l.includes('⚠️'));
+                const licenseChecks = [...licenseMap.entries()].filter(([l]) =>
+                    /license|lvl|verif|receipt|purchaseToken/i.test(l) && !l.includes('⚠️')
+                );
+                const featureGates  = [...licenseMap.entries()].filter(([l]) =>
+                    /premium|feature|flag|gate|trial|expir|unlock/i.test(l) && !l.includes('⚠️')
+                );
+                const playBilling   = [...licenseMap.entries()].filter(([l]) =>
+                    /play billing|play:/i.test(l) && !l.includes('⚠️')
+                );
+                const otherLicense  = [...licenseMap.entries()].filter(([l]) =>
+                    !antiTamper.some(([ll]) => ll === l) &&
+                    !licenseChecks.some(([ll]) => ll === l) &&
+                    !featureGates.some(([ll]) => ll === l) &&
+                    !playBilling.some(([ll]) => ll === l)
+                );
+
+                r += `\n🔓 *ULINZI WA MALIPO / PATCH DETECTION (${licenseMap.size}):*\n`;
+
+                if (licenseMap.size === 0) {
+                    r += `  🍃 _Hakuna license checks zilizopatikana — app inaweza kuwa rahisi ku-patch._\n`;
+                } else {
+                    if (antiTamper.length > 0) {
+                        r += `  *🛡️ Anti-Tamper / Integrity:*\n`;
+                        antiTamper.forEach(([label, files]) => {
+                            r += `    ${label}\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        });
+                    }
+
+                    if (licenseChecks.length > 0) {
+                        r += `  *🔑 License Verification:*\n`;
+                        licenseChecks.forEach(([label, files]) => {
+                            r += `    🔑 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        });
+                    }
+
+                    if (playBilling.length > 0) {
+                        r += `  *🏪 Google Play Billing:*\n`;
+                        playBilling.forEach(([label, files]) => {
+                            r += `    🏪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        });
+                    }
+
+                    if (featureGates.length > 0) {
+                        r += `  *🚪 Feature Gates / Trial Logic:*\n`;
+                        featureGates.forEach(([label, files]) => {
+                            r += `    🚪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        });
+                    }
+
+                    if (otherLicense.length > 0) {
+                        r += `  *📋 Nyingine:*\n`;
+                        otherLicense.forEach(([label, files]) => {
+                            r += `    📋 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        });
+                    }
+
+                    // PATCH DIFFICULTY ASSESSMENT
+                    const hasAntiTamper    = antiTamper.length > 0;
+                    const hasServerVerif   = licenseChecks.some(([l]) => /server|receipt|token/i.test(l));
+                    const hasPlayIntegrity = antiTamper.some(([l]) => /safetynet|integrity|attestation/i.test(l));
+
+                    let patchDifficulty, patchEmoji;
+                    if (hasPlayIntegrity && hasServerVerif) {
+                        patchDifficulty = 'Ngumu Sana — Server + Play Integrity inahitajika kupita';
+                        patchEmoji = '🔴';
+                    } else if (hasServerVerif) {
+                        patchDifficulty = 'Ngumu — Verification iko server-side, patch ya local haitoshi';
+                        patchEmoji = '🟠';
+                    } else if (hasAntiTamper) {
+                        patchDifficulty = 'Wastani — Anti-tamper ipo lakini inaweza kupita kwa smali/frida';
+                        patchEmoji = '🟡';
+                    } else {
+                        patchDifficulty = 'Rahisi — Hakuna server verification wala anti-tamper';
+                        patchEmoji = '🟢';
+                    }
+
+                    r += `\n  *🎯 Ugumu wa Ku-Patch:* ${patchEmoji} ${patchDifficulty}\n`;
+                }
 
                 r += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ _Uchambuzi umekamilika!_`;
 
