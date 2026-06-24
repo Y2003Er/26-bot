@@ -1,4 +1,8 @@
-'use strict';
+// commands/ai.js — FIXED v2.0 by 26-TECH
+// FIX C-5: saveConversation inakubali history iliyopo — inaondoa SELECT ya pili
+// FIX C-6: typingDelay imepunguzwa kutoka max 4000ms → max 1200ms
+// FIX M-8: Pool max imepunguzwa kutoka 20 → 5
+// FIX L-2: Ondoa 'use strict' — ESM ni strict kiotomatiki
 
 import dotenv from 'dotenv';
 dotenv.config();
@@ -7,23 +11,22 @@ import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import { GoogleGenAI } from '@google/genai';
 
-const logger = pino({ level: 'info' });
+const logger = pino({ level: 'silent' });
 
-// Singleton PostgreSQL Pool ikiwa na ulinzi wa Error handling ya ngazi ya juu
+// ════════════════════════════════════════════════
+//   DB POOL — Singleton salama, max 5 connections
+// ════════════════════════════════════════════════
 let pool;
 try {
     global.dbPool ||= new Pool({
         connectionString: process.env.DATABASE_URL,
         ssl: { rejectUnauthorized: false },
-        max: 20, // Limit connections kuzuia database kujaa
+        max: 5,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
+        connectionTimeoutMillis: 10000,
     });
     pool = global.dbPool;
 
-    // ════════════════════════════════════════════
-    //   REKEBISHO: Ongeza kisikilizaji mara moja tu
-    // ════════════════════════════════════════════
     if (!global._dbPoolErrorHandlerAttached) {
         pool.on('error', (err) => {
             logger.error('Unexpected error on idle PostgreSQL client:', err.message);
@@ -36,7 +39,6 @@ try {
 
 const MAX_HISTORY = 20;
 
-// Helper ya kupata Gemini Client iliyo hai kiotomatiki kwa ajili ya Vision/Audio
 function getGeminiKeys() {
     const keysRaw = process.env.GEMINI_API_KEYS;
     if (!keysRaw) return [];
@@ -44,7 +46,7 @@ function getGeminiKeys() {
 }
 
 // ════════════════════════════════════════════════
-//   🧠 MEMORY — PostgreSQL (Ulinzi wa Hali ya Juu)
+//   🧠 MEMORY — PostgreSQL
 // ════════════════════════════════════════════════
 async function initMemoryTable() {
     if (!pool) return;
@@ -74,10 +76,13 @@ async function getHistory(userId) {
     }
 }
 
-async function saveConversation(userId, userMsg, aiMsg) {
+// FIX C-5: Pokea existingHistory kama parameter
+// Ilikuwa: inafanya getHistory() tena ndani — SELECT mbili kwa kila .ai command
+// Sasa: tumia history iliyopitishwa kutoka execute() — SELECT moja tu
+async function saveConversation(userId, userMsg, aiMsg, existingHistory = null) {
     if (!pool) return;
     try {
-        const history = await getHistory(userId);
+        const history = existingHistory !== null ? [...existingHistory] : await getHistory(userId);
         history.push(
             { role: 'user',      content: userMsg },
             { role: 'assistant', content: aiMsg   }
@@ -94,9 +99,9 @@ async function saveConversation(userId, userMsg, aiMsg) {
     }
 }
 
-// =====================
-// 🤖 26 TECH AI - AGNOSTIC & DYNAMIC PROMPT
-// =====================
+// ════════════════════════════════════════════════
+//   🤖 SYSTEM PROMPT
+// ════════════════════════════════════════════════
 const SYSTEM = `Wewe ni 26 Tech AI, mshirika wa kiakili aliyetengenezwa na 26 Tech Solution (Yuzzo). Utambulisho wako ni 26 Tech AI pekee. 
 
 Wewe si roboti kavu. Una akili ya kiufundi, lakini pia unaelewa hisia za binadamu na unajibu kulingana na hali ya mazungumzo.
@@ -137,10 +142,9 @@ Wewe si roboti kavu. Una akili ya kiufundi, lakini pia unaelewa hisia za binadam
 *Kumbuka: Wewe ni 26 Tech AI — mwenye akili ya kubadilika, fupi, mwenye mamlaka, na unajali mtu unayeongea naye.*`;
 
 // ════════════════════════════════════════════════
-//   ⚡ AI PROVIDERS — Text
+//   ⚡ AI PROVIDERS
 // ════════════════════════════════════════════════
 
-// ── 1. GEMINI (Pamoja na Rotation ya Keys zote 10) ──
 async function callGemini(messages) {
     const keys = getGeminiKeys();
     if (keys.length === 0) throw new Error('GEMINI_API_KEYS haipo kwenye variables (.env)');
@@ -148,7 +152,6 @@ async function callGemini(messages) {
     let keyIndex = 0;
     while (keyIndex < keys.length) {
         try {
-            logger.info(`[Gemini Rotation] Tunajaribu kutumia Key namba ${keyIndex + 1}/${keys.length}...`);
             const currentKey = keys[keyIndex];
             const genaiClient = new GoogleGenAI({ apiKey: currentKey });
 
@@ -165,22 +168,21 @@ async function callGemini(messages) {
                 contents,
                 config: {
                     systemInstruction: systemMsg,
-                    temperature:     0.3,
-                    maxOutputTokens: 2048
+                    temperature:       0.3,
+                    maxOutputTokens:   2048
                 }
             });
 
             if (response?.text) return response.text;
             throw new Error('Gemini imerudisha jibu tupu');
         } catch (e) {
-            logger.warn(`⚠️ [Gemini Rotation] Key namba ${keyIndex + 1} imefeli au imejaa limit. Tunahamia inayofuata...`);
+            logger.warn(`⚠️ [Gemini] Key ${keyIndex + 1} imefeli. Inaendelea...`);
             keyIndex++;
         }
     }
-    throw new Error('Akaunti zote za Gemini zilizowekwa zimegonga limit!');
+    throw new Error('Akaunti zote za Gemini zimegonga limit!');
 }
 
-// ── 2. GROQ (Pamoja na Rotation ya Keys zote 10) ──
 async function callGroq(messages) {
     const keysRaw = process.env.GROQ_API_KEYS;
     if (!keysRaw) throw new Error('GROQ_API_KEYS haipo kwenye variables (.env)');
@@ -196,7 +198,6 @@ async function callGroq(messages) {
         const timer = setTimeout(() => controller.abort(), 30000);
 
         try {
-            logger.info(`[Groq Rotation] Tunajaribu kutumia Key namba ${keyIndex + 1}/${keys.length}...`);
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -215,7 +216,7 @@ async function callGroq(messages) {
             const data = await res.json();
 
             if (res.status === 429 || data.error?.type === 'quota_exceeded' || data.error?.code === 'rate_limit_exceeded') {
-                logger.warn(`⚠️ [Groq Rotation] Key namba ${keyIndex + 1} imejaa limit. Tunahamia inayofuata...`);
+                logger.warn(`⚠️ [Groq] Key ${keyIndex + 1} imejaa limit. Inaendelea...`);
                 keyIndex++;
                 clearTimeout(timer);
                 continue;
@@ -226,40 +227,37 @@ async function callGroq(messages) {
             aiContent = data.choices?.[0]?.message?.content || null;
             success = true;
         } catch (e) {
-            logger.error(`Error kwenye Groq key namba ${keyIndex + 1}: ${e.message}`);
+            logger.error(`Error kwenye Groq key ${keyIndex + 1}: ${e.message}`);
             keyIndex++;
         } finally {
             clearTimeout(timer);
         }
     }
 
-    if (!success) throw new Error('Akaunti zote za Groq zilizowekwa zimegonga limit!');
+    if (!success) throw new Error('Akaunti zote za Groq zimegonga limit!');
     return aiContent;
 }
 
-// ── ROUTER: Gemini Rotation → Groq Rotation ──
 async function aiRouter(messages) {
-    // 1. Jaribu mzunguko wa Gemini kwanza
     try {
         const result = await callGemini(messages);
         if (result) return result;
     } catch (e) {
-        logger.warn(`Gemini zote zimefeli au zimegonga limit — sasa tunahamia kwenye mzunguko wa Groq...`);
+        logger.warn(`Gemini zote zimefeli — inahamia Groq...`);
     }
 
-    // 2. Jaribu mzunguko wa Groq kama fallback
     try {
         const result = await callGroq(messages);
         if (result) return result;
     } catch (e) {
-        logger.error(`Mifumo yote miwili (Gemini na Groq) imemaliza ukomo kwa sasa: ${e.message}`);
+        logger.error(`Mifumo yote miwili imefeli: ${e.message}`);
     }
 
-    return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache wakati mafundi wa *26 Tech Solution* wakikamilisha maboresho. Asante! 🙏`;
+    return `⚠️ *Mfumo unafanyiwa matengenezo kidogo kwa sasa.* \n\nNdugu mteja, naomba ujaribu tena baada ya dakika chache. Asante! 🙏`;
 }
 
 // ════════════════════════════════════════════════
-//   🖼️ IMAGE ANALYSIS — Gemini Vision (with Key Rotation)
+//   🖼️ IMAGE ANALYSIS
 // ════════════════════════════════════════════════
 async function analyzeImage(imageBuffer, mimeType, userQuestion) {
     const keys = getGeminiKeys();
@@ -282,10 +280,10 @@ async function analyzeImage(imageBuffer, mimeType, userQuestion) {
                         { text: prompt }
                     ]
                 }],
-                config: { 
+                config: {
                     systemInstruction: SYSTEM,
-                    temperature: 0.4, 
-                    maxOutputTokens: 2048 
+                    temperature:       0.4,
+                    maxOutputTokens:   2048
                 }
             });
 
@@ -293,7 +291,7 @@ async function analyzeImage(imageBuffer, mimeType, userQuestion) {
             if (text) return { result: text, provider: `Gemini Vision (Key ${keyIndex + 1})` };
             throw new Error('Jibu tupu la picha');
         } catch (e) {
-            logger.warn(`⚠️ [Vision Rotation] Key namba ${keyIndex + 1} imefeli kwenye picha. Tunahamia inayofuata...`);
+            logger.warn(`⚠️ [Vision] Key ${keyIndex + 1} imefeli. Inaendelea...`);
             keyIndex++;
         }
     }
@@ -301,10 +299,9 @@ async function analyzeImage(imageBuffer, mimeType, userQuestion) {
 }
 
 // ════════════════════════════════════════════════
-//   🎤 VOICE NOTE — Gemini Audio → Groq Whisper (with Key Rotation)
+//   🎤 VOICE NOTE TRANSCRIPTION
 // ════════════════════════════════════════════════
 async function transcribeAudio(audioBuffer, mimeType) {
-    // ── 1. Gemini Audio Rotation ──
     const geminiKeys = getGeminiKeys();
     let geminiIndex = 0;
 
@@ -323,10 +320,10 @@ async function transcribeAudio(audioBuffer, mimeType) {
                         { text: 'Transcribe kwa usahihi maneno yote yaliyosemwa kwenye audio hii. Toa maandishi tu bila maelezo mengine.' }
                     ]
                 }],
-                config: { 
+                config: {
                     systemInstruction: SYSTEM,
-                    temperature: 0.1, 
-                    maxOutputTokens: 2048 
+                    temperature:       0.1,
+                    maxOutputTokens:   2048
                 }
             });
 
@@ -334,12 +331,11 @@ async function transcribeAudio(audioBuffer, mimeType) {
             if (text) return { transcript: text, provider: `Gemini Audio (Key ${geminiIndex + 1})` };
             throw new Error('Transcript tupu');
         } catch (e) {
-            logger.warn(`⚠️ [Audio Gemini Rotation] Key ${geminiIndex + 1} imefeli. Tunajaribu inayofuata...`);
+            logger.warn(`⚠️ [Audio] Key ${geminiIndex + 1} imefeli. Inaendelea...`);
             geminiIndex++;
         }
     }
 
-    // ── 2. Groq Whisper Fallback Rotation ──
     const keysRaw = process.env.GROQ_API_KEYS;
     if (keysRaw) {
         const keys = keysRaw.split(',').map(k => k.trim()).filter(Boolean);
@@ -365,20 +361,20 @@ async function transcribeAudio(audioBuffer, mimeType) {
                 });
 
                 if (res.status === 429) {
-                    logger.warn(`⚠️ [Whisper Rotation] Key namba ${keyIndex + 1} imejaa. Tunasonga mbele...`);
+                    logger.warn(`⚠️ [Whisper] Key ${keyIndex + 1} imejaa. Inaendelea...`);
                     keyIndex++;
                     clearTimeout(timer);
                     continue;
                 }
 
-                if (!res.ok) throw new Error(`Groq Whisper standard failed: ${res.status}`);
+                if (!res.ok) throw new Error(`Groq Whisper failed: ${res.status}`);
                 const text = await res.text();
                 if (text?.trim()) {
                     clearTimeout(timer);
                     return { transcript: text.trim(), provider: `Groq Whisper (Key ${keyIndex + 1})` };
                 }
             } catch (e) {
-                logger.error(`Whisper error kwenye key namba ${keyIndex + 1}: ${e.message}`);
+                logger.error(`Whisper error key ${keyIndex + 1}: ${e.message}`);
                 keyIndex++;
             } finally {
                 clearTimeout(timer);
@@ -386,11 +382,11 @@ async function transcribeAudio(audioBuffer, mimeType) {
         }
     }
 
-    throw new Error('Transcription imeshindwa kabisa kwenye keys zote za mifumo yote miwili.');
+    throw new Error('Transcription imeshindwa kabisa kwenye keys zote.');
 }
 
 // ════════════════════════════════════════════════
-//   🖼️ PHOTO EDITOR (sharp)
+//   🖼️ PHOTO EDITOR
 // ════════════════════════════════════════════════
 async function handlePhoto(sock, msg, from, commandText) {
     let sharp;
@@ -470,22 +466,23 @@ async function handleVoiceNote(sock, msg, from, sender) {
 
         const history  = await getHistory(sender);
         const messages = [
-            { role: 'system',    content: SYSTEM },
+            { role: 'system', content: SYSTEM },
             ...history,
-            { role: 'user',      content: `[Voice Note]: ${transcript}` }
+            { role: 'user',   content: `[Voice Note]: ${transcript}` }
         ];
 
         const aiReply = await aiRouter(messages);
         if (!aiReply) throw new Error('Jibu la AI limekuja tupu');
 
-        const typingDelay = Math.min(aiReply.length * 30, 4000);
+        // FIX C-6: Punguza delay — ilikuwa max 4000ms, sasa max 1200ms
+        const typingDelay = Math.min(aiReply.length * 8, 1200);
         await new Promise(resolve => setTimeout(resolve, typingDelay));
 
-        await saveConversation(sender, `[Voice]: ${transcript}`, aiReply);
+        // FIX C-5: Pitisha history — inaepuka SELECT ya pili ndani ya saveConversation
+        await saveConversation(sender, `[Voice]: ${transcript}`, aiReply, history);
 
         await sock.sendMessage(from, {
-            text: `🎤 *Ulisema:*\n_${transcript}_\n\n` +
-                  `🤖 *26 Tech AI:*\n\n${aiReply}`
+            text: `🎤 *Ulisema:*\n_${transcript}_\n\n🤖 *26 Tech AI:*\n\n${aiReply}`
         }, { quoted: msg });
 
     } catch (err) {
@@ -523,9 +520,15 @@ async function handleImageAnalysis(sock, msg, from, sender, userQuestion) {
 
         logger.info(`Image analyzed by ${provider}`);
         const question = userQuestion || 'Eleza picha hii';
+
+        // FIX C-5: Image handler haina history fetch — saveConversation itafetch yenyewe
+        // (image handler haifanyi getHistory kabla, kwa hivyo existingHistory = null sawa)
         await saveConversation(sender, `[Picha]: ${question}`, result);
 
-        await sock.sendMessage(from, { text: `🖼️ *26 Tech AI — Image Analysis*\n\n${result}` }, { quoted: msg });
+        await sock.sendMessage(from, {
+            text: `🖼️ *26 Tech AI — Image Analysis*\n\n${result}`
+        }, { quoted: msg });
+
     } catch (err) {
         logger.error('Image analysis failure inside handler:', err.message);
         try {
@@ -549,7 +552,7 @@ export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
     try {
-        const from     = msg?.key?.remoteJid;
+        const from = msg?.key?.remoteJid;
         if (!from) return false;
 
         const sender   = msg.key.participant || from;
@@ -586,8 +589,8 @@ export async function execute(sock, msg, args) {
         if (!fullText) return false;
 
         const contextInfo       = msg.message?.extendedTextMessage?.contextInfo;
-        const quotedParticipant = contextInfo?.participant   || '';
-        const quotedStanzaId    = contextInfo?.stanzaId      || '';
+        const quotedParticipant = contextInfo?.participant || '';
+        const quotedStanzaId    = contextInfo?.stanzaId   || '';
 
         const botId        = sock?.user?.id  || '';
         const botLid       = sock?.user?.lid || '';
@@ -619,22 +622,27 @@ export async function execute(sock, msg, args) {
         try {
             await sock.sendPresenceUpdate('composing', from);
 
+            // FIX C-5: Fetch history mara moja hapa — inapitishwa kwa saveConversation
             const history  = await getHistory(sender);
             const messages = [
-                { role: 'system',    content: SYSTEM },
+                { role: 'system', content: SYSTEM },
                 ...history,
-                { role: 'user',      content: query }
+                { role: 'user',   content: query }
             ];
 
             const reply = await aiRouter(messages);
             if (!reply) throw new Error('Jibu la router limekuja tupu kabisa');
 
-            const typingDelay = Math.min(reply.length * 30, 4000);
+            // FIX C-6: Ilikuwa reply.length * 30, max 4000 — ilichelewesha sekunde 4 kila jibu
+            // Sasa: reply.length * 8, max 1200 — natural feel bila muda mrefu wa kusubiri
+            const typingDelay = Math.min(reply.length * 8, 1200);
             await new Promise(resolve => setTimeout(resolve, typingDelay));
 
-            await saveConversation(sender, query, reply);
+            // FIX C-5: Pitisha history — inaondoa SELECT ya pili ndani ya saveConversation
+            await saveConversation(sender, query, reply, history);
 
             await sock.sendMessage(from, { text: `🤖 *26 Tech AI*\n\n${reply}` }, { quoted: msg });
+
         } catch (err) {
             logger.error('Text AI inner logic error:', err.message);
             await sock.sendMessage(from, { text: `❌ AI imeshindwa: ${err.message}` }, { quoted: msg });
