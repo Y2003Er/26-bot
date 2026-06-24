@@ -18,7 +18,7 @@ function extractStringsFromBuffer(buffer, minLen = 6) {
         }
     }
     if (current.length >= minLen) results.push(current);
-    return results; // array
+    return results;
 }
 
 function extractUtf16Strings(buffer, minLen = 3) {
@@ -44,24 +44,17 @@ function readManifestStrings(buffer) {
 }
 
 // ─── AXML BINARY MANIFEST DECODER ────────────────────────────────────────────
-// Inasoma binary AndroidManifest.xml (AXML format) bila npm package yoyote ya nje.
-// AXML structure: header → string pool → resource IDs → XML nodes
-// String pool iko offset 0x08, kila string iko UTF-16LE au UTF-8 kulingana na flags.
 
 function parseAxmlStringPool(buf) {
-    // Magic check: AXML starts with 0x00080003
     if (buf.length < 8) return [];
     const magic = buf.readUInt32LE(0);
-    if (magic !== 0x00080003) return []; // si AXML halisi
+    if (magic !== 0x00080003) return [];
 
-    const strPoolOffset = 8; // chunk header ya string pool inaanza hapa
+    const strPoolOffset = 8;
     if (buf.length < strPoolOffset + 28) return [];
 
-    // String pool chunk header (28 bytes):
-    // [0] chunkType(4) [4] chunkSize(4) [8] stringCount(4) [12] styleCount(4)
-    // [16] flags(4)    [20] stringsStart(4) [24] stylesStart(4)
     const chunkType    = buf.readUInt32LE(strPoolOffset);
-    if (chunkType !== 0x001C0001) return []; // bukan string pool
+    if (chunkType !== 0x001C0001) return [];
 
     const stringCount  = buf.readUInt32LE(strPoolOffset + 8);
     const flags        = buf.readUInt32LE(strPoolOffset + 16);
@@ -81,22 +74,17 @@ function parseAxmlStringPool(buf) {
 
         try {
             if (isUtf8) {
-                // UTF-8: [utf16len(1-2)] [utf8len(1-2)] [bytes...]
                 let pos = absOff;
-                // skip utf16 length (1 or 2 bytes)
                 if (buf[pos] & 0x80) pos += 2; else pos += 1;
-                // read utf8 length
                 let utf8Len = buf[pos];
                 if (utf8Len & 0x80) { utf8Len = ((utf8Len & 0x7F) << 8) | buf[pos + 1]; pos += 2; }
                 else pos += 1;
                 if (pos + utf8Len > buf.length) continue;
                 strings.push(buf.slice(pos, pos + utf8Len).toString('utf8'));
             } else {
-                // UTF-16LE: [charCount(2)] [chars * 2]
                 if (absOff + 2 > buf.length) continue;
                 let charCount = buf.readUInt16LE(absOff);
                 if (charCount & 0x8000) {
-                    // high-bit set: length spans 2 shorts
                     charCount = ((charCount & 0x7FFF) << 16) | buf.readUInt16LE(absOff + 2);
                 }
                 const start = absOff + 2;
@@ -110,10 +98,8 @@ function parseAxmlStringPool(buf) {
 }
 
 function extractPackageFromAxml(buf) {
-    // Jaribu AXML string pool kwanza
     const axmlStrings = parseAxmlStringPool(buf);
     if (axmlStrings.length > 0) {
-        // "package" attribute value iko mara nyingi kwenye strings za kwanza
         for (const s of axmlStrings) {
             if (
                 s && s.length >= 5 && s.length <= 80 &&
@@ -127,7 +113,6 @@ function extractPackageFromAxml(buf) {
                 return s;
             }
         }
-        // Fallback: chochote kinachofanana na package name kutoka pool
         for (const s of axmlStrings) {
             if (s && /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]+){1,6}$/.test(s) && s.includes('.')) {
                 return s;
@@ -135,7 +120,6 @@ function extractPackageFromAxml(buf) {
         }
     }
 
-    // Fallback ya mwisho: raw string scan (kwa AXML ambazo hazijafuata spec)
     const strings = extractStringsFromBuffer(buf, 5);
     for (const s of strings) {
         if (
@@ -258,6 +242,38 @@ function calcRisk(paymentMap, permissions, secrets) {
     else if (score <= 7) badge = '🟠 Juu';
     else                 badge = '🔴 Hatari Sana';
     return { score, badge };
+}
+
+// ─── LINE FINDER HELPERS ──────────────────────────────────────────────────────
+
+function findMatchLine(content, pattern) {
+    const idx = content.search(pattern);
+    if (idx === -1) return { lineStart: null, lineEnd: null };
+    const before = content.substring(0, idx);
+    const match = content.match(pattern);
+    const lineStart = before.split('\n').length;
+    const lineEnd = match ? lineStart + match[0].split('\n').length - 1 : lineStart;
+    return { lineStart, lineEnd };
+}
+
+function addToMap(map, label, baseName, lineInfo) {
+    if (!map.has(label)) map.set(label, []);
+    const arr = map.get(label);
+    if (!arr.some(e => e.file === baseName)) {
+        arr.push({ file: baseName, ...lineInfo });
+    }
+}
+
+function formatEntries(entries, max = 2) {
+    return [...new Map(entries.map(e => [e.file, e])).values()]
+        .slice(0, max)
+        .map(e => {
+            const loc = e.lineStart
+                ? ` (mst. ${e.lineStart}${e.lineEnd !== e.lineStart ? '–' + e.lineEnd : ''})`
+                : '';
+            return `\`${e.file}\`${loc}`;
+        })
+        .join(', ');
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -388,13 +404,10 @@ const SECRET_PATTERNS = [
 // ─── LICENSE / PATCH DETECTION PATTERNS ──────────────────────────────────────
 
 const LICENSE_PATCH_PATTERNS = [
-    // ── Boolean flags za premium/paid status ─────────────────────────────────
     { pattern: /isPremium|isPaid|isSubscribed|isPurchased/i,        label: 'Premium Status Flag' },
     { pattern: /hasPurchased|hasSubscription|hasPro|hasLicense/i,   label: 'Purchase State Flag' },
     { pattern: /isUnlocked|isActivated|isLicensed|isFull/i,         label: 'Unlock/License Flag' },
     { pattern: /premiumUser|proUser|paidUser|vipUser/i,              label: 'User Tier Variable' },
-
-    // ── License validation logic ──────────────────────────────────────────────
     { pattern: /LicenseChecker|LicenseValidator|LicenseManager/i,   label: 'License Checker Class' },
     { pattern: /checkLicense|validateLicense|verifyLicense/i,        label: 'License Validation Method' },
     { pattern: /LICENSED|NOT_LICENSED|RETRY/i,                       label: 'Android LVL Response Codes' },
@@ -402,41 +415,29 @@ const LICENSE_PATCH_PATTERNS = [
     { pattern: /Policy\.LICENSED/i,                                  label: 'LVL Policy Check' },
     { pattern: /ServerManagedPolicy|StrictPolicy/i,                  label: 'LVL Policy Class' },
     { pattern: /AESObfuscator/i,                                     label: 'LVL AES Obfuscator (license key storage)' },
-
-    // ── Server-side verification endpoints ───────────────────────────────────
     { pattern: /verif(y|ication)[_\s]?(token|key|code|purchase)/i,  label: 'Server Verification Call' },
     { pattern: /validatePurchase|verifyPurchase|verifyReceipt/i,     label: 'Purchase Verification' },
     { pattern: /\/api\/.*(licen|verif|subscri|premium|paid)/i,       label: 'License/Premium API Endpoint' },
     { pattern: /receipt[_\s]?validat/i,                              label: 'Receipt Validation' },
     { pattern: /purchaseToken/i,                                     label: 'Purchase Token (Play Billing)' },
     { pattern: /originalTransactionId/i,                             label: 'Original Transaction ID (iOS style)' },
-
-    // ── Google Play Billing confirmation ─────────────────────────────────────
     { pattern: /acknowledgePurchase/i,                               label: 'Play Billing: acknowledgePurchase (CRITICAL)' },
     { pattern: /onPurchasesUpdated/i,                                label: 'Play Billing: onPurchasesUpdated' },
     { pattern: /BillingClient\.newBuilder/i,                         label: 'Play BillingClient Init' },
     { pattern: /launchBillingFlow/i,                                 label: 'Play: launchBillingFlow (payment trigger)' },
     { pattern: /queryPurchasesAsync|queryPurchaseHistoryAsync/i,     label: 'Play: Query Purchase History' },
     { pattern: /Purchase\.PurchaseState\.PURCHASED/i,                label: 'Play: PURCHASED state check' },
-
-    // ── Activation codes / serial keys ───────────────────────────────────────
     { pattern: /activationCode|serialKey|licenseKey|productKey/i,    label: 'Activation/Serial Key' },
     { pattern: /activat(e|ion)[_\s]?(server|url|endpoint)/i,         label: 'Activation Server Call' },
     { pattern: /registerDevice|deviceRegistration/i,                 label: 'Device Registration' },
-
-    // ── Trial / expiry logic ──────────────────────────────────────────────────
     { pattern: /trialExpir|trialEnd|trialPeriod|trialDays/i,         label: 'Trial Expiry Logic' },
     { pattern: /expiryDate|expirationDate|subscriptionEnd/i,         label: 'Subscription Expiry Date' },
     { pattern: /gracePeriod/i,                                       label: 'Grace Period Logic' },
     { pattern: /isExpired|hasExpired|checkExpiry/i,                  label: 'Expiry Check' },
-
-    // ── Feature gating ────────────────────────────────────────────────────────
     { pattern: /featureFlag|featureGate|featureEnabled/i,            label: 'Feature Flag/Gate' },
     { pattern: /isFeatureAvailable|isFeatureEnabled/i,               label: 'Feature Availability Check' },
     { pattern: /premiumFeature|proFeature|paidFeature/i,             label: 'Premium Feature Gate' },
     { pattern: /unlockFeature|lockFeature/i,                         label: 'Feature Lock/Unlock' },
-
-    // ── Anti-tamper / integrity checks ───────────────────────────────────────
     { pattern: /checkSignature|verifySignature|getSignature/i,       label: '⚠️ Signature Integrity Check' },
     { pattern: /PackageManager.*GET_SIGNATURES/i,                    label: '⚠️ APK Signature Verification' },
     { pattern: /SafetyNet|PlayIntegrity|attestation/i,               label: '⚠️ Google SafetyNet/Play Integrity' },
@@ -444,8 +445,6 @@ const LICENSE_PATCH_PATTERNS = [
     { pattern: /isEmulator|detectEmulator/i,                         label: '⚠️ Emulator Detection' },
     { pattern: /tamper|integrity[_\s]?check/i,                       label: '⚠️ Tamper Detection' },
     { pattern: /CRC|checksum/i,                                      label: '⚠️ Checksum Verification' },
-
-    // ── Obfuscation signs ─────────────────────────────────────────────────────
     { pattern: /proguard|r8|obfuscat/i,                              label: 'Code Obfuscation (ProGuard/R8)' },
 ];
 
@@ -521,7 +520,7 @@ const cmd = {
                 const paymentMap   = new Map();
                 const confirmMap   = new Map();
                 const signingMap   = new Map();
-                const licenseMap   = new Map(); // ← MPYA
+                const licenseMap   = new Map();
                 const secretsFound = [];
                 const permissions  = [];
                 let packageName    = 'Haijulikani';
@@ -556,7 +555,6 @@ const cmd = {
                                     const pkgMatch = content.match(/package[=\s:]+["']?([a-z][a-z0-9_.]+)/i);
                                     if (pkgMatch) packageName = pkgMatch[1];
                                 } else {
-                                    // Binary AXML — tumia AXML string pool decoder
                                     const pkg = extractPackageFromAxml(buf);
                                     if (pkg) packageName = pkg;
                                 }
@@ -578,32 +576,30 @@ const cmd = {
                     // Payment keywords
                     for (const { key, label } of PAYMENT_KEYWORDS) {
                         if (lower.includes(key)) {
-                            if (!paymentMap.has(label)) paymentMap.set(label, new Set());
-                            paymentMap.get(label).add(baseName);
+                            const idx = lower.indexOf(key);
+                            const lineStart = content.substring(0, idx).split('\n').length;
+                            addToMap(paymentMap, label, baseName, { lineStart, lineEnd: lineStart });
                         }
                     }
 
                     // Payment confirmation patterns
                     for (const { pattern, label } of PAYMENT_CONFIRM_PATTERNS) {
                         if (pattern.test(content)) {
-                            if (!confirmMap.has(label)) confirmMap.set(label, new Set());
-                            confirmMap.get(label).add(baseName);
+                            addToMap(confirmMap, label, baseName, findMatchLine(content, pattern));
                         }
                     }
 
                     // Signing patterns
                     for (const { pattern, label } of SIGNING_PATTERNS) {
                         if (pattern.test(content)) {
-                            if (!signingMap.has(label)) signingMap.set(label, new Set());
-                            signingMap.get(label).add(baseName);
+                            addToMap(signingMap, label, baseName, findMatchLine(content, pattern));
                         }
                     }
 
-                    // ── License / Patch detection ────────────────────────────
+                    // License / Patch detection
                     for (const { pattern, label } of LICENSE_PATCH_PATTERNS) {
                         if (pattern.test(content)) {
-                            if (!licenseMap.has(label)) licenseMap.set(label, new Set());
-                            licenseMap.get(label).add(baseName);
+                            addToMap(licenseMap, label, baseName, findMatchLine(content, pattern));
                         }
                     }
 
@@ -663,8 +659,8 @@ const cmd = {
                 // PAYMENT SYSTEMS
                 r += `💰 *MIFUMO YA MALIPO (${paymentMap.size}):*\n`;
                 if (paymentMap.size > 0) {
-                    for (const [label, files] of paymentMap.entries()) {
-                        r += `  💳 *${label}*\n     📍 _${Array.from(files).slice(0, 3).join(', ')}_\n`;
+                    for (const [label, entries] of paymentMap.entries()) {
+                        r += `  💳 *${label}*\n     📍 _${formatEntries(entries, 3)}_\n`;
                     }
                 } else {
                     r += `  🍃 _Hakuna viashiria vya malipo._\n`;
@@ -683,11 +679,11 @@ const cmd = {
                     const platformEntries = all.filter(e => isPlatform(e) && !isCallback(e) && !isStatus(e));
                     const otherConfirm    = all.filter(e => !isCallback(e) && !isStatus(e) && !isPlatform(e));
 
-                    const printGroup = (title, entries) => {
-                        if (entries.length === 0) return;
+                    const printGroup = (title, groupEntries) => {
+                        if (groupEntries.length === 0) return;
                         r += `  *${title}*\n`;
-                        entries.forEach(([label, files]) => {
-                            r += `    🔔 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        groupEntries.forEach(([label, entries]) => {
+                            r += `    🔔 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     };
 
@@ -720,8 +716,8 @@ const cmd = {
                         const bi = priorityOrder.indexOf(b);
                         return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
                     });
-                    sorted.slice(0, 8).forEach(([label, files]) => {
-                        r += `    🔑 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                    sorted.slice(0, 8).forEach(([label, entries]) => {
+                        r += `    🔑 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                     });
                     if (signingMap.size > 8) r += `    _...na ${signingMap.size - 8} zaidi_\n`;
                 }
@@ -771,7 +767,6 @@ const cmd = {
                 const playBilling   = [...licenseMap.entries()].filter(([l]) =>
                     /play billing|play:/i.test(l) && !l.includes('⚠️')
                 );
-                // FIX: exclude labels already captured by licenseChecks/playBilling
                 const featureGates  = [...licenseMap.entries()].filter(([l]) =>
                     /premium|feature|flag|gate|trial|expir|unlock/i.test(l) &&
                     !l.includes('⚠️') &&
@@ -792,32 +787,32 @@ const cmd = {
                 } else {
                     if (antiTamper.length > 0) {
                         r += `  *🛡️ Anti-Tamper / Integrity:*\n`;
-                        antiTamper.forEach(([label, files]) => {
-                            r += `    ${label}\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        antiTamper.forEach(([label, entries]) => {
+                            r += `    ${label}\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     }
                     if (licenseChecks.length > 0) {
                         r += `  *🔑 License Verification:*\n`;
-                        licenseChecks.forEach(([label, files]) => {
-                            r += `    🔑 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        licenseChecks.forEach(([label, entries]) => {
+                            r += `    🔑 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     }
                     if (playBilling.length > 0) {
                         r += `  *🏪 Google Play Billing:*\n`;
-                        playBilling.forEach(([label, files]) => {
-                            r += `    🏪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        playBilling.forEach(([label, entries]) => {
+                            r += `    🏪 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     }
                     if (featureGates.length > 0) {
                         r += `  *🚪 Feature Gates / Trial Logic:*\n`;
-                        featureGates.forEach(([label, files]) => {
-                            r += `    🚪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        featureGates.forEach(([label, entries]) => {
+                            r += `    🚪 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     }
                     if (otherLicense.length > 0) {
                         r += `  *📋 Nyingine:*\n`;
-                        otherLicense.forEach(([label, files]) => {
-                            r += `    📋 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
+                        otherLicense.forEach(([label, entries]) => {
+                            r += `    📋 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
                         });
                     }
 
@@ -846,28 +841,30 @@ const cmd = {
 
                     r += `\n  *🎯 Ugumu wa Ku-Patch:* ${patchEmoji} ${patchDifficulty}\n`;
 
-                    // ── SMALI PATCH GUIDE (na code halisi) ──────────────────
+                    // ── SMALI PATCH GUIDE ────────────────────────────────────
                     r += `\n  *🛠️ Smali Patch Guide — Code Halisi:*\n`;
 
-                    // ① Boolean flags (isPremium / isPaid / isUnlocked)
+                    // ① Boolean flags
                     const flagMatches = [...licenseMap.entries()].filter(([l]) =>
                         /premium status|purchase state|unlock.*flag|user tier/i.test(l)
                     );
                     if (flagMatches.length > 0) {
-                        const files = [...new Set(flagMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `\n  ① *Boolean Flag Patch* (_${files}_)\n`;
-                        r += `  _Tafuta method: \`isPremium\`, \`isPaid\`, \`isUnlocked\` n.k._\n`;
-                        r += `  _KABLA ya patch (original):_\n`;
+                        const flagEntries = flagMatches.flatMap(([, arr]) => arr);
+                        const flagLoc = formatEntries(flagEntries, 2);
+                        r += `\n  ① *Boolean Flag Patch*\n`;
+                        r += `  📍 _${flagLoc}_\n`;
+                        r += `  _Tafuta method \`isPremium\` / \`isPaid\` / \`isUnlocked\` kuanzia mstari uliotajwa hapo juu_\n`;
+                        r += `  _KABLA:_\n`;
                         r += `  \`.method public isPremium()Z\`\n`;
-                        r += `  \`    const/4 v0, 0x0\`\n`;
+                        r += `  \`    const/4 v0, 0x0   ← mstari huu badilisha\`\n`;
                         r += `  \`    return v0\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _BAADA ya patch:_\n`;
+                        r += `  _BAADA (badilisha 0x0 → 0x1 kwenye mstari huo tu):_\n`;
                         r += `  \`.method public isPremium()Z\`\n`;
                         r += `  \`    const/4 v0, 0x1\`\n`;
                         r += `  \`    return v0\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _(Z = boolean; 0x0=false, 0x1=true)_\n`;
+                        r += `  _(Z = boolean; 0x0=false → 0x1=true)_\n`;
                     }
 
                     // ② LVL License Checker
@@ -875,54 +872,60 @@ const cmd = {
                         /license checker|license validation|lvl policy|lvl response/i.test(l)
                     );
                     if (lvlMatches.length > 0) {
-                        const files = [...new Set(lvlMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `\n  ② *LVL License Checker Patch* (_${files}_)\n`;
-                        r += `  _Tafuta class: \`LicenseChecker\`, method: \`allow(I)V\`_\n`;
+                        const lvlEntries = lvlMatches.flatMap(([, arr]) => arr);
+                        const lvlLoc = formatEntries(lvlEntries, 2);
+                        r += `\n  ② *LVL License Checker Patch*\n`;
+                        r += `  📍 _${lvlLoc}_\n`;
+                        r += `  _Tafuta class \`LicenseChecker\`, method \`allow(I)V\` kuanzia mstari uliotajwa_\n`;
                         r += `  _KABLA:_\n`;
-                        r += `  \`.method public allow(I)V\`\n`;
-                        r += `  \`    if-eq p1, 0x100, :licensed\`\n`;
+                        r += `  \`.method public allow(I)V        ← mstari wa kuanza kutafuta\`\n`;
+                        r += `  \`    if-eq p1, 0x100, :licensed  ← mstari huu: futa\`\n`;
                         r += `  \`    invoke-virtual {p0}, L...;->dontAllow()V\`\n`;
                         r += `  \`    return-void\`\n`;
                         r += `  \`    :licensed\`\n`;
                         r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
                         r += `  \`    return-void\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _BAADA (skip check, daima licensed):_\n`;
+                        r += `  _BAADA (futa if-eq na dontAllow block, baki allow tu):_\n`;
                         r += `  \`.method public allow(I)V\`\n`;
                         r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
                         r += `  \`    return-void\`\n`;
                         r += `  \`.end method\`\n`;
                     }
 
-                    // ③ Play Billing purchase state
+                    // ③ Play Billing
                     if (playBilling.length > 0) {
-                        const files = [...new Set(playBilling.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `\n  ③ *Play Billing Patch* (_${files}_)\n`;
-                        r += `  _Tafuta: \`onPurchasesUpdated\` au \`getPurchaseState\`_\n`;
-                        r += `  _KABLA (inacheck kama 1 = PURCHASED):_\n`;
-                        r += `  \`    invoke-interface {v1}, Lcom/android/billingclient/...;->getPurchaseState()I\`\n`;
+                        const playEntries = playBilling.flatMap(([, arr]) => arr);
+                        const playLoc = formatEntries(playEntries, 2);
+                        r += `\n  ③ *Play Billing Patch*\n`;
+                        r += `  📍 _${playLoc}_\n`;
+                        r += `  _Tafuta \`onPurchasesUpdated\` / \`getPurchaseState\` kuanzia mstari uliotajwa_\n`;
+                        r += `  _KABLA (mstari muhimu ni wa if-ne):_\n`;
+                        r += `  \`    invoke-interface {v1}, ...;->getPurchaseState()I\`\n`;
                         r += `  \`    move-result v2\`\n`;
                         r += `  \`    const/4 v3, 0x1\`\n`;
-                        r += `  \`    if-ne v2, v3, :not_purchased\`\n`;
+                        r += `  \`    if-ne v2, v3, :not_purchased  ← BADILISHA mstari huu\`\n`;
                         r += `  \`    ... # grant access\`\n`;
                         r += `  \`    :not_purchased\`\n`;
                         r += `  \`    return-void\`\n`;
-                        r += `  _BAADA (badilisha if-ne → if-eq, skip :not_purchased):_\n`;
+                        r += `  _BAADA (badilisha if-ne → if-eq kwenye mstari ule mmoja):_\n`;
                         r += `  \`    if-eq v2, v3, :not_purchased\`\n`;
-                        r += `  _(au futa \`if-ne\` line kabisa)_\n`;
+                        r += `  _(au futa mstari wa if-ne kabisa)_\n`;
                     }
 
                     // ④ Feature gate
                     if (featureGates.length > 0) {
-                        const files = [...new Set(featureGates.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `\n  ④ *Feature Gate Patch* (_${files}_)\n`;
-                        r += `  _Tafuta: \`isFeatureEnabled\`, \`premiumFeature\`, \`isUnlocked\`_\n`;
+                        const gateEntries = featureGates.flatMap(([, arr]) => arr);
+                        const gateLoc = formatEntries(gateEntries, 2);
+                        r += `\n  ④ *Feature Gate Patch*\n`;
+                        r += `  📍 _${gateLoc}_\n`;
+                        r += `  _Tafuta \`isFeatureEnabled\` / \`premiumFeature\` / \`isUnlocked\` kuanzia mstari uliotajwa hadi .end method_\n`;
                         r += `  _KABLA:_\n`;
-                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z\`\n`;
-                        r += `  \`    ... # logic ngumu\`\n`;
-                        r += `  \`    return v0\`\n`;
+                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z  ← mstari wa kuanza\`\n`;
+                        r += `  \`    ... # logic yote hapa — futa yote\`\n`;
+                        r += `  \`    return v0                                          ← mstari wa mwisho\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _BAADA (futa logic yote, rudisha true):_\n`;
+                        r += `  _BAADA (futa logic yote kati ya .method na return, weka tu):_\n`;
                         r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z\`\n`;
                         r += `  \`    const/4 v0, 0x1\`\n`;
                         r += `  \`    return v0\`\n`;
@@ -934,48 +937,61 @@ const cmd = {
                         /expir|trial|grace/i.test(l)
                     );
                     if (expiryMatches.length > 0) {
-                        const files = [...new Set(expiryMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `\n  ⑤ *Trial / Expiry Patch* (_${files}_)\n`;
-                        r += `  _Tafuta: \`isExpired\`, \`checkExpiry\`, \`trialEnd\`_\n`;
+                        const expEntries = expiryMatches.flatMap(([, arr]) => arr);
+                        const expLoc = formatEntries(expEntries, 2);
+                        r += `\n  ⑤ *Trial / Expiry Patch*\n`;
+                        r += `  📍 _${expLoc}_\n`;
+                        r += `  _Tafuta \`isExpired\` / \`checkExpiry\` / \`trialEnd\` kuanzia mstari uliotajwa_\n`;
                         r += `  _KABLA:_\n`;
-                        r += `  \`.method public isExpired()Z\`\n`;
+                        r += `  \`.method public isExpired()Z          ← mstari wa kuanza\`\n`;
                         r += `  \`    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J\`\n`;
-                        r += `  \`    ... # comparison na expiry date\`\n`;
-                        r += `  \`    return v0\`\n`;
+                        r += `  \`    ... # comparison na expiry date  ← mistari hii futa yote\`\n`;
+                        r += `  \`    return v0                        ← mstari wa mwisho\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _BAADA (daima "hajakwisha"):_\n`;
+                        r += `  _BAADA (rudisha false = "hajakwisha"):_\n`;
                         r += `  \`.method public isExpired()Z\`\n`;
                         r += `  \`    const/4 v0, 0x0\`\n`;
                         r += `  \`    return v0\`\n`;
                         r += `  \`.end method\`\n`;
                     }
 
-                    // ⑥ Anti-tamper — signature check
+                    // ⑥ Signature check
                     if (hasSignCheck) {
+                        const sigEntries = antiTamper
+                            .filter(([l]) => /signature/i.test(l))
+                            .flatMap(([, arr]) => arr);
+                        const sigLoc = formatEntries(sigEntries, 2);
                         r += `\n  ⑥ *⚠️ Signature Check — Lazima Disable Kwanza!*\n`;
-                        r += `  _Tafuta: \`getSignature\`, \`GET_SIGNATURES\`, \`checkSignature\`_\n`;
-                        r += `  _KABLA (inacompare hash ya signature):_\n`;
-                        r += `  \`    invoke-virtual {v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z\`\n`;
-                        r += `  \`    move-result v2\`\n`;
-                        r += `  \`    if-eqz v2, :sig_mismatch\`\n`;
+                        r += `  📍 _${sigLoc}_\n`;
+                        r += `  _Tafuta \`getSignature\` / \`checkSignature\` / \`GET_SIGNATURES\` kuanzia mstari uliotajwa_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/String;->equals(...)Z  ← mstari X\`\n`;
+                        r += `  \`    move-result v2                                              ← mstari X+1\`\n`;
+                        r += `  \`    if-eqz v2, :sig_mismatch                                   ← FUTA mstari huu\`\n`;
                         r += `  \`    # app inaendelea\`\n`;
                         r += `  \`    :sig_mismatch\`\n`;
-                        r += `  \`    invoke-static {}, L...;->exit()V  # crash/exit\`\n`;
-                        r += `  _BAADA (futa sig_mismatch jump — daima endelea):_\n`;
-                        r += `  \`    # futa line: if-eqz v2, :sig_mismatch\`\n`;
-                        r += `  \`    # futa block yote ya :sig_mismatch\`\n`;
+                        r += `  \`    invoke-static {}, L...;->exit()V   ← FUTA block hii yote\`\n`;
+                        r += `  _BAADA (futa mstari wa if-eqz NA block ya :sig_mismatch):_\n`;
+                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/String;->equals(...)Z\`\n`;
+                        r += `  \`    move-result v2\`\n`;
+                        r += `  \`    # endelea moja kwa moja — sig check imefutwa\`\n`;
                     }
 
                     // ⑦ Root detection
                     if (hasRootDetect) {
+                        const rootEntries = antiTamper
+                            .filter(([l]) => /root/i.test(l))
+                            .flatMap(([, arr]) => arr);
+                        const rootLoc = formatEntries(rootEntries, 2);
                         r += `\n  ⑦ *⚠️ Root Detection Patch*\n`;
-                        r += `  _Tafuta: \`isRooted\`, \`detectRoot\`, \`RootBeer\`_\n`;
+                        r += `  📍 _${rootLoc}_\n`;
+                        r += `  _Tafuta \`isRooted\` / \`detectRoot\` / \`RootBeer\` kuanzia mstari uliotajwa_\n`;
                         r += `  _KABLA:_\n`;
-                        r += `  \`.method public isRooted()Z\`\n`;
-                        r += `  \`    ... # checks nyingi za root\`\n`;
-                        r += `  \`    return v0\`\n`;
+                        r += `  \`.method public isRooted()Z   ← mstari wa kuanza\`\n`;
+                        r += `  \`    ... # checks nyingi     ← mistari hii futa yote\`\n`;
+                        r += `  \`    return v0               ← mstari wa mwisho\`\n`;
                         r += `  \`.end method\`\n`;
-                        r += `  _BAADA (daima "si-rooted"):_\n`;
+                        r += `  _BAADA (daima rudisha false = "si-rooted"):_\n`;
                         r += `  \`.method public isRooted()Z\`\n`;
                         r += `  \`    const/4 v0, 0x0\`\n`;
                         r += `  \`    return v0\`\n`;
@@ -984,20 +1000,31 @@ const cmd = {
 
                     // ⑧ Checksum
                     if (hasChecksum) {
+                        const crcEntries = antiTamper
+                            .filter(([l]) => /checksum|crc/i.test(l))
+                            .flatMap(([, arr]) => arr);
+                        const crcLoc = formatEntries(crcEntries, 2);
                         r += `\n  ⑧ *⚠️ Checksum / CRC Patch*\n`;
-                        r += `  _Tafuta method inayotumia \`CRC32\` au \`MessageDigest\`_\n`;
-                        r += `  _KABLA (inacompare checksum zilizo-hardcoded):_\n`;
-                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/Long;->equals(...)Z\`\n`;
-                        r += `  \`    move-result v3\`\n`;
-                        r += `  \`    if-eqz v3, :checksum_fail\`\n`;
-                        r += `  _BAADA (flip: if-eqz → if-nez, au futa jump):_\n`;
+                        r += `  📍 _${crcLoc}_\n`;
+                        r += `  _Tafuta \`CRC32\` / \`MessageDigest\` kuanzia mstari uliotajwa_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/Long;->equals(...)Z  ← mstari X\`\n`;
+                        r += `  \`    move-result v3                                            ← mstari X+1\`\n`;
+                        r += `  \`    if-eqz v3, :checksum_fail                                ← BADILISHA mstari huu\`\n`;
+                        r += `  _BAADA (badilisha if-eqz → if-nez kwenye mstari ule mmoja tu):_\n`;
                         r += `  \`    if-nez v3, :checksum_fail\`\n`;
-                        r += `  _(au futa line ya if-eqz kabisa)_\n`;
+                        r += `  _(au futa mstari wa if-eqz kabisa)_\n`;
                     }
 
                     // ⑨ Play Integrity / SafetyNet
                     if (hasPlayIntegrity) {
+                        const integrityEntries = antiTamper
+                            .filter(([l]) => /safetynet|integrity|attestation/i.test(l))
+                            .flatMap(([, arr]) => arr);
+                        const integrityLoc = formatEntries(integrityEntries, 2);
                         r += `\n  ⑨ *⚠️ Play Integrity / SafetyNet — Ngumu Sana!*\n`;
+                        r += `  📍 _${integrityLoc}_\n`;
+                        r += `  _Angalia mstari uliotajwa — kutoka hapo tafuta \`requestIntegrityToken\`_\n`;
                         r += `  _Smali patch peke yake haitoshi — server inaithibitisha_\n`;
                         r += `  _Frida script (hook requestIntegrityToken):_\n`;
                         r += `  \`Java.perform(function() {\`\n`;
