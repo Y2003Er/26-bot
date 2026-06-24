@@ -1,4 +1,6 @@
-// session-db.js – inahifadhi state nzima kwenye safu ya 'state' (JSONB)
+// session-db.js – FIXED v2.0 by 26-TECH
+// FIX C-1: Debounce keys.set() — ilikuwa inafanya DB write kwa kila key update
+// FIX M-3: Debounce saveCreds — ilikuwa inaweza kufanya concurrent writes
 import { Pool } from 'pg';
 import pino from 'pino';
 import { initAuthCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
@@ -146,6 +148,22 @@ export async function usePostgresAuthState(sessionId) {
     const creds = reviveBuffers(fullState?.creds) || initAuthCreds();
     let keysStore = reviveBuffers(fullState?.keys) || {};
 
+    // ── FIX C-1: Timer ya debounce kwa keys.set()
+    // Ilikuwa: kila keys.set() → saveState() mara moja
+    // Sasa: inakusanya mabadiliko yote kwa ms 500, kisha inaandika mara moja tu
+    let keysDebounceTimer = null;
+
+    function scheduleKeysSave() {
+        if (keysDebounceTimer) clearTimeout(keysDebounceTimer);
+        keysDebounceTimer = setTimeout(async () => {
+            try {
+                await saveState(sessionId, { creds, keys: keysStore });
+            } catch (err) {
+                console.error('[session-db] Debounced keys save error:', err.message);
+            }
+        }, 500);
+    }
+
     const keyStore = {
         get: async (type, ids) => {
             const result = {};
@@ -172,20 +190,33 @@ export async function usePostgresAuthState(sessionId) {
                     }
                 }
             }
+            // FIX C-1: scheduleKeysSave() badala ya saveState() moja kwa moja
             if (changed) {
-                await saveState(sessionId, { creds, keys: keysStore });
+                scheduleKeysSave();
             }
         },
     };
 
     const keys = makeCacheableSignalKeyStore(keyStore, logger);
 
+    // ── FIX M-3: Debounce saveCreds pia
+    // Ilikuwa: kila creds.update event → saveState() mara moja
+    // Sasa: inakusanya updates zote kwa ms 300, kisha inaandika mara moja tu
+    let credsDebounceTimer = null;
+
     const saveCreds = async (update) => {
         if (update && typeof update === 'object') {
             Object.assign(creds, update);
         }
-        await saveState(sessionId, { creds, keys: keysStore });
-        console.log('[session-db] Creds updated & saved.');
+        if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
+        credsDebounceTimer = setTimeout(async () => {
+            try {
+                await saveState(sessionId, { creds, keys: keysStore });
+                console.log('[session-db] Creds saved (debounced).');
+            } catch (err) {
+                console.error('[session-db] Debounced creds save error:', err.message);
+            }
+        }, 300);
     };
 
     return { state: { creds, keys }, saveCreds };
