@@ -56,7 +56,7 @@ const songCommand = {
                     caption: `✼ ••๑⋯ ❀ Y O U T U B E ❀ ⋯⋅๑•• ✼
 ❏ Title: ${videoDataYT.title}
 ❐ Duration: ${videoDataYT.timestamp}
-❑ Views: ${videoDataYT.views.toLocaleString()}
+❑ Views: ${(videoDataYT.views || 0).toLocaleString()}
 ❒ Uploaded: ${videoDataYT.ago}
 ❒ Link: ${videoUrl}
 ⊱─━━━━⊱༻●༺⊰━━━━─⊰`
@@ -65,6 +65,15 @@ const songCommand = {
             } catch (e) {
                 console.log('[SONG] Thumbnail failed:', e.message);
             }
+
+            // ✅ FIX M-6: Progress message baada ya sekunde 10
+            const progressTimer = setTimeout(async () => {
+                try {
+                    await sock.sendMessage(from, {
+                        text: '⏳ _Inaendelea kupakua... subiri kidogo_'
+                    }, { quoted: msg });
+                } catch {}
+            }, 10000);
 
             // Fallback chain: EliteProTech → Yupra → Okatsu
             let videoData;
@@ -85,6 +94,8 @@ const songCommand = {
                     console.log('[SONG] ✅ Okatsu imefanikiwa');
                 }
             }
+
+            clearTimeout(progressTimer);
 
             const finalTitle = videoData.title || videoDataYT.title;
             const finalThumb = videoData.thumbnail || videoDataYT.thumbnail;
