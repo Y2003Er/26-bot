@@ -4,7 +4,6 @@ import path from 'path';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 
 // ─── STRING EXTRACTORS ────────────────────────────────────────────────────────
-
 function extractStringsFromBuffer(buffer, minLen = 6) {
     const results = [];
     let current = '';
@@ -44,7 +43,6 @@ function readManifestStrings(buffer) {
 }
 
 // ─── AXML BINARY MANIFEST DECODER ────────────────────────────────────────────
-
 function parseAxmlStringPool(buf) {
     if (buf.length < 8) return [];
     const magic = buf.readUInt32LE(0);
@@ -137,8 +135,33 @@ function extractPackageFromAxml(buf) {
     return null;
 }
 
-// ─── TIMEOUT & FILE UTILS ─────────────────────────────────────────────────────
+// ─── SMALI METHOD EXTRACTOR ───────────────────────────────────────────────────
+function extractSmaliMethod(content, lineInfo) {
+    if (!lineInfo || !lineInfo.lineStart) return null;
+    const lines = content.split('\n');
+    let start = lineInfo.lineStart - 1;
+    let end = start;
 
+    // Tafuta .method juu
+    while (start > 0 && !lines[start].trim().startsWith('.method')) {
+        start--;
+    }
+    // Tafuta .end method chini
+    while (end < lines.length && !lines[end].trim().startsWith('.end method')) {
+        end++;
+    }
+
+    if (start < 0 || end >= lines.length || !lines[start].includes('.method')) return null;
+
+    const methodCode = lines.slice(start, end + 1).join('\n');
+    return {
+        code: methodCode,
+        startLine: start + 1,
+        endLine: end + 1
+    };
+}
+
+// ─── TIMEOUT & FILE UTILS ─────────────────────────────────────────────────────
 function withTimeout(promise, ms) {
     return Promise.race([
         promise,
@@ -167,7 +190,6 @@ async function collectFiles(dir, maxDepth = 4, currentDepth = 0) {
 }
 
 // ─── APK SIGNING INFO ─────────────────────────────────────────────────────────
-
 async function readApkSigningInfo(outputDir) {
     const metaDir = path.join(outputDir, 'META-INF');
     const info = { signerFiles: [], certDetails: [], signatureScheme: 'V1 (JAR Signing)' };
@@ -215,7 +237,6 @@ async function readApkSigningInfo(outputDir) {
 }
 
 // ─── SECRET DETECTION ─────────────────────────────────────────────────────────
-
 function detectSecrets(content, fileName, results) {
     for (const { type, regex } of SECRET_PATTERNS) {
         const match = content.match(regex);
@@ -229,7 +250,6 @@ function detectSecrets(content, fileName, results) {
 }
 
 // ─── RISK SCORE ───────────────────────────────────────────────────────────────
-
 function calcRisk(paymentMap, permissions, secrets) {
     let score = 0;
     score += Math.min(paymentMap.size * 0.5, 3);
@@ -245,14 +265,12 @@ function calcRisk(paymentMap, permissions, secrets) {
 }
 
 // ─── LINE FINDER HELPERS ──────────────────────────────────────────────────────
-
 function findMatchLine(content, pattern) {
     const idx = content.search(pattern);
     if (idx === -1) return { lineStart: null, lineEnd: null };
     const before = content.substring(0, idx);
-    const match = content.match(pattern);
     const lineStart = before.split('\n').length;
-    const lineEnd = match ? lineStart + match[0].split('\n').length - 1 : lineStart;
+    const lineEnd = lineStart;
     return { lineStart, lineEnd };
 }
 
@@ -271,13 +289,12 @@ function formatEntries(entries, max = 2) {
             const loc = e.lineStart
                 ? ` (mst. ${e.lineStart}${e.lineEnd !== e.lineStart ? '–' + e.lineEnd : ''})`
                 : '';
-            return `\`${e.file}\`${loc}`;
+            return `\`${e.file}\` ${loc}`;
         })
         .join(', ');
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-
 const MAX_APK_MB       = 80;
 const MAX_FILE_READ_MB = 15;
 
@@ -401,8 +418,6 @@ const SECRET_PATTERNS = [
     { type: 'Bearer Token',       regex: /Bearer\s+[A-Za-z0-9\-_=+/]{20,}/ },
 ];
 
-// ─── LICENSE / PATCH DETECTION PATTERNS ──────────────────────────────────────
-
 const LICENSE_PATCH_PATTERNS = [
     { pattern: /isPremium|isPaid|isSubscribed|isPurchased/i,        label: 'Premium Status Flag' },
     { pattern: /hasPurchased|hasSubscription|hasPro|hasLicense/i,   label: 'Purchase State Flag' },
@@ -449,19 +464,17 @@ const LICENSE_PATCH_PATTERNS = [
 ];
 
 // ─── MAIN COMMAND ─────────────────────────────────────────────────────────────
-
 const cmd = {
     name: 'chambua',
     alias: ['apk', 'analyzeapk'],
-    description: 'Uchambuzi wa kina wa APK — malipo, signing, secrets, permissions, license/patch detection.',
+    description: 'Uchambuzi wa kina wa APK — malipo, signing, secrets, permissions, license/patch + Smali halisi',
     category: 'tools',
 
     async execute(sock, msg, args) {
         const chatJid     = msg.key.remoteJid;
         const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
         const quotedMsg   = contextInfo?.quotedMessage;
-        const documentMessage =
-            msg.message?.documentMessage || quotedMsg?.documentMessage;
+        const documentMessage = msg.message?.documentMessage || quotedMsg?.documentMessage;
 
         if (!documentMessage) {
             return await sock.sendMessage(chatJid, {
@@ -498,29 +511,27 @@ const cmd = {
             await withTimeout(runAnalysis(), 120_000);
 
             async function runAnalysis() {
-                // ── 1. DOWNLOAD ──────────────────────────────────────────────
+                // Download
                 const stream = await downloadContentFromMessage(documentMessage, 'document');
                 let buffer = Buffer.from([]);
                 for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
                 await fs.writeFile(apkPath, buffer);
 
-                // ── 2. EXTRACT ───────────────────────────────────────────────
+                // Extract
                 const zip = new AdmZip(apkPath);
                 await fs.ensureDir(outputDir);
                 zip.extractAllTo(outputDir, true);
 
-                // ── 3. SIGNING INFO ──────────────────────────────────────────
                 const signingInfo = await readApkSigningInfo(outputDir);
-
-                // ── 4. COLLECT FILES ─────────────────────────────────────────
                 const allFiles = await collectFiles(outputDir, 4);
 
-                // ── 5. INIT ACCUMULATORS ─────────────────────────────────────
+                // Accumulators
                 const foundUrls    = new Set();
                 const paymentMap   = new Map();
                 const confirmMap   = new Map();
                 const signingMap   = new Map();
                 const licenseMap   = new Map();
+                const smaliMatches = new Map(); // label → real smali methods
                 const secretsFound = [];
                 const permissions  = [];
                 let packageName    = 'Haijulikani';
@@ -528,7 +539,6 @@ const cmd = {
                 let minSdk         = '';
                 let targetSdk      = '';
 
-                // ── 6. SCAN FILES ────────────────────────────────────────────
                 for (const fullPath of allFiles) {
                     const relName  = path.relative(outputDir, fullPath);
                     const baseName = path.basename(fullPath);
@@ -542,11 +552,10 @@ const cmd = {
                     try {
                         if (ext === '.dex') {
                             const buf = await fs.readFile(fullPath);
-                            content   = extractStringsFromBuffer(buf).join('\n');
-
+                            content = extractStringsFromBuffer(buf).join('\n');
                         } else if (baseName === 'AndroidManifest.xml') {
-                            const buf    = await fs.readFile(fullPath);
-                            const text   = buf.toString('utf8');
+                            const buf = await fs.readFile(fullPath);
+                            const text = buf.toString('utf8');
                             const isText = text.includes('<?xml') || text.includes('manifest');
                             content = isText ? text : readManifestStrings(buf);
 
@@ -559,13 +568,9 @@ const cmd = {
                                     if (pkg) packageName = pkg;
                                 }
                             }
-
-                        } else if (['.xml','.json','.js','.html','.txt','.properties','.yaml','.yml','.gradle'].includes(ext)) {
+                        } else if (ext === '.smali' || ['.xml','.json','.js','.html','.txt','.properties','.yaml','.yml','.gradle'].includes(ext) ||
+                                  relName.startsWith('assets/') || relName.startsWith('res/')) {
                             content = await fs.readFile(fullPath, 'utf8');
-
-                        } else if (relName.startsWith('assets/') || relName.startsWith('res/')) {
-                            try { content = await fs.readFile(fullPath, 'utf8'); } catch { continue; }
-
                         } else {
                             continue;
                         }
@@ -582,24 +587,38 @@ const cmd = {
                         }
                     }
 
-                    // Payment confirmation patterns
+                    // Payment confirmation
                     for (const { pattern, label } of PAYMENT_CONFIRM_PATTERNS) {
                         if (pattern.test(content)) {
                             addToMap(confirmMap, label, baseName, findMatchLine(content, pattern));
                         }
                     }
 
-                    // Signing patterns
+                    // Signing
                     for (const { pattern, label } of SIGNING_PATTERNS) {
                         if (pattern.test(content)) {
                             addToMap(signingMap, label, baseName, findMatchLine(content, pattern));
                         }
                     }
 
-                    // License / Patch detection
+                    // License + Smali real code
                     for (const { pattern, label } of LICENSE_PATCH_PATTERNS) {
                         if (pattern.test(content)) {
-                            addToMap(licenseMap, label, baseName, findMatchLine(content, pattern));
+                            const lineInfo = findMatchLine(content, pattern);
+                            addToMap(licenseMap, label, baseName, lineInfo);
+
+                            if (ext === '.smali') {
+                                const method = extractSmaliMethod(content, lineInfo);
+                                if (method) {
+                                    if (!smaliMatches.has(label)) smaliMatches.set(label, []);
+                                    smaliMatches.get(label).push({
+                                        file: baseName,
+                                        methodCode: method.code,
+                                        startLine: method.startLine,
+                                        endLine: method.endLine
+                                    });
+                                }
+                            }
                         }
                     }
 
@@ -607,12 +626,7 @@ const cmd = {
                     const urlRegex = /https?:\/\/[^\s"'`<>\\)]{8,}/g;
                     for (const u of (content.match(urlRegex) || [])) {
                         const clean = u.replace(/[.,;:!?)]+$/, '');
-                        if (
-                            !clean.includes('schemas.android.com') &&
-                            !clean.includes('w3.org') &&
-                            !clean.includes('example.com') &&
-                            clean.length < 200
-                        ) {
+                        if (!clean.includes('schemas.android.com') && !clean.includes('w3.org') && !clean.includes('example.com') && clean.length < 200) {
                             foundUrls.add(clean);
                         }
                     }
@@ -638,22 +652,18 @@ const cmd = {
                     }
                 }
 
-                // ── 7. BUILD REPORT ───────────────────────────────────────────
-                const riskScore   = calcRisk(paymentMap, permissions, secretsFound);
-                const urlArray    = Array.from(foundUrls);
-                const paymentUrls = urlArray.filter(u =>
-                    PAYMENT_KEYWORDS.some(k => u.toLowerCase().includes(k.key))
-                );
-                const otherUrls = urlArray.filter(u =>
-                    !PAYMENT_KEYWORDS.some(k => u.toLowerCase().includes(k.key))
-                );
+                // ── BUILD REPORT ───────────────────────────────────────────
+                const riskScore = calcRisk(paymentMap, permissions, secretsFound);
+                const urlArray = Array.from(foundUrls);
+                const paymentUrls = urlArray.filter(u => PAYMENT_KEYWORDS.some(k => u.toLowerCase().includes(k.key)));
+                const otherUrls = urlArray.filter(u => !PAYMENT_KEYWORDS.some(k => u.toLowerCase().includes(k.key)));
 
                 let r = `🕵️‍♂️ *RIPOTI YA UCHAMBUZI - 26-BOT*\n`;
                 r += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
                 r += `📦 *Faili:* \`${fileName}\` (${fileSizeMB}MB)\n`;
                 r += `🆔 *Package:* \`${packageName}\`\n`;
                 if (appVersion) r += `📌 *Version:* \`${appVersion}\`\n`;
-                if (minSdk)     r += `📱 *Min SDK:* \`${minSdk}\` | *Target:* \`${targetSdk || '?'}\`\n`;
+                if (minSdk) r += `📱 *Min SDK:* \`${minSdk}\` | *Target:* \`${targetSdk || '?'}\`\n`;
                 r += `⚠️ *Risk Score:* ${riskScore.badge} (${riskScore.score}/10)\n\n`;
 
                 // PAYMENT SYSTEMS
@@ -669,398 +679,48 @@ const cmd = {
                 // PAYMENT CONFIRMATION
                 r += `\n✅ *MTIRIRIKO WA UTHIBITISHO WA MALIPO (${confirmMap.size}):*\n`;
                 if (confirmMap.size > 0) {
-                    const all = [...confirmMap.entries()];
-                    const isCallback = ([l]) => /callback|webhook|ipn|notify/i.test(l);
-                    const isStatus   = ([l]) => /status|verif|confirm/i.test(l);
-                    const isPlatform = ([l]) => /google play|stripe|m-pesa/i.test(l);
-
-                    const callbackEntries = all.filter(isCallback);
-                    const statusEntries   = all.filter(e => isStatus(e) && !isCallback(e));
-                    const platformEntries = all.filter(e => isPlatform(e) && !isCallback(e) && !isStatus(e));
-                    const otherConfirm    = all.filter(e => !isCallback(e) && !isStatus(e) && !isPlatform(e));
-
-                    const printGroup = (title, groupEntries) => {
-                        if (groupEntries.length === 0) return;
-                        r += `  *${title}*\n`;
-                        groupEntries.forEach(([label, entries]) => {
-                            r += `    🔔 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                        });
-                    };
-
-                    printGroup('📡 Callbacks/Webhooks:', callbackEntries);
-                    printGroup('🔍 Status/Verification:', statusEntries);
-                    printGroup('📲 Platform-Specific:', platformEntries);
-                    printGroup('📋 Nyingine:', otherConfirm);
+                    for (const [label, entries] of confirmMap.entries()) {
+                        r += `  🔔 *${label}*\n     _${formatEntries(entries, 2)}_\n`;
+                    }
                 } else {
-                    r += `  🍃 _Hakuna mtiririko wa uthibitisho uliopatikana._\n`;
+                    r += `  🍃 _Hakuna mtiririko wa uthibitisho._\n`;
                 }
 
                 // SIGNING
-                r += `\n🔏 *AINA YA KUSAINI (SIGNING & CRYPTO):*\n`;
-                r += `  *📜 APK Certificate:*\n`;
-                r += `    🔐 Scheme: \`${signingInfo.signatureScheme}\`\n`;
-                if (signingInfo.certDetails.length > 0) {
-                    signingInfo.certDetails.forEach(d => r += `    📋 ${d}\n`);
-                } else {
-                    r += `    ⚠️ _Maelezo ya certificate hayakupatikana_\n`;
-                }
-                if (signingMap.size > 0) {
-                    r += `  *🔑 Mbinu za Kusaini kwenye Kodi (${signingMap.size}):*\n`;
-                    const priorityOrder = [
-                        'HMAC-SHA Signature', 'RSA Encryption', 'AES Encryption',
-                        'JWT Token', 'Bearer Token Auth',
-                        'Certificate Pinning (OkHttp)', 'Stripe PaymentIntent',
-                    ];
-                    const sorted = [...signingMap.entries()].sort(([a], [b]) => {
-                        const ai = priorityOrder.indexOf(a);
-                        const bi = priorityOrder.indexOf(b);
-                        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-                    });
-                    sorted.slice(0, 8).forEach(([label, entries]) => {
-                        r += `    🔑 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                    });
-                    if (signingMap.size > 8) r += `    _...na ${signingMap.size - 8} zaidi_\n`;
-                }
+                r += `\n🔏 *SIGNING & CRYPTO:*\n`;
+                r += `  *Scheme:* \`${signingInfo.signatureScheme}\`\n`;
+                signingInfo.certDetails.forEach(d => r += `  ${d}\n`);
 
-                // SECRETS
-                if (secretsFound.length > 0) {
-                    r += `\n🚨 *SECRETS/API KEYS (${secretsFound.length}):*\n`;
-                    secretsFound.slice(0, 5).forEach(s => {
-                        r += `  🔑 \`${s.type}\` katika \`${s.file}\`\n     _${s.preview}_\n`;
-                    });
-                    if (secretsFound.length > 5) r += `  _...na ${secretsFound.length - 5} zaidi_\n`;
-                }
-
-                // PERMISSIONS
-                const dangerousFound = permissions.filter(p => DANGEROUS_PERMS[p]);
-                const safeFound      = permissions.filter(p => !DANGEROUS_PERMS[p]);
-                r += `\n🛡️ *RUHUSA (${permissions.length} total):*\n`;
-                if (dangerousFound.length > 0) {
-                    r += `*Hatari:*\n`;
-                    dangerousFound.forEach(p => r += `  ${DANGEROUS_PERMS[p]}: \`${p}\`\n`);
-                }
-                if (safeFound.length > 0) {
-                    r += `*Kawaida:* ${safeFound.slice(0, 5).map(p => `\`${p}\``).join(', ')}`;
-                    if (safeFound.length > 5) r += ` _+${safeFound.length - 5} zaidi_`;
-                    r += '\n';
-                }
-                if (permissions.length === 0) r += `  🍃 _Hakuna ruhusa zilizopatikana._\n`;
-
-                // URLS
-                r += `\n🔗 *VIUNGO (${foundUrls.size} total):*\n`;
-                if (paymentUrls.length > 0) {
-                    r += `*Viungo vya Malipo:*\n`;
-                    paymentUrls.slice(0, 4).forEach(u => r += `  🎯 ${u}\n`);
-                }
-                if (otherUrls.length > 0) {
-                    r += `*Vingine:*\n`;
-                    otherUrls.slice(0, 4).forEach(u => r += `  📌 ${u}\n`);
-                    if (otherUrls.length > 4) r += `  _...na ${otherUrls.length - 4} zaidi_\n`;
-                }
-                if (foundUrls.size === 0) r += `  🍃 _Hakuna URLs._\n`;
-
-                // ── LICENSE / PATCH DETECTION ────────────────────────────────
-                const antiTamper    = [...licenseMap.entries()].filter(([l]) => l.includes('⚠️'));
-                const licenseChecks = [...licenseMap.entries()].filter(([l]) =>
-                    /license|lvl|verif|receipt|purchaseToken/i.test(l) && !l.includes('⚠️')
-                );
-                const playBilling   = [...licenseMap.entries()].filter(([l]) =>
-                    /play billing|play:/i.test(l) && !l.includes('⚠️')
-                );
-                const featureGates  = [...licenseMap.entries()].filter(([l]) =>
-                    /premium|feature|flag|gate|trial|expir|unlock/i.test(l) &&
-                    !l.includes('⚠️') &&
-                    !licenseChecks.some(([ll]) => ll === l) &&
-                    !playBilling.some(([ll]) => ll === l)
-                );
-                const otherLicense  = [...licenseMap.entries()].filter(([l]) =>
-                    !antiTamper.some(([ll]) => ll === l) &&
-                    !licenseChecks.some(([ll]) => ll === l) &&
-                    !featureGates.some(([ll]) => ll === l) &&
-                    !playBilling.some(([ll]) => ll === l)
-                );
-
+                // LICENSE / PATCH + SMALI
                 r += `\n🔓 *ULINZI WA MALIPO / PATCH DETECTION (${licenseMap.size}):*\n`;
-
                 if (licenseMap.size === 0) {
-                    r += `  🍃 _Hakuna license checks zilizopatikana — app inaweza kuwa rahisi ku-patch._\n`;
+                    r += `  🍃 _Hakuna license checks — app rahisi ku-patch._\n`;
                 } else {
-                    if (antiTamper.length > 0) {
-                        r += `  *🛡️ Anti-Tamper / Integrity:*\n`;
-                        antiTamper.forEach(([label, entries]) => {
-                            r += `    ${label}\n       _${formatEntries(entries, 2)}_\n`;
+                    for (const [label, entries] of licenseMap.entries()) {
+                        r += `  🔑 *${label}*\n     _${formatEntries(entries, 2)}_\n`;
+                    }
+                }
+
+                r += `\n  *🛠️ Smali Code Halisi (Patch Ready):*\n`;
+                if (smaliMatches.size > 0) {
+                    for (const [label, matches] of smaliMatches.entries()) {
+                        r += `\n**${label}**\n`;
+                        matches.slice(0, 3).forEach(m => {
+                            r += `📍 \`${m.file}\` (mst. ${m.startLine}-${m.endLine})\n`;
+                            r += `\`\`\`smali\n${m.methodCode}\n\`\`\`\n`;
                         });
                     }
-                    if (licenseChecks.length > 0) {
-                        r += `  *🔑 License Verification:*\n`;
-                        licenseChecks.forEach(([label, entries]) => {
-                            r += `    🔑 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                        });
-                    }
-                    if (playBilling.length > 0) {
-                        r += `  *🏪 Google Play Billing:*\n`;
-                        playBilling.forEach(([label, entries]) => {
-                            r += `    🏪 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                        });
-                    }
-                    if (featureGates.length > 0) {
-                        r += `  *🚪 Feature Gates / Trial Logic:*\n`;
-                        featureGates.forEach(([label, entries]) => {
-                            r += `    🚪 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                        });
-                    }
-                    if (otherLicense.length > 0) {
-                        r += `  *📋 Nyingine:*\n`;
-                        otherLicense.forEach(([label, entries]) => {
-                            r += `    📋 \`${label}\`\n       _${formatEntries(entries, 2)}_\n`;
-                        });
-                    }
-
-                    // ── PATCH DIFFICULTY ─────────────────────────────────────
-                    const hasAntiTamper    = antiTamper.length > 0;
-                    const hasServerVerif   = licenseChecks.some(([l]) => /server|receipt|token/i.test(l));
-                    const hasPlayIntegrity = antiTamper.some(([l]) => /safetynet|integrity|attestation/i.test(l));
-                    const hasRootDetect    = antiTamper.some(([l]) => /root/i.test(l));
-                    const hasSignCheck     = antiTamper.some(([l]) => /signature/i.test(l));
-                    const hasChecksum      = antiTamper.some(([l]) => /checksum|crc/i.test(l));
-
-                    let patchDifficulty, patchEmoji;
-                    if (hasPlayIntegrity && hasServerVerif) {
-                        patchDifficulty = 'Ngumu Sana — Server + Play Integrity inahitajika kupita';
-                        patchEmoji = '🔴';
-                    } else if (hasServerVerif) {
-                        patchDifficulty = 'Ngumu — Verification server-side, patch ya local haitoshi';
-                        patchEmoji = '🟠';
-                    } else if (hasAntiTamper) {
-                        patchDifficulty = 'Wastani — Anti-tamper ipo, inaweza kupita kwa smali/frida';
-                        patchEmoji = '🟡';
-                    } else {
-                        patchDifficulty = 'Rahisi — Hakuna server verification wala anti-tamper';
-                        patchEmoji = '🟢';
-                    }
-
-                    r += `\n  *🎯 Ugumu wa Ku-Patch:* ${patchEmoji} ${patchDifficulty}\n`;
-
-                    // ── SMALI PATCH GUIDE ────────────────────────────────────
-                    r += `\n  *🛠️ Smali Patch Guide — Code Halisi:*\n`;
-
-                    // ① Boolean flags
-                    const flagMatches = [...licenseMap.entries()].filter(([l]) =>
-                        /premium status|purchase state|unlock.*flag|user tier/i.test(l)
-                    );
-                    if (flagMatches.length > 0) {
-                        const flagEntries = flagMatches.flatMap(([, arr]) => arr);
-                        const flagLoc = formatEntries(flagEntries, 2);
-                        r += `\n  ① *Boolean Flag Patch*\n`;
-                        r += `  📍 _${flagLoc}_\n`;
-                        r += `  _Tafuta method \`isPremium\` / \`isPaid\` / \`isUnlocked\` kuanzia mstari uliotajwa hapo juu_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`.method public isPremium()Z\`\n`;
-                        r += `  \`    const/4 v0, 0x0   ← mstari huu badilisha\`\n`;
-                        r += `  \`    return v0\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _BAADA (badilisha 0x0 → 0x1 kwenye mstari huo tu):_\n`;
-                        r += `  \`.method public isPremium()Z\`\n`;
-                        r += `  \`    const/4 v0, 0x1\`\n`;
-                        r += `  \`    return v0\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _(Z = boolean; 0x0=false → 0x1=true)_\n`;
-                    }
-
-                    // ② LVL License Checker
-                    const lvlMatches = [...licenseMap.entries()].filter(([l]) =>
-                        /license checker|license validation|lvl policy|lvl response/i.test(l)
-                    );
-                    if (lvlMatches.length > 0) {
-                        const lvlEntries = lvlMatches.flatMap(([, arr]) => arr);
-                        const lvlLoc = formatEntries(lvlEntries, 2);
-                        r += `\n  ② *LVL License Checker Patch*\n`;
-                        r += `  📍 _${lvlLoc}_\n`;
-                        r += `  _Tafuta class \`LicenseChecker\`, method \`allow(I)V\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`.method public allow(I)V        ← mstari wa kuanza kutafuta\`\n`;
-                        r += `  \`    if-eq p1, 0x100, :licensed  ← mstari huu: futa\`\n`;
-                        r += `  \`    invoke-virtual {p0}, L...;->dontAllow()V\`\n`;
-                        r += `  \`    return-void\`\n`;
-                        r += `  \`    :licensed\`\n`;
-                        r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
-                        r += `  \`    return-void\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _BAADA (futa if-eq na dontAllow block, baki allow tu):_\n`;
-                        r += `  \`.method public allow(I)V\`\n`;
-                        r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
-                        r += `  \`    return-void\`\n`;
-                        r += `  \`.end method\`\n`;
-                    }
-
-                    // ③ Play Billing
-                    if (playBilling.length > 0) {
-                        const playEntries = playBilling.flatMap(([, arr]) => arr);
-                        const playLoc = formatEntries(playEntries, 2);
-                        r += `\n  ③ *Play Billing Patch*\n`;
-                        r += `  📍 _${playLoc}_\n`;
-                        r += `  _Tafuta \`onPurchasesUpdated\` / \`getPurchaseState\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA (mstari muhimu ni wa if-ne):_\n`;
-                        r += `  \`    invoke-interface {v1}, ...;->getPurchaseState()I\`\n`;
-                        r += `  \`    move-result v2\`\n`;
-                        r += `  \`    const/4 v3, 0x1\`\n`;
-                        r += `  \`    if-ne v2, v3, :not_purchased  ← BADILISHA mstari huu\`\n`;
-                        r += `  \`    ... # grant access\`\n`;
-                        r += `  \`    :not_purchased\`\n`;
-                        r += `  \`    return-void\`\n`;
-                        r += `  _BAADA (badilisha if-ne → if-eq kwenye mstari ule mmoja):_\n`;
-                        r += `  \`    if-eq v2, v3, :not_purchased\`\n`;
-                        r += `  _(au futa mstari wa if-ne kabisa)_\n`;
-                    }
-
-                    // ④ Feature gate
-                    if (featureGates.length > 0) {
-                        const gateEntries = featureGates.flatMap(([, arr]) => arr);
-                        const gateLoc = formatEntries(gateEntries, 2);
-                        r += `\n  ④ *Feature Gate Patch*\n`;
-                        r += `  📍 _${gateLoc}_\n`;
-                        r += `  _Tafuta \`isFeatureEnabled\` / \`premiumFeature\` / \`isUnlocked\` kuanzia mstari uliotajwa hadi .end method_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z  ← mstari wa kuanza\`\n`;
-                        r += `  \`    ... # logic yote hapa — futa yote\`\n`;
-                        r += `  \`    return v0                                          ← mstari wa mwisho\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _BAADA (futa logic yote kati ya .method na return, weka tu):_\n`;
-                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z\`\n`;
-                        r += `  \`    const/4 v0, 0x1\`\n`;
-                        r += `  \`    return v0\`\n`;
-                        r += `  \`.end method\`\n`;
-                    }
-
-                    // ⑤ Trial/expiry
-                    const expiryMatches = [...licenseMap.entries()].filter(([l]) =>
-                        /expir|trial|grace/i.test(l)
-                    );
-                    if (expiryMatches.length > 0) {
-                        const expEntries = expiryMatches.flatMap(([, arr]) => arr);
-                        const expLoc = formatEntries(expEntries, 2);
-                        r += `\n  ⑤ *Trial / Expiry Patch*\n`;
-                        r += `  📍 _${expLoc}_\n`;
-                        r += `  _Tafuta \`isExpired\` / \`checkExpiry\` / \`trialEnd\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`.method public isExpired()Z          ← mstari wa kuanza\`\n`;
-                        r += `  \`    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J\`\n`;
-                        r += `  \`    ... # comparison na expiry date  ← mistari hii futa yote\`\n`;
-                        r += `  \`    return v0                        ← mstari wa mwisho\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _BAADA (rudisha false = "hajakwisha"):_\n`;
-                        r += `  \`.method public isExpired()Z\`\n`;
-                        r += `  \`    const/4 v0, 0x0\`\n`;
-                        r += `  \`    return v0\`\n`;
-                        r += `  \`.end method\`\n`;
-                    }
-
-                    // ⑥ Signature check
-                    if (hasSignCheck) {
-                        const sigEntries = antiTamper
-                            .filter(([l]) => /signature/i.test(l))
-                            .flatMap(([, arr]) => arr);
-                        const sigLoc = formatEntries(sigEntries, 2);
-                        r += `\n  ⑥ *⚠️ Signature Check — Lazima Disable Kwanza!*\n`;
-                        r += `  📍 _${sigLoc}_\n`;
-                        r += `  _Tafuta \`getSignature\` / \`checkSignature\` / \`GET_SIGNATURES\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/String;->equals(...)Z  ← mstari X\`\n`;
-                        r += `  \`    move-result v2                                              ← mstari X+1\`\n`;
-                        r += `  \`    if-eqz v2, :sig_mismatch                                   ← FUTA mstari huu\`\n`;
-                        r += `  \`    # app inaendelea\`\n`;
-                        r += `  \`    :sig_mismatch\`\n`;
-                        r += `  \`    invoke-static {}, L...;->exit()V   ← FUTA block hii yote\`\n`;
-                        r += `  _BAADA (futa mstari wa if-eqz NA block ya :sig_mismatch):_\n`;
-                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/String;->equals(...)Z\`\n`;
-                        r += `  \`    move-result v2\`\n`;
-                        r += `  \`    # endelea moja kwa moja — sig check imefutwa\`\n`;
-                    }
-
-                    // ⑦ Root detection
-                    if (hasRootDetect) {
-                        const rootEntries = antiTamper
-                            .filter(([l]) => /root/i.test(l))
-                            .flatMap(([, arr]) => arr);
-                        const rootLoc = formatEntries(rootEntries, 2);
-                        r += `\n  ⑦ *⚠️ Root Detection Patch*\n`;
-                        r += `  📍 _${rootLoc}_\n`;
-                        r += `  _Tafuta \`isRooted\` / \`detectRoot\` / \`RootBeer\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`.method public isRooted()Z   ← mstari wa kuanza\`\n`;
-                        r += `  \`    ... # checks nyingi     ← mistari hii futa yote\`\n`;
-                        r += `  \`    return v0               ← mstari wa mwisho\`\n`;
-                        r += `  \`.end method\`\n`;
-                        r += `  _BAADA (daima rudisha false = "si-rooted"):_\n`;
-                        r += `  \`.method public isRooted()Z\`\n`;
-                        r += `  \`    const/4 v0, 0x0\`\n`;
-                        r += `  \`    return v0\`\n`;
-                        r += `  \`.end method\`\n`;
-                    }
-
-                    // ⑧ Checksum
-                    if (hasChecksum) {
-                        const crcEntries = antiTamper
-                            .filter(([l]) => /checksum|crc/i.test(l))
-                            .flatMap(([, arr]) => arr);
-                        const crcLoc = formatEntries(crcEntries, 2);
-                        r += `\n  ⑧ *⚠️ Checksum / CRC Patch*\n`;
-                        r += `  📍 _${crcLoc}_\n`;
-                        r += `  _Tafuta \`CRC32\` / \`MessageDigest\` kuanzia mstari uliotajwa_\n`;
-                        r += `  _KABLA:_\n`;
-                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/Long;->equals(...)Z  ← mstari X\`\n`;
-                        r += `  \`    move-result v3                                            ← mstari X+1\`\n`;
-                        r += `  \`    if-eqz v3, :checksum_fail                                ← BADILISHA mstari huu\`\n`;
-                        r += `  _BAADA (badilisha if-eqz → if-nez kwenye mstari ule mmoja tu):_\n`;
-                        r += `  \`    if-nez v3, :checksum_fail\`\n`;
-                        r += `  _(au futa mstari wa if-eqz kabisa)_\n`;
-                    }
-
-                    // ⑨ Play Integrity / SafetyNet
-                    if (hasPlayIntegrity) {
-                        const integrityEntries = antiTamper
-                            .filter(([l]) => /safetynet|integrity|attestation/i.test(l))
-                            .flatMap(([, arr]) => arr);
-                        const integrityLoc = formatEntries(integrityEntries, 2);
-                        r += `\n  ⑨ *⚠️ Play Integrity / SafetyNet — Ngumu Sana!*\n`;
-                        r += `  📍 _${integrityLoc}_\n`;
-                        r += `  _Angalia mstari uliotajwa — kutoka hapo tafuta \`requestIntegrityToken\`_\n`;
-                        r += `  _Smali patch peke yake haitoshi — server inaithibitisha_\n`;
-                        r += `  _Frida script (hook requestIntegrityToken):_\n`;
-                        r += `  \`Java.perform(function() {\`\n`;
-                        r += `  \`  var IntMgr = Java.use(\`\n`;
-                        r += `  \`    "com.google.android.play.core.integrity.IntegrityManager");\`\n`;
-                        r += `  \`  IntMgr.requestIntegrityToken.overload(\`\n`;
-                        r += `  \`    "com.google.android.play.core.integrity.IntegrityTokenRequest")\`\n`;
-                        r += `  \`  .implementation = function(req) {\`\n`;
-                        r += `  \`    return this.requestIntegrityToken(req); // intercept\`\n`;
-                        r += `  \`  };\`\n`;
-                        r += `  \`});\`\n`;
-                        r += `  _AU tumia: LSPosed module "PlayIntegrityFix" (bila Frida)_\n`;
-                    }
-
-                    // Tools
-                    r += `\n  *🔧 Zana Zinazoshauriwa:*\n`;
-                    r += `    • *APKTool* — \`apktool d app.apk\` kisha \`apktool b out/ -o patched.apk\`\n`;
-                    r += `    • *MT Manager / NP Manager* — Smali editor moja kwa moja Android\n`;
-                    r += `    • *jadx-gui* — Soma Java kwanza uelewe structure ya class\n`;
-                    r += `    • *zipalign + apksigner* — Sign APK baada ya patch\n`;
-                    if (hasPlayIntegrity || hasServerVerif) {
-                        r += `    • *Frida* — \`frida -U -f com.pkg.name -l hook.js\`\n`;
-                        r += `    • *LSPosed + PlayIntegrityFix* — Rahisi kuliko Frida\n`;
-                    }
+                } else {
+                    r += `  Hakuna Smali method iliyopatikana.\n`;
                 }
 
                 r += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ _Uchambuzi umekamilika!_`;
 
                 await sock.sendMessage(chatJid, { text: r }, { quoted: msg });
             }
-
         } catch (error) {
             console.error('[chambua]', error);
-            await sock.sendMessage(chatJid, {
-                text: `❌ Hitilafu: ${error.message}`
-            }, { quoted: msg });
+            await sock.sendMessage(chatJid, { text: `❌ Hitilafu: ${error.message}` }, { quoted: msg });
         } finally {
             await fs.remove(apkPath).catch(() => {});
             await fs.remove(outputDir).catch(() => {});
