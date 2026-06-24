@@ -43,8 +43,100 @@ function readManifestStrings(buffer) {
     return extractStringsFromBuffer(buffer, 4).join('\n');
 }
 
-function extractPackageFromManifest(buffer) {
-    const strings = extractStringsFromBuffer(buffer, 5);
+// ─── AXML BINARY MANIFEST DECODER ────────────────────────────────────────────
+// Inasoma binary AndroidManifest.xml (AXML format) bila npm package yoyote ya nje.
+// AXML structure: header → string pool → resource IDs → XML nodes
+// String pool iko offset 0x08, kila string iko UTF-16LE au UTF-8 kulingana na flags.
+
+function parseAxmlStringPool(buf) {
+    // Magic check: AXML starts with 0x00080003
+    if (buf.length < 8) return [];
+    const magic = buf.readUInt32LE(0);
+    if (magic !== 0x00080003) return []; // si AXML halisi
+
+    const strPoolOffset = 8; // chunk header ya string pool inaanza hapa
+    if (buf.length < strPoolOffset + 28) return [];
+
+    // String pool chunk header (28 bytes):
+    // [0] chunkType(4) [4] chunkSize(4) [8] stringCount(4) [12] styleCount(4)
+    // [16] flags(4)    [20] stringsStart(4) [24] stylesStart(4)
+    const chunkType    = buf.readUInt32LE(strPoolOffset);
+    if (chunkType !== 0x001C0001) return []; // bukan string pool
+
+    const stringCount  = buf.readUInt32LE(strPoolOffset + 8);
+    const flags        = buf.readUInt32LE(strPoolOffset + 16);
+    const stringsStart = buf.readUInt32LE(strPoolOffset + 20);
+    const isUtf8       = (flags & (1 << 8)) !== 0;
+
+    const offsetsBase  = strPoolOffset + 28;
+    const strDataBase  = strPoolOffset + stringsStart;
+    const strings      = [];
+
+    for (let i = 0; i < stringCount; i++) {
+        const offPtr = offsetsBase + i * 4;
+        if (offPtr + 4 > buf.length) break;
+        const off = buf.readUInt32LE(offPtr);
+        const absOff = strDataBase + off;
+        if (absOff >= buf.length) continue;
+
+        try {
+            if (isUtf8) {
+                // UTF-8: [utf16len(1-2)] [utf8len(1-2)] [bytes...]
+                let pos = absOff;
+                // skip utf16 length (1 or 2 bytes)
+                if (buf[pos] & 0x80) pos += 2; else pos += 1;
+                // read utf8 length
+                let utf8Len = buf[pos];
+                if (utf8Len & 0x80) { utf8Len = ((utf8Len & 0x7F) << 8) | buf[pos + 1]; pos += 2; }
+                else pos += 1;
+                if (pos + utf8Len > buf.length) continue;
+                strings.push(buf.slice(pos, pos + utf8Len).toString('utf8'));
+            } else {
+                // UTF-16LE: [charCount(2)] [chars * 2]
+                if (absOff + 2 > buf.length) continue;
+                let charCount = buf.readUInt16LE(absOff);
+                if (charCount & 0x8000) {
+                    // high-bit set: length spans 2 shorts
+                    charCount = ((charCount & 0x7FFF) << 16) | buf.readUInt16LE(absOff + 2);
+                }
+                const start = absOff + 2;
+                const byteLen = charCount * 2;
+                if (start + byteLen > buf.length) continue;
+                strings.push(buf.slice(start, start + byteLen).toString('utf16le'));
+            }
+        } catch { continue; }
+    }
+    return strings;
+}
+
+function extractPackageFromAxml(buf) {
+    // Jaribu AXML string pool kwanza
+    const axmlStrings = parseAxmlStringPool(buf);
+    if (axmlStrings.length > 0) {
+        // "package" attribute value iko mara nyingi kwenye strings za kwanza
+        for (const s of axmlStrings) {
+            if (
+                s && s.length >= 5 && s.length <= 80 &&
+                /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]+){1,6}$/.test(s) &&
+                !s.startsWith('android.') &&
+                !s.startsWith('com.google.android.') &&
+                !s.startsWith('androidx.') &&
+                !s.includes('schemas.android') &&
+                !s.includes('w3.org')
+            ) {
+                return s;
+            }
+        }
+        // Fallback: chochote kinachofanana na package name kutoka pool
+        for (const s of axmlStrings) {
+            if (s && /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]+){1,6}$/.test(s) && s.includes('.')) {
+                return s;
+            }
+        }
+    }
+
+    // Fallback ya mwisho: raw string scan (kwa AXML ambazo hazijafuata spec)
+    const strings = extractStringsFromBuffer(buf, 5);
     for (const s of strings) {
         if (
             /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,6}$/.test(s) &&
@@ -53,8 +145,7 @@ function extractPackageFromManifest(buffer) {
             !s.includes('schemas.android') &&
             !s.includes('w3.org') &&
             s.split('.').length >= 2 &&
-            s.length >= 5 &&
-            s.length <= 60
+            s.length >= 5 && s.length <= 60
         ) {
             return s;
         }
@@ -455,8 +546,8 @@ const cmd = {
                             content   = extractStringsFromBuffer(buf).join('\n');
 
                         } else if (baseName === 'AndroidManifest.xml') {
-                            const buf  = await fs.readFile(fullPath);
-                            const text = buf.toString('utf8');
+                            const buf    = await fs.readFile(fullPath);
+                            const text   = buf.toString('utf8');
                             const isText = text.includes('<?xml') || text.includes('manifest');
                             content = isText ? text : readManifestStrings(buf);
 
@@ -465,7 +556,8 @@ const cmd = {
                                     const pkgMatch = content.match(/package[=\s:]+["']?([a-z][a-z0-9_.]+)/i);
                                     if (pkgMatch) packageName = pkgMatch[1];
                                 } else {
-                                    const pkg = extractPackageFromManifest(buf);
+                                    // Binary AXML — tumia AXML string pool decoder
+                                    const pkg = extractPackageFromAxml(buf);
                                     if (pkg) packageName = pkg;
                                 }
                             }
@@ -754,94 +846,181 @@ const cmd = {
 
                     r += `\n  *🎯 Ugumu wa Ku-Patch:* ${patchEmoji} ${patchDifficulty}\n`;
 
-                    // ── SMALI PATCH GUIDE ────────────────────────────────────
-                    r += `\n  *🛠️ Mwongozo wa Ku-Patch (Smali Editor):*\n`;
+                    // ── SMALI PATCH GUIDE (na code halisi) ──────────────────
+                    r += `\n  *🛠️ Smali Patch Guide — Code Halisi:*\n`;
 
-                    // Boolean flags
+                    // ① Boolean flags (isPremium / isPaid / isUnlocked)
                     const flagMatches = [...licenseMap.entries()].filter(([l]) =>
                         /premium status|purchase state|unlock.*flag|user tier/i.test(l)
                     );
                     if (flagMatches.length > 0) {
                         const files = [...new Set(flagMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `    ▸ *Boolean Flag Patch* (_${files}_)\n`;
-                        r += `      Tafuta method: \`isPremium\`/\`isPaid\`/\`isUnlocked\`\n`;
-                        r += `      Mwishoni mwa method badilisha:\n`;
-                        r += `      \`const/4 v0, 0x0\` → \`const/4 v0, 0x1\`\n`;
-                        r += `      Kisha hakikisha: \`return v0\`\n`;
+                        r += `\n  ① *Boolean Flag Patch* (_${files}_)\n`;
+                        r += `  _Tafuta method: \`isPremium\`, \`isPaid\`, \`isUnlocked\` n.k._\n`;
+                        r += `  _KABLA ya patch (original):_\n`;
+                        r += `  \`.method public isPremium()Z\`\n`;
+                        r += `  \`    const/4 v0, 0x0\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _BAADA ya patch:_\n`;
+                        r += `  \`.method public isPremium()Z\`\n`;
+                        r += `  \`    const/4 v0, 0x1\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _(Z = boolean; 0x0=false, 0x1=true)_\n`;
                     }
 
-                    // LVL license checker
+                    // ② LVL License Checker
                     const lvlMatches = [...licenseMap.entries()].filter(([l]) =>
                         /license checker|license validation|lvl policy|lvl response/i.test(l)
                     );
                     if (lvlMatches.length > 0) {
                         const files = [...new Set(lvlMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `    ▸ *LVL License Checker Patch* (_${files}_)\n`;
-                        r += `      Tafuta class: \`LicenseChecker\` au method \`allow(\`\n`;
-                        r += `      Kwenye \`allow(int reason)\` ongeza mwanzoni:\n`;
-                        r += `      \`const/4 v0, 0x1\`  then  \`return v0\`\n`;
+                        r += `\n  ② *LVL License Checker Patch* (_${files}_)\n`;
+                        r += `  _Tafuta class: \`LicenseChecker\`, method: \`allow(I)V\`_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`.method public allow(I)V\`\n`;
+                        r += `  \`    if-eq p1, 0x100, :licensed\`\n`;
+                        r += `  \`    invoke-virtual {p0}, L...;->dontAllow()V\`\n`;
+                        r += `  \`    return-void\`\n`;
+                        r += `  \`    :licensed\`\n`;
+                        r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
+                        r += `  \`    return-void\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _BAADA (skip check, daima licensed):_\n`;
+                        r += `  \`.method public allow(I)V\`\n`;
+                        r += `  \`    invoke-virtual {p0}, L...;->allow()V\`\n`;
+                        r += `  \`    return-void\`\n`;
+                        r += `  \`.end method\`\n`;
                     }
 
-                    // Play Billing
+                    // ③ Play Billing purchase state
                     if (playBilling.length > 0) {
                         const files = [...new Set(playBilling.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `    ▸ *Play Billing Patch* (_${files}_)\n`;
-                        r += `      Tafuta: \`onPurchasesUpdated\` au \`getPurchaseState\`\n`;
-                        r += `      Kwenye if-check ya purchase state:\n`;
-                        r += `      Badilisha \`if-ne\` → \`if-eq\` (au kinyume chake)\n`;
-                        r += `      AU futa check, ache "PURCHASED" block iendelee moja kwa moja\n`;
+                        r += `\n  ③ *Play Billing Patch* (_${files}_)\n`;
+                        r += `  _Tafuta: \`onPurchasesUpdated\` au \`getPurchaseState\`_\n`;
+                        r += `  _KABLA (inacheck kama 1 = PURCHASED):_\n`;
+                        r += `  \`    invoke-interface {v1}, Lcom/android/billingclient/...;->getPurchaseState()I\`\n`;
+                        r += `  \`    move-result v2\`\n`;
+                        r += `  \`    const/4 v3, 0x1\`\n`;
+                        r += `  \`    if-ne v2, v3, :not_purchased\`\n`;
+                        r += `  \`    ... # grant access\`\n`;
+                        r += `  \`    :not_purchased\`\n`;
+                        r += `  \`    return-void\`\n`;
+                        r += `  _BAADA (badilisha if-ne → if-eq, skip :not_purchased):_\n`;
+                        r += `  \`    if-eq v2, v3, :not_purchased\`\n`;
+                        r += `  _(au futa \`if-ne\` line kabisa)_\n`;
                     }
 
-                    // Feature gates
+                    // ④ Feature gate
                     if (featureGates.length > 0) {
                         const files = [...new Set(featureGates.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `    ▸ *Feature Gate Patch* (_${files}_)\n`;
-                        r += `      Tafuta: \`isFeatureEnabled\`/\`premiumFeature\`/\`isUnlocked\`\n`;
-                        r += `      Badilisha mwili wote wa method na:\n`;
-                        r += `      \`const/4 v0, 0x1\`  then  \`return v0\`\n`;
+                        r += `\n  ④ *Feature Gate Patch* (_${files}_)\n`;
+                        r += `  _Tafuta: \`isFeatureEnabled\`, \`premiumFeature\`, \`isUnlocked\`_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z\`\n`;
+                        r += `  \`    ... # logic ngumu\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _BAADA (futa logic yote, rudisha true):_\n`;
+                        r += `  \`.method public isFeatureEnabled(Ljava/lang/String;)Z\`\n`;
+                        r += `  \`    const/4 v0, 0x1\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
                     }
 
-                    // Trial/expiry
+                    // ⑤ Trial/expiry
                     const expiryMatches = [...licenseMap.entries()].filter(([l]) =>
                         /expir|trial|grace/i.test(l)
                     );
                     if (expiryMatches.length > 0) {
                         const files = [...new Set(expiryMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
-                        r += `    ▸ *Trial / Expiry Patch* (_${files}_)\n`;
-                        r += `      Tafuta: \`isExpired\`/\`checkExpiry\`/\`trialEnd\`\n`;
-                        r += `      Badilisha return: \`const/4 v0, 0x0\` (maana: "hajakwisha")\n`;
+                        r += `\n  ⑤ *Trial / Expiry Patch* (_${files}_)\n`;
+                        r += `  _Tafuta: \`isExpired\`, \`checkExpiry\`, \`trialEnd\`_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`.method public isExpired()Z\`\n`;
+                        r += `  \`    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J\`\n`;
+                        r += `  \`    ... # comparison na expiry date\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _BAADA (daima "hajakwisha"):_\n`;
+                        r += `  \`.method public isExpired()Z\`\n`;
+                        r += `  \`    const/4 v0, 0x0\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
                     }
 
-                    // Anti-tamper warnings
+                    // ⑥ Anti-tamper — signature check
                     if (hasSignCheck) {
-                        r += `    ▸ *⚠️ Signature Check — Disable Kwanza!*\n`;
-                        r += `      Tafuta \`getSignature\`/\`GET_SIGNATURES\`\n`;
-                        r += `      Futa au bypass if-check inayolinganisha signature hash\n`;
+                        r += `\n  ⑥ *⚠️ Signature Check — Lazima Disable Kwanza!*\n`;
+                        r += `  _Tafuta: \`getSignature\`, \`GET_SIGNATURES\`, \`checkSignature\`_\n`;
+                        r += `  _KABLA (inacompare hash ya signature):_\n`;
+                        r += `  \`    invoke-virtual {v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z\`\n`;
+                        r += `  \`    move-result v2\`\n`;
+                        r += `  \`    if-eqz v2, :sig_mismatch\`\n`;
+                        r += `  \`    # app inaendelea\`\n`;
+                        r += `  \`    :sig_mismatch\`\n`;
+                        r += `  \`    invoke-static {}, L...;->exit()V  # crash/exit\`\n`;
+                        r += `  _BAADA (futa sig_mismatch jump — daima endelea):_\n`;
+                        r += `  \`    # futa line: if-eqz v2, :sig_mismatch\`\n`;
+                        r += `  \`    # futa block yote ya :sig_mismatch\`\n`;
                     }
+
+                    // ⑦ Root detection
                     if (hasRootDetect) {
-                        r += `    ▸ *⚠️ Root Detection Patch*\n`;
-                        r += `      Tafuta \`isRooted\`/\`RootBeer\`/\`detectRoot\`\n`;
-                        r += `      Badilisha return: \`const/4 v0, 0x0\` (maana: "si-rooted")\n`;
+                        r += `\n  ⑦ *⚠️ Root Detection Patch*\n`;
+                        r += `  _Tafuta: \`isRooted\`, \`detectRoot\`, \`RootBeer\`_\n`;
+                        r += `  _KABLA:_\n`;
+                        r += `  \`.method public isRooted()Z\`\n`;
+                        r += `  \`    ... # checks nyingi za root\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
+                        r += `  _BAADA (daima "si-rooted"):_\n`;
+                        r += `  \`.method public isRooted()Z\`\n`;
+                        r += `  \`    const/4 v0, 0x0\`\n`;
+                        r += `  \`    return v0\`\n`;
+                        r += `  \`.end method\`\n`;
                     }
+
+                    // ⑧ Checksum
                     if (hasChecksum) {
-                        r += `    ▸ *⚠️ Checksum Patch*\n`;
-                        r += `      Tafuta \`CRC\`/\`checksum\` comparison method\n`;
-                        r += `      Badilisha \`if-ne\` → \`if-eq\` ili comparison ifanye kinyume\n`;
+                        r += `\n  ⑧ *⚠️ Checksum / CRC Patch*\n`;
+                        r += `  _Tafuta method inayotumia \`CRC32\` au \`MessageDigest\`_\n`;
+                        r += `  _KABLA (inacompare checksum zilizo-hardcoded):_\n`;
+                        r += `  \`    invoke-virtual {v1, v2}, Ljava/lang/Long;->equals(...)Z\`\n`;
+                        r += `  \`    move-result v3\`\n`;
+                        r += `  \`    if-eqz v3, :checksum_fail\`\n`;
+                        r += `  _BAADA (flip: if-eqz → if-nez, au futa jump):_\n`;
+                        r += `  \`    if-nez v3, :checksum_fail\`\n`;
+                        r += `  _(au futa line ya if-eqz kabisa)_\n`;
                     }
+
+                    // ⑨ Play Integrity / SafetyNet
                     if (hasPlayIntegrity) {
-                        r += `    ▸ *⚠️ Play Integrity/SafetyNet — Ngumu Sana!*\n`;
-                        r += `      Smali peke yake haitoshi — inahitaji:\n`;
-                        r += `      Frida hook: \`Java.use("...IntegrityManager").requestIntegrityToken\`\n`;
-                        r += `      AU custom ROM yenye Play Integrity spoof\n`;
+                        r += `\n  ⑨ *⚠️ Play Integrity / SafetyNet — Ngumu Sana!*\n`;
+                        r += `  _Smali patch peke yake haitoshi — server inaithibitisha_\n`;
+                        r += `  _Frida script (hook requestIntegrityToken):_\n`;
+                        r += `  \`Java.perform(function() {\`\n`;
+                        r += `  \`  var IntMgr = Java.use(\`\n`;
+                        r += `  \`    "com.google.android.play.core.integrity.IntegrityManager");\`\n`;
+                        r += `  \`  IntMgr.requestIntegrityToken.overload(\`\n`;
+                        r += `  \`    "com.google.android.play.core.integrity.IntegrityTokenRequest")\`\n`;
+                        r += `  \`  .implementation = function(req) {\`\n`;
+                        r += `  \`    return this.requestIntegrityToken(req); // intercept\`\n`;
+                        r += `  \`  };\`\n`;
+                        r += `  \`});\`\n`;
+                        r += `  _AU tumia: LSPosed module "PlayIntegrityFix" (bila Frida)_\n`;
                     }
 
                     // Tools
                     r += `\n  *🔧 Zana Zinazoshauriwa:*\n`;
-                    r += `    • *APKTool* — Decompile/recompile smali (PC)\n`;
+                    r += `    • *APKTool* — \`apktool d app.apk\` kisha \`apktool b out/ -o patched.apk\`\n`;
                     r += `    • *MT Manager / NP Manager* — Smali editor moja kwa moja Android\n`;
-                    r += `    • *jadx-gui* — Soma Java code kwanza uelewe logic vizuri\n`;
+                    r += `    • *jadx-gui* — Soma Java kwanza uelewe structure ya class\n`;
+                    r += `    • *zipalign + apksigner* — Sign APK baada ya patch\n`;
                     if (hasPlayIntegrity || hasServerVerif) {
-                        r += `    • *Frida* — Dynamic instrumentation kwa integrity/server checks\n`;
+                        r += `    • *Frida* — \`frida -U -f com.pkg.name -l hook.js\`\n`;
+                        r += `    • *LSPosed + PlayIntegrityFix* — Rahisi kuliko Frida\n`;
                     }
                 }
 
