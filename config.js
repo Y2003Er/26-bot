@@ -6,7 +6,10 @@ dotenv.config();
 
 const toBool = (value) => value === "true";
 
-// ========== EXPORT GLOBALS (kwa ajili ya import) ==========
+// ========== EXPORTS PEKE YAKE — L-7: Futa global assignments ==========
+// Global assignments zilirudiarudia exports bila faida —
+// chanzo cha ukweli sasa ni exports peke yake.
+// Code inayohitaji values hizi itumie import badala ya global.
 export const owner = process.env.OWNER_NUMBER;
 export const nomerowner = process.env.OWNER_NUMBERS;
 export const menu_image = process.env.MENU_IMAGE;
@@ -31,35 +34,12 @@ export const anticall = toBool(process.env.ANTI_CALL);
 export const autobio = toBool(process.env.AUTO_BIO);
 export const prefix = process.env.PREFIX;
 
-// ========== PIA WEKA KWA GLOBAL (kwa compatibility ya code nyingine) ==========
-global.owner = owner;
-global.nomerowner = nomerowner;
-global.menu_image = menu_image;
-global.ANTI_TEMU = ANTI_TEMU;
-global.ANTI_TAG = ANTI_TAG;
-global.bot_name = bot_name;
-global.public = publicVar;
-global.packname = packname;
-global.author = author;
-global.ANTIDELETE = ANTIDELETE;
-global.ANTI_CALL = ANTI_CALL;
-global.unavailable = unavailable;
-global.available = available;
-global.autoreadmessages = autoreadmessages;
-global.chatbot = chatbot;
-global.autoreact = autoreact;
-global.autoTyping = autoTyping;
-global.autoViewStatus = autoViewStatus;
-global.autoStatusReact = autoStatusReact;
-global.welcome = welcome;
-global.anticall = anticall;
-global.autobio = autobio;
-global.prefix = prefix;
-
-// ========== AUTO-RELOAD (imesemplifikishwa – anza upya bot mwenyewe) ==========
-// Katika ES modules, hakuna njia rahisi ya kupakia upya faili moja kwa moja.
-// Kwa hiyo tunakuonya tu uanze upya bot baada ya kubadilisha config.
-const configPath = new URL(import.meta.url).pathname;
-fs.watchFile(configPath, () => {
-    console.log(color(`⚠️ Config file imebadilika. Tafadhali restart bot ili mabadiliko yaanze kutumika.`, 'yellow'));
-});
+// ✅ FIX M-7: watchFile inafanya kazi tu kwenye development
+// Kwenye Railway (production), config haibadiliki — watcher haina faida
+// lakini inatumia OS polling resources bure
+if (process.env.NODE_ENV !== 'production') {
+    const configPath = new URL(import.meta.url).pathname;
+    fs.watchFile(configPath, () => {
+        console.log(color(`⚠️ Config file imebadilika. Tafadhali restart bot ili mabadiliko yaanze kutumika.`, 'yellow'));
+    });
+}
