@@ -676,11 +676,15 @@ const cmd = {
                 const licenseChecks = [...licenseMap.entries()].filter(([l]) =>
                     /license|lvl|verif|receipt|purchaseToken/i.test(l) && !l.includes('⚠️')
                 );
-                const featureGates  = [...licenseMap.entries()].filter(([l]) =>
-                    /premium|feature|flag|gate|trial|expir|unlock/i.test(l) && !l.includes('⚠️')
-                );
                 const playBilling   = [...licenseMap.entries()].filter(([l]) =>
                     /play billing|play:/i.test(l) && !l.includes('⚠️')
+                );
+                // FIX: exclude labels already captured by licenseChecks/playBilling
+                const featureGates  = [...licenseMap.entries()].filter(([l]) =>
+                    /premium|feature|flag|gate|trial|expir|unlock/i.test(l) &&
+                    !l.includes('⚠️') &&
+                    !licenseChecks.some(([ll]) => ll === l) &&
+                    !playBilling.some(([ll]) => ll === l)
                 );
                 const otherLicense  = [...licenseMap.entries()].filter(([l]) =>
                     !antiTamper.some(([ll]) => ll === l) &&
@@ -700,28 +704,24 @@ const cmd = {
                             r += `    ${label}\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
                         });
                     }
-
                     if (licenseChecks.length > 0) {
                         r += `  *🔑 License Verification:*\n`;
                         licenseChecks.forEach(([label, files]) => {
                             r += `    🔑 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
                         });
                     }
-
                     if (playBilling.length > 0) {
                         r += `  *🏪 Google Play Billing:*\n`;
                         playBilling.forEach(([label, files]) => {
                             r += `    🏪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
                         });
                     }
-
                     if (featureGates.length > 0) {
                         r += `  *🚪 Feature Gates / Trial Logic:*\n`;
                         featureGates.forEach(([label, files]) => {
                             r += `    🚪 \`${label}\`\n       _${Array.from(files).slice(0, 2).join(', ')}_\n`;
                         });
                     }
-
                     if (otherLicense.length > 0) {
                         r += `  *📋 Nyingine:*\n`;
                         otherLicense.forEach(([label, files]) => {
@@ -729,20 +729,23 @@ const cmd = {
                         });
                     }
 
-                    // PATCH DIFFICULTY ASSESSMENT
+                    // ── PATCH DIFFICULTY ─────────────────────────────────────
                     const hasAntiTamper    = antiTamper.length > 0;
                     const hasServerVerif   = licenseChecks.some(([l]) => /server|receipt|token/i.test(l));
                     const hasPlayIntegrity = antiTamper.some(([l]) => /safetynet|integrity|attestation/i.test(l));
+                    const hasRootDetect    = antiTamper.some(([l]) => /root/i.test(l));
+                    const hasSignCheck     = antiTamper.some(([l]) => /signature/i.test(l));
+                    const hasChecksum      = antiTamper.some(([l]) => /checksum|crc/i.test(l));
 
                     let patchDifficulty, patchEmoji;
                     if (hasPlayIntegrity && hasServerVerif) {
                         patchDifficulty = 'Ngumu Sana — Server + Play Integrity inahitajika kupita';
                         patchEmoji = '🔴';
                     } else if (hasServerVerif) {
-                        patchDifficulty = 'Ngumu — Verification iko server-side, patch ya local haitoshi';
+                        patchDifficulty = 'Ngumu — Verification server-side, patch ya local haitoshi';
                         patchEmoji = '🟠';
                     } else if (hasAntiTamper) {
-                        patchDifficulty = 'Wastani — Anti-tamper ipo lakini inaweza kupita kwa smali/frida';
+                        patchDifficulty = 'Wastani — Anti-tamper ipo, inaweza kupita kwa smali/frida';
                         patchEmoji = '🟡';
                     } else {
                         patchDifficulty = 'Rahisi — Hakuna server verification wala anti-tamper';
@@ -750,6 +753,96 @@ const cmd = {
                     }
 
                     r += `\n  *🎯 Ugumu wa Ku-Patch:* ${patchEmoji} ${patchDifficulty}\n`;
+
+                    // ── SMALI PATCH GUIDE ────────────────────────────────────
+                    r += `\n  *🛠️ Mwongozo wa Ku-Patch (Smali Editor):*\n`;
+
+                    // Boolean flags
+                    const flagMatches = [...licenseMap.entries()].filter(([l]) =>
+                        /premium status|purchase state|unlock.*flag|user tier/i.test(l)
+                    );
+                    if (flagMatches.length > 0) {
+                        const files = [...new Set(flagMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
+                        r += `    ▸ *Boolean Flag Patch* (_${files}_)\n`;
+                        r += `      Tafuta method: \`isPremium\`/\`isPaid\`/\`isUnlocked\`\n`;
+                        r += `      Mwishoni mwa method badilisha:\n`;
+                        r += `      \`const/4 v0, 0x0\` → \`const/4 v0, 0x1\`\n`;
+                        r += `      Kisha hakikisha: \`return v0\`\n`;
+                    }
+
+                    // LVL license checker
+                    const lvlMatches = [...licenseMap.entries()].filter(([l]) =>
+                        /license checker|license validation|lvl policy|lvl response/i.test(l)
+                    );
+                    if (lvlMatches.length > 0) {
+                        const files = [...new Set(lvlMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
+                        r += `    ▸ *LVL License Checker Patch* (_${files}_)\n`;
+                        r += `      Tafuta class: \`LicenseChecker\` au method \`allow(\`\n`;
+                        r += `      Kwenye \`allow(int reason)\` ongeza mwanzoni:\n`;
+                        r += `      \`const/4 v0, 0x1\`  then  \`return v0\`\n`;
+                    }
+
+                    // Play Billing
+                    if (playBilling.length > 0) {
+                        const files = [...new Set(playBilling.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
+                        r += `    ▸ *Play Billing Patch* (_${files}_)\n`;
+                        r += `      Tafuta: \`onPurchasesUpdated\` au \`getPurchaseState\`\n`;
+                        r += `      Kwenye if-check ya purchase state:\n`;
+                        r += `      Badilisha \`if-ne\` → \`if-eq\` (au kinyume chake)\n`;
+                        r += `      AU futa check, ache "PURCHASED" block iendelee moja kwa moja\n`;
+                    }
+
+                    // Feature gates
+                    if (featureGates.length > 0) {
+                        const files = [...new Set(featureGates.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
+                        r += `    ▸ *Feature Gate Patch* (_${files}_)\n`;
+                        r += `      Tafuta: \`isFeatureEnabled\`/\`premiumFeature\`/\`isUnlocked\`\n`;
+                        r += `      Badilisha mwili wote wa method na:\n`;
+                        r += `      \`const/4 v0, 0x1\`  then  \`return v0\`\n`;
+                    }
+
+                    // Trial/expiry
+                    const expiryMatches = [...licenseMap.entries()].filter(([l]) =>
+                        /expir|trial|grace/i.test(l)
+                    );
+                    if (expiryMatches.length > 0) {
+                        const files = [...new Set(expiryMatches.flatMap(([,f]) => [...f]))].slice(0, 2).join(', ');
+                        r += `    ▸ *Trial / Expiry Patch* (_${files}_)\n`;
+                        r += `      Tafuta: \`isExpired\`/\`checkExpiry\`/\`trialEnd\`\n`;
+                        r += `      Badilisha return: \`const/4 v0, 0x0\` (maana: "hajakwisha")\n`;
+                    }
+
+                    // Anti-tamper warnings
+                    if (hasSignCheck) {
+                        r += `    ▸ *⚠️ Signature Check — Disable Kwanza!*\n`;
+                        r += `      Tafuta \`getSignature\`/\`GET_SIGNATURES\`\n`;
+                        r += `      Futa au bypass if-check inayolinganisha signature hash\n`;
+                    }
+                    if (hasRootDetect) {
+                        r += `    ▸ *⚠️ Root Detection Patch*\n`;
+                        r += `      Tafuta \`isRooted\`/\`RootBeer\`/\`detectRoot\`\n`;
+                        r += `      Badilisha return: \`const/4 v0, 0x0\` (maana: "si-rooted")\n`;
+                    }
+                    if (hasChecksum) {
+                        r += `    ▸ *⚠️ Checksum Patch*\n`;
+                        r += `      Tafuta \`CRC\`/\`checksum\` comparison method\n`;
+                        r += `      Badilisha \`if-ne\` → \`if-eq\` ili comparison ifanye kinyume\n`;
+                    }
+                    if (hasPlayIntegrity) {
+                        r += `    ▸ *⚠️ Play Integrity/SafetyNet — Ngumu Sana!*\n`;
+                        r += `      Smali peke yake haitoshi — inahitaji:\n`;
+                        r += `      Frida hook: \`Java.use("...IntegrityManager").requestIntegrityToken\`\n`;
+                        r += `      AU custom ROM yenye Play Integrity spoof\n`;
+                    }
+
+                    // Tools
+                    r += `\n  *🔧 Zana Zinazoshauriwa:*\n`;
+                    r += `    • *APKTool* — Decompile/recompile smali (PC)\n`;
+                    r += `    • *MT Manager / NP Manager* — Smali editor moja kwa moja Android\n`;
+                    r += `    • *jadx-gui* — Soma Java code kwanza uelewe logic vizuri\n`;
+                    if (hasPlayIntegrity || hasServerVerif) {
+                        r += `    • *Frida* — Dynamic instrumentation kwa integrity/server checks\n`;
+                    }
                 }
 
                 r += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ _Uchambuzi umekamilika!_`;
