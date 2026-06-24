@@ -1,13 +1,5 @@
-'use strict';
-
-import { Pool } from 'pg';
-
-// Reuse singleton pool
-global.dbPool ||= new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
-const pool = global.dbPool;
+import { getPool } from '../lib/db.js';
+const pool = getPool();
 
 // ════════════════════════════════════════════════
 //   🗑️ CLEAR COMMAND — Safisha kumbukumbu ya mtumiaji
