@@ -1,4 +1,4 @@
-// index.js - FIXED v4.4.2 by 26-TECH (Pairing API Integrated)
+// index.js - FIXED v4.5.0 by 26-TECH (Comprehensive Stability)
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -420,7 +420,7 @@ function startAggressiveKeepalive() {
         } catch (e) {
             log.warn(`Aggressive keepalive error: ${e.message}`);
         }
-    }, 90 * 1000); // 90 seconds - more aggressive than standard 4min
+    }, 90 * 1000); // 90 seconds - more aggressive than standard 2min
 }
 
 function startHealthCheck() {
@@ -459,6 +459,30 @@ function startKeepalive() {
     }, 2 * 60 * 1000); // 2 minutes instead of 4
 }
 
+// ✅ FIX E-1: PROPER SOCKET CLEANUP — Ondoa listeners kabla ya kufa
+async function cleanupOldSocket(oldSock) {
+    if (!oldSock) return;
+    try {
+        if (oldSock.ev) {
+            oldSock.ev.removeAllListeners();
+            oldSock.ev.removeAllListeners('connection.update');
+            oldSock.ev.removeAllListeners('messages.upsert');
+            oldSock.ev.removeAllListeners('messages.update');
+            oldSock.ev.removeAllListeners('creds.update');
+        }
+        if (oldSock.ws) {
+            try { await oldSock.ws.close(); } catch {}
+        }
+        if (oldSock.end) {
+            try { await oldSock.end(new Error('Graceful shutdown')); } catch {}
+        }
+    } catch (e) {
+        log.warn(`Socket cleanup error: ${e.message}`);
+    }
+    // ✅ FIX E-2: Longer wait time (5s instead of 2s) para matigichukuzwe migrations
+    await new Promise(resolve => setTimeout(resolve, 5000));
+}
+
 async function startBot() {
     if (bootLock || isConnecting) return;
     if (global.sock?.ws?.readyState === 1 && (Date.now() - lastEventTime) < 600000) return;
@@ -490,14 +514,10 @@ async function startBot() {
 
         const msgRetryCounterCache = new NodeCache();
 
+        // ✅ FIX E-1: PROPER CLEANUP before creating new socket
         if (global.sock) {
-            try {
-                global.sock.ev.removeAllListeners();
-                await global.sock.ws?.close();
-                global.sock.end?.(new Error('Restarting'));
-            } catch {}
+            await cleanupOldSocket(global.sock);
             global.sock = null;
-            await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         global.sock = makeWASocket({
