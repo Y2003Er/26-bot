@@ -358,6 +358,7 @@ const MAX_CONFLICTS = 3;
 
 let healthCheckTimer = null;
 let keepaliveTimer = null;
+let aggressiveKeepaliveTimer = null;
 let cacheCleanTimer = null;
 let lastEventTime = Date.now();
 
@@ -369,9 +370,10 @@ function clearOpenTimer() {
 function clearBackgroundTimers() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     if (keepaliveTimer) clearInterval(keepaliveTimer);
+    if (aggressiveKeepaliveTimer) clearInterval(aggressiveKeepaliveTimer);
     if (cacheCleanTimer) clearInterval(cacheCleanTimer);
     stopPulse();
-    healthCheckTimer = keepaliveTimer = cacheCleanTimer = null;
+    healthCheckTimer = keepaliveTimer = aggressiveKeepaliveTimer = cacheCleanTimer = null;
 }
 
 function displayPairingCode(code) {
@@ -395,14 +397,41 @@ function startCacheCleanup() {
     }, 10 * 60 * 1000);
 }
 
+// ✅ FIX M-3: AGGRESSIVE KEEP-ALIVE - Tuma presence updates every 90 seconds
+// to prevent cloud provider idle timeouts
+function startAggressiveKeepalive() {
+    if (aggressiveKeepaliveTimer) clearInterval(aggressiveKeepaliveTimer);
+    aggressiveKeepaliveTimer = setInterval(async () => {
+        try {
+            if (global.sock?.ws?.readyState === 1) {
+                // Send availability to wake up idle connections
+                await global.sock.sendPresenceUpdate('available');
+                // Send a dummy ping message to keep WebSocket active
+                try {
+                    await global.sock.sendPresenceUpdate('typing');
+                    await new Promise(r => setTimeout(r, 500));
+                    await global.sock.sendPresenceUpdate('paused');
+                } catch (e) {
+                    // Silently fail - these are optional pings
+                }
+                lastEventTime = Date.now();
+                log.info(`🔄 Aggressive keepalive → presence update sent`);
+            }
+        } catch (e) {
+            log.warn(`Aggressive keepalive error: ${e.message}`);
+        }
+    }, 90 * 1000); // 90 seconds - more aggressive than standard 4min
+}
+
 function startHealthCheck() {
     if (healthCheckTimer) clearInterval(healthCheckTimer);
     healthCheckTimer = setInterval(async () => {
         const ws = global.sock?.ws?.readyState;
         const idleTime = Date.now() - lastEventTime;
 
-        // ✅ FIX M-1: Punguza kutoka 600000 (10min) → 300000 (5min)
-        if (ws === 2 || ws === 3 || idleTime > 300000) {
+        // ✅ FIX M-1: Punguza kutoka 600000 (10min) → 180000 (3min)
+        // More aggressive idle detection
+        if (ws === 2 || ws === 3 || idleTime > 180000) {
             log.warn(`⚠️ Health Check: Dead connection detected. WS:${ws}, Idle:${Math.floor(idleTime / 1000)}s — inarestart...`);
             clearBackgroundTimers();
             isConnecting = false;
@@ -410,7 +439,7 @@ function startHealthCheck() {
             try { global.sock?.ws?.close(); } catch {}
             setTimeout(startBot, 5000);
         }
-    }, 2 * 60 * 1000);
+    }, 60 * 1000); // Check every 60 seconds instead of 120
 }
 
 function startKeepalive() {
@@ -427,7 +456,7 @@ function startKeepalive() {
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
         }
-    }, 4 * 60 * 1000);
+    }, 2 * 60 * 1000); // 2 minutes instead of 4
 }
 
 async function startBot() {
@@ -566,9 +595,10 @@ async function startBot() {
 
                 startHealthCheck();
                 startKeepalive();
+                startAggressiveKeepalive();
                 startCacheCleanup();
                 startPulse();
-                log.success('⚡ Health Check + Keepalive + Cache Cleanup + Pulse — Zimeanzishwa');
+                log.success('⚡ Health Check + Keepalive (2min) + Aggressive Keepalive (90s) + Cache Cleanup + Pulse — Zimeanzishwa');
 
                 try {
                     const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
