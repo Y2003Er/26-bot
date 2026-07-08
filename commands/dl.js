@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as cheerio from 'cheerio'; // TUTAITAJA HII
 import fs from 'fs';
 import path from 'path';
 import { Config } from '../lib/handler.js';
@@ -9,7 +10,7 @@ const DOWNLOAD_TIMEOUT = 5 * 60 * 1000; // dakika 5
 export default {
     name: 'dl',
     alias: ['download'],
-    desc: 'Pakua file yoyote kutoka link',
+    desc: 'Pakua file yoyote kutoka link. Ina support TinyURL, MediaFire, Direct',
     category: 'tools',
     use: '.dl <link>',
     async execute(sock, msg, args) {
@@ -26,63 +27,59 @@ export default {
         };
 
         if (!args[0]) {
-            return m.reply('❌ Tafadhali weka link ya kupakua\nMfano: .dl https://link.com/file.zip');
+            return m.reply('❌ Tafadhali weka link ya kupakua\nMfano:.dl https://link.com/file.zip');
         }
 
-        const url = args[0];
-        let parsedUrl;
-        try {
-            parsedUrl = new URL(url);
-        } catch {
-            return m.reply('❌ Link uliyoweka si sahihi (invalid URL)');
-        }
-
-        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-            return m.reply('❌ Aina hii ya link haiungwi mkono. Tumia http:// au https:// tu');
-        }
-
-        const hostname = parsedUrl.hostname.toLowerCase();
-        const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '169.254.169.254'];
-        const isPrivateIp = /^(10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.|169\.254\.)/.test(hostname);
-
-        if (blockedHosts.includes(hostname) || isPrivateIp || hostname.endsWith('.local')) {
-            return m.reply('❌ Link hii haikubaliki kwa sababu za kiusalama');
-        }
-
-        let fileName = path.basename(parsedUrl.pathname.split('?')[0]);
-        if (!fileName || fileName.length < 3 || !fileName.includes('.')) {
-            fileName = `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        }
-        fileName = fileName.replace(/[/\\?%*:|"<>]/g, '_');
-
+        let url = args[0]; // TUMEBADILISHA KUWA let
         const downloadsDir = path.resolve('./downloads');
-        const filePath = path.join(downloadsDir, fileName);
-
-        if (!filePath.startsWith(downloadsDir)) {
-            return m.reply('❌ Jina la faili si sahihi');
-        }
+        const tempFilePath = path.join(downloadsDir, `temp_${Date.now()}`);
 
         let writer;
         let response;
         let downloadTimer;
 
         try {
-            await m.reply('⏳ *Inapakua...*\nTafadhali subiri kidogo');
+            await m.reply('⏳ *Inachanganua link...*');
 
             if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
+
+            // 1. FUATILIA REDIRECT YA TINYURL
+            const initial = await axios.get(url, { maxRedirects: 5, headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+            url = initial.request.res.responseUrl || url; // Pata link ya mwisho
+            await m.reply(`📎 *Link iliyopatikana:* ${url}`);
+
+            let downloadUrl = url;
+            let fileName = path.basename(new URL(url).pathname.split('?')[0]);
+            if (!fileName || fileName.length < 3 ||!fileName.includes('.')) {
+                fileName = `file_${Date.now()}`;
+            }
+            fileName = fileName.replace(/[/\\?%*:|"<>]/g, '_');
+            const filePath = path.join(downloadsDir, fileName);
+
+            // 2. KAMA NI MEDIAFIRE, TUNAVUNJA
+            if (url.includes('mediafire.com')) {
+                await m.reply('📎 *Nimegundua MediaFire. Ninavunja link...*');
+                const { data } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+                const $ = cheerio.load(data);
+                downloadUrl = $('#downloadButton').attr('href');
+                const mfName = $('div.filename').text().trim();
+                if(mfName) fileName = mfName;
+                if (!downloadUrl) throw new Error('Imeshindwa kupata button ya download. Link imeexpire?');
+                await m.reply(`📥 *Inapakua:* ${fileName}`);
+            }
 
             const controller = new AbortController();
             downloadTimer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT);
 
             response = await axios({
-                url,
+                url: downloadUrl,
                 method: 'GET',
                 responseType: 'stream',
                 timeout: DOWNLOAD_TIMEOUT,
                 maxRedirects: 5,
                 maxContentLength: MAX_SIZE,
                 signal: controller.signal,
-                headers: { 'User-Agent': 'Mozilla/5.0' },
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': url },
                 validateStatus: (status) => status >= 200 && status < 400
             });
 
@@ -100,7 +97,7 @@ export default {
 
             response.data.on('data', (chunk) => {
                 downloaded += chunk.length;
-                if (downloaded > MAX_SIZE && !aborted) {
+                if (downloaded > MAX_SIZE &&!aborted) {
                     aborted = true;
                     response.data.destroy();
                     writer.destroy();
@@ -152,7 +149,7 @@ export default {
             await m.reply(`❌ *Imeshindwa Kupakua*\nSababu: ${userMsg}`);
         } finally {
             clearTimeout(downloadTimer);
-            if (writer && !writer.destroyed) writer.destroy();
+            if (writer &&!writer.destroyed) writer.destroy();
             if (fs.existsSync(filePath)) {
                 try {
                     fs.unlinkSync(filePath);
