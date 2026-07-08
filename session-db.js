@@ -1,13 +1,22 @@
-// session-db.js – FIXED v2.1 by 26-TECH
+// session-db.js – FIXED v3.0 by 26-TECH
 // FIX C-1: Debounce keys.set() — ilikuwa inafanya DB write kwa kila key update
 // FIX C-2: Tumia shared pool kutoka lib/db.js — inaondoa pool ya pili
 // FIX M-3: Debounce saveCreds — ilikuwa inaweza kufanya concurrent writes
+// ✅ FIX #5: Added retry logic with exponential backoff
+// ✅ FIX #6: Added automatic credential refresh every 10 hours
 
 import { getPool } from './lib/db.js';
 import pino from 'pino';
 import { initAuthCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
 
 const logger = pino({ level: 'silent' });
+
+// ✅ FIX #5: Retry configuration
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1 second
+
+// ✅ FIX #6: Credential refresh interval (10 hours)
+const CREDS_REFRESH_INTERVAL = 10 * 60 * 60 * 1000;
 
 function reviveBuffers(obj) {
     if (obj == null) return obj;
@@ -31,6 +40,25 @@ function replacer(key, value) {
         return { type: 'Buffer', data: [...value] };
     }
     return value;
+}
+
+// ✅ FIX #5: Retry helper with exponential backoff
+async function retryOperation(operation, operationName = 'DB Operation') {
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await operation();
+        } catch (err) {
+            lastError = err;
+            if (attempt < MAX_RETRIES) {
+                const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
+                console.warn(`[session-db] ${operationName} attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${delay}ms:`, err.message);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    console.error(`[session-db] ${operationName} failed after ${MAX_RETRIES} attempts:`, lastError.message);
+    throw lastError;
 }
 
 export async function initializeDatabase() {
@@ -69,62 +97,61 @@ export async function initializeDatabase() {
 }
 
 async function loadState(sessionId) {
-    const client = await getPool().connect();
-    try {
-        const res = await client.query(
-            `SELECT state FROM wa_sessions WHERE session_id = $1`,
-            [sessionId]
-        );
-        if (res.rows.length === 0) return null;
-        return res.rows[0].state;
-    } catch (err) {
-        console.error('[session-db] Load error:', err.message);
-        return null;
-    } finally {
-        client.release();
-    }
+    return retryOperation(async () => {
+        const client = await getPool().connect();
+        try {
+            const res = await client.query(
+                `SELECT state FROM wa_sessions WHERE session_id = $1`,
+                [sessionId]
+            );
+            if (res.rows.length === 0) return null;
+            return res.rows[0].state;
+        } finally {
+            client.release();
+        }
+    }, `loadState(${sessionId})`);
 }
 
 async function saveState(sessionId, stateData) {
-    const client = await getPool().connect();
-    try {
-        const serialized = JSON.parse(JSON.stringify(stateData, replacer));
-        await client.query(
-            `INSERT INTO wa_sessions (session_id, state, updated_at)
-             VALUES ($1, $2, NOW())
-             ON CONFLICT (session_id) DO UPDATE
-             SET state = EXCLUDED.state, updated_at = NOW()`,
-            [sessionId, serialized]
-        );
-    } catch (err) {
-        console.error('[session-db] Save error:', err.message);
-    } finally {
-        client.release();
-    }
+    return retryOperation(async () => {
+        const client = await getPool().connect();
+        try {
+            const serialized = JSON.parse(JSON.stringify(stateData, replacer));
+            await client.query(
+                `INSERT INTO wa_sessions (session_id, state, updated_at)
+                 VALUES ($1, $2, NOW())
+                 ON CONFLICT (session_id) DO UPDATE
+                 SET state = EXCLUDED.state, updated_at = NOW()`,
+                [sessionId, serialized]
+            );
+        } finally {
+            client.release();
+        }
+    }, `saveState(${sessionId})`);
 }
 
 export async function deleteSession(sessionId) {
-    const client = await getPool().connect();
-    try {
-        await client.query(`DELETE FROM wa_sessions WHERE session_id = $1`, [sessionId]);
-        console.log(`[session-db] Session ${sessionId} deleted`);
-    } catch (err) {
-        console.error('[session-db] Delete error:', err.message);
-    } finally {
-        client.release();
-    }
+    return retryOperation(async () => {
+        const client = await getPool().connect();
+        try {
+            await client.query(`DELETE FROM wa_sessions WHERE session_id = $1`, [sessionId]);
+            console.log(`[session-db] Session ${sessionId} deleted`);
+        } finally {
+            client.release();
+        }
+    }, `deleteSession(${sessionId})`);
 }
 
 export async function deleteAllSessions() {
-    const client = await getPool().connect();
-    try {
-        const result = await client.query(`DELETE FROM wa_sessions`);
-        console.log(`[session-db] Deleted ${result.rowCount} session(s).`);
-    } catch (err) {
-        console.error('[session-db] Delete all error:', err.message);
-    } finally {
-        client.release();
-    }
+    return retryOperation(async () => {
+        const client = await getPool().connect();
+        try {
+            const result = await client.query(`DELETE FROM wa_sessions`);
+            console.log(`[session-db] Deleted ${result.rowCount} session(s).`);
+        } finally {
+            client.release();
+        }
+    }, 'deleteAllSessions');
 }
 
 export async function usePostgresAuthState(sessionId) {
@@ -182,6 +209,7 @@ export async function usePostgresAuthState(sessionId) {
 
     // ── FIX M-3: Debounce saveCreds
     let credsDebounceTimer = null;
+    let credsRefreshTimer = null;
 
     const saveCreds = async (update) => {
         if (update && typeof update === 'object') {
@@ -197,6 +225,20 @@ export async function usePostgresAuthState(sessionId) {
             }
         }, 300);
     };
+
+    // ✅ FIX #6: Auto-refresh credentials every 10 hours
+    // Prevents WhatsApp from invalidating old security keys
+    if (!credsRefreshTimer) {
+        credsRefreshTimer = setInterval(async () => {
+            try {
+                console.log('[session-db] 🔄 Refreshing credentials (scheduled refresh)...');
+                await saveCreds(undefined);
+                console.log('[session-db] ✅ Credentials refreshed');
+            } catch (err) {
+                console.error('[session-db] Credential refresh error:', err.message);
+            }
+        }, CREDS_REFRESH_INTERVAL);
+    }
 
     return { state: { creds, keys }, saveCreds };
 }
