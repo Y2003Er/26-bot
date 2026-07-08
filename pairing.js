@@ -1,4 +1,6 @@
-// pairing.js - Router Version v3.3 by 26-TECH
+// pairing.js - Router Version v4.0 by 26-TECH (FIXED CLEANUP)
+// ✅ FIX #12: Proper event listener cleanup
+// ✅ FIX #15: Active sockets map cleanup
 import express from 'express';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -36,8 +38,29 @@ async function sendSessionToUser(sock, number) {
     }
 }
 
+// ✅ FIX #12 #15: Proper socket cleanup with listener removal
 function safeEnd(sock, number) {
-    try { sock.end(); } catch {}
+    try {
+        if (sock && sock.ev) {
+            // ✅ FIX #12: Remove ALL event listeners before closing
+            sock.ev.removeAllListeners();
+            sock.ev.removeAllListeners('connection.update');
+            sock.ev.removeAllListeners('creds.update');
+            sock.ev.removeAllListeners('messages.upsert');
+            sock.ev.removeAllListeners('messages.update');
+            sock.ev.removeAllListeners('group-participants.update');
+        }
+        if (sock && sock.ws) {
+            try { sock.ws.close(); } catch {}
+        }
+        if (sock && sock.end) {
+            sock.end().catch(() => {});
+        }
+    } catch (err) {
+        console.warn(`[PAIR] Error during socket cleanup: ${err.message}`);
+    }
+    
+    // ✅ FIX #15: Clean up active sockets map
     if (number) activeSockets.delete(number);
     console.log(`[PAIR] 🔌 Socket imefungwa kwa ${number}`);
 }
@@ -80,8 +103,10 @@ router.post('/pair', async (req, res) => {
 
         // ✅ Funga socket ya zamani kama ipo
         if (activeSockets.has(number)) {
-            try { activeSockets.get(number).end(); } catch {}
-            activeSockets.delete(number);
+            try { 
+                const oldSock = activeSockets.get(number);
+                safeEnd(oldSock, number);
+            } catch {}
             await delay(500);
         }
 
