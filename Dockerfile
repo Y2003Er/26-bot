@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y wget gnupg && \
     wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
     apt-get update && apt-get install -y \
     ffmpeg \
+    unzip \
     python3 \
     python3-pip \
     python-is-python3 \
