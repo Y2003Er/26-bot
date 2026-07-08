@@ -94,7 +94,7 @@ export async function execute(sock, msg, args) {
   menuText     += `⚡ Prefix: ${pfx}\n`;
   menuText     += `📦 Total Commands: ${allCmds.size}\n`;
   menuText     += `👑 Owner: *26-𝐓𝐄𝐂𝐇*\n`;
-  menuText     += `📱 Owner Number: https://wa.me/255617156221\n\n`;
+  menuText     += `📱 Owner Number: https://wa.me/message/SQNPGC2SNDJQN1\n\n`;
 
   const categoryOrder = ['general', 'group', 'whatsapp', 'admin', 'owner', 'ai', 'media', 'fun', 'utility', 'textmaker', 'anime'];
   const sortedCategories = [
