@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 # 1. Install system dependencies
-#    Add PostgreSQL APT repository to get pg_dump 17
+#    Add PostgreSQL APT repository to get pg_dump 17 and Chrome GUI libraries
 RUN apt-get update && apt-get install -y wget gnupg && \
     echo "deb https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
     wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
@@ -24,6 +24,19 @@ RUN apt-get update && apt-get install -y wget gnupg && \
     libvips-dev \
     git \
     postgresql-client-17 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libnss3 \
+    libxshmfence1 \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && ln -sf /usr/bin/python3 /usr/bin/python2 \
     && rm -rf /var/lib/apt/lists/*
