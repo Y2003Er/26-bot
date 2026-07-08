@@ -1,6 +1,6 @@
 /**
- * commands/viewonce.js
- * Kufunua meseji za View-Once (Picha/Video/Audio) — Toleo la 26-TECH
+ * commands/viewonce.js - FIXED v2.0
+ * Funua meseji za view-once (picha/video/audio)
  */
 
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
@@ -57,12 +57,18 @@ export async function execute(sock, msg, args) {
 
         const caption = actualMsg[mtype]?.caption || '*🔓 Mzigo wa View-Once Umefunuliwa!*\n\n> *⚡ Powered by 26-𝐓𝐄𝐂𝐇*';
 
-        if (/video/.test(mtype)) {
-            await sock.sendMessage(chatId, { video: buffer, caption, mimetype: 'video/mp4' }, { quoted: msg });
-        } else if (/image/.test(mtype)) {
-            await sock.sendMessage(chatId, { image: buffer, caption, mimetype: 'image/jpeg' }, { quoted: msg });
-        } else if (/audio/.test(mtype)) {
-            await sock.sendMessage(chatId, { audio: buffer, ptt: true, mimetype: 'audio/ogg; codecs=opus' }, { quoted: msg });
+        try {
+            if (/video/.test(mtype)) {
+                await sock.sendMessage(chatId, { video: buffer, caption, mimetype: 'video/mp4' }, { quoted: msg });
+            } else if (/image/.test(mtype)) {
+                await sock.sendMessage(chatId, { image: buffer, caption, mimetype: 'image/jpeg' }, { quoted: msg });
+            } else if (/audio/.test(mtype)) {
+                await sock.sendMessage(chatId, { audio: buffer, ptt: true, mimetype: 'audio/ogg; codecs=opus' }, { quoted: msg });
+            }
+        } finally {
+            // ✅ FIX #8: Clear buffer after sending to prevent memory leak
+            buffer = null;
+            if (global.gc) global.gc();
         }
 
     } catch (error) {
