@@ -1,7 +1,7 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { Config } from '../handler.js';
+import { Config } from '../lib/handler.js';
 
 const MAX_SIZE = 100 * 1024 * 1024; // 100MB
 const DOWNLOAD_TIMEOUT = 5 * 60 * 1000; // dakika 5
