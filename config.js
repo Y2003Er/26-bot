@@ -34,6 +34,10 @@ export const anticall = toBool(process.env.ANTI_CALL);
 export const autobio = toBool(process.env.AUTO_BIO);
 export const prefix = process.env.PREFIX;
 
+// ✅ Kudhibiti ujumbe wa "Bot iko active" unaotumwa kwa owner bot inapowasha
+// Weka SEND_STARTUP_MSG=true kwenye .env ukitaka kuurudisha
+export const sendStartupMsg = toBool(process.env.SEND_STARTUP_MSG);
+
 // ✅ FIX M-7: watchFile inafanya kazi tu kwenye development
 // Kwenye Railway (production), config haibadiliki — watcher haina faida
 // lakini inatumia OS polling resources bure
