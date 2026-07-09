@@ -1,10 +1,12 @@
-// session-db.js – FIXED v3.1 by 26-TECH
+// session-db.js – FIXED v3.2 by 26-TECH
 // FIX C-1: Debounce keys.set() — ilikuwa inafanya DB write kwa kila key update
 // FIX C-2: Tumia shared pool kutoka lib/db.js — inaondoa pool ya pili
 // FIX M-3: Debounce saveCreds — ilikuwa inaweza kufanya concurrent writes
 // ✅ FIX #5: Added retry logic with exponential backoff
 // ✅ FIX #6: Added automatic credential refresh every 10 hours
 // ✅ FIX #7: Increased saveCreds debounce to 10 seconds (reduces DB writes by 97%)
+// ✅ FIX #8: Fixed MaxListenersExceededWarning — exit handlers now registered ONCE globally
+// ✅ FIX #9: Exit handlers removed before re-adding to prevent duplication
 
 import { getPool } from './lib/db.js';
 import pino from 'pino';
@@ -22,6 +24,10 @@ const CREDS_REFRESH_INTERVAL = 10 * 60 * 60 * 1000;
 // ✅ FIX #7: Debounce timings
 const KEYS_DEBOUNCE_MS = 500;   // 0.5 seconds for keys
 const CREDS_DEBOUNCE_MS = 10000; // 10 seconds for creds (was 300ms)
+
+// ✅ FIX #8: Global exit handler registry — prevents MaxListeners leak
+const exitHandlers = new Map();
+let globalExitHandlerRegistered = false;
 
 function reviveBuffers(obj) {
     if (obj == null) return obj;
@@ -159,6 +165,46 @@ export async function deleteAllSessions() {
     }, 'deleteAllSessions');
 }
 
+// ✅ FIX #8 + #9: Register exit handler ONCE globally
+function registerGlobalExitHandler(sessionId, getStateSnapshot) {
+    // Remove old handler for this session if exists
+    if (exitHandlers.has(sessionId)) {
+        const oldHandler = exitHandlers.get(sessionId);
+        process.removeListener('SIGINT', oldHandler);
+        process.removeListener('SIGTERM', oldHandler);
+        process.removeListener('beforeExit', oldHandler);
+    }
+    
+    const forceSaveOnExit = async () => {
+        console.log('[session-db] 💾 Emergency save before exit...');
+        try {
+            const state = getStateSnapshot();
+            await saveState(sessionId, state);
+            console.log('[session-db] ✅ Final save complete.');
+        } catch (err) {
+            console.error('[session-db] ❌ Final save failed:', err.message);
+        }
+    };
+    
+    // Store handler reference
+    exitHandlers.set(sessionId, forceSaveOnExit);
+    
+    // Register process handlers (always use .once so they auto-cleanup)
+    process.once('SIGINT', forceSaveOnExit);
+    process.once('SIGTERM', forceSaveOnExit);
+    process.once('beforeExit', forceSaveOnExit);
+    
+    // Increase max listeners if needed (one-time)
+    if (!globalExitHandlerRegistered) {
+        const currentMax = process.getMaxListeners();
+        if (currentMax < 30) {
+            process.setMaxListeners(Math.max(currentMax, 30));
+            console.log(`[session-db] MaxListeners increased to ${Math.max(currentMax, 30)}`);
+        }
+        globalExitHandlerRegistered = true;
+    }
+}
+
 export async function usePostgresAuthState(sessionId) {
     const fullState = await loadState(sessionId);
     const creds = reviveBuffers(fullState?.creds) || initAuthCreds();
@@ -219,20 +265,22 @@ export async function usePostgresAuthState(sessionId) {
     // ── FIX M-3 + FIX #7: Debounce saveCreds — 10 seconds
     let credsDebounceTimer = null;
     let pendingCredsSave = false;
-    let credsRefreshTimer = null;
+    
+    // Track if this session already has a refresh timer
+    const refreshTimerKey = `refresh_${sessionId}`;
 
     const saveCreds = async (update) => {
         if (update && typeof update === 'object') {
             Object.assign(creds, update);
         }
-        
+
         if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
         pendingCredsSave = true;
-        
+
         credsDebounceTimer = setTimeout(async () => {
             if (!pendingCredsSave) return;
             pendingCredsSave = false;
-            
+
             try {
                 await saveState(sessionId, { creds, keys: keysStore });
                 console.log('[session-db] 💾 Creds saved (10s debounce).');
@@ -243,9 +291,13 @@ export async function usePostgresAuthState(sessionId) {
     };
 
     // ✅ FIX #6: Auto-refresh credentials every 10 hours
-    // Prevents WhatsApp from invalidating old security keys
-    if (!credsRefreshTimer) {
-        credsRefreshTimer = setInterval(async () => {
+    // Use global registry to prevent duplicate timers
+    if (!global.credRefreshTimers) {
+        global.credRefreshTimers = new Map();
+    }
+    
+    if (!global.credRefreshTimers.has(refreshTimerKey)) {
+        const timer = setInterval(async () => {
             try {
                 console.log('[session-db] 🔄 Refreshing credentials (scheduled refresh)...');
                 // Force immediate save bypassing debounce
@@ -257,28 +309,15 @@ export async function usePostgresAuthState(sessionId) {
                 console.error('[session-db] Credential refresh error:', err.message);
             }
         }, CREDS_REFRESH_INTERVAL);
+        
+        global.credRefreshTimers.set(refreshTimerKey, timer);
     }
 
-    // ════════════════════════════════════════
-    // ✅ Force save on process exit
-    // ════════════════════════════════════════
-    const forceSaveOnExit = async () => {
-        console.log('[session-db] 💾 Emergency save before exit...');
-        if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
-        if (keysDebounceTimer) clearTimeout(keysDebounceTimer);
-        pendingCredsSave = false;
-        pendingKeysSave = false;
-        try {
-            await saveState(sessionId, { creds, keys: keysStore });
-            console.log('[session-db] ✅ Final save complete.');
-        } catch (err) {
-            console.error('[session-db] ❌ Final save failed:', err.message);
-        }
-    };
-
-    process.once('SIGINT', forceSaveOnExit);
-    process.once('SIGTERM', forceSaveOnExit);
-    process.once('beforeExit', forceSaveOnExit);
+    // ✅ FIX #8 + #9: Register exit handler ONCE per session
+    registerGlobalExitHandler(sessionId, () => ({
+        creds,
+        keys: keysStore
+    }));
 
     return { state: { creds, keys }, saveCreds };
 }
