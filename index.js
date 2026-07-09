@@ -22,6 +22,7 @@ import {
 } from '@whiskeysockets/baileys';
 
 import './config.js';
+import { sendStartupMsg } from './config.js';
 import {
     loadCommands,
     handleMessage,
@@ -621,9 +622,11 @@ async function startBot() {
                 log.success('⚡ Health Check + Keepalive (2min) + Aggressive Keepalive (90s) + Cache Cleanup + Pulse — Zimeanzishwa');
 
                 try {
-                    const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                    await global.sock.sendMessage(ownerJid, { text: '✅ *Bot iko active*' });
-                    log.success('Ujumbe wa "Bot iko active" umetumwa kwa mmiliki');
+                    if (sendStartupMsg) {
+                        const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                        await global.sock.sendMessage(ownerJid, { text: '✅ *Bot iko active*' });
+                        log.success('Ujumbe wa "Bot iko active" umetumwa kwa mmiliki');
+                    }
                 } catch (err) {
                     log.warn(`Imeshindwa kutuma notification ya active: ${err.message}`);
                 }
