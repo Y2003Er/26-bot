@@ -2,6 +2,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// ✅ Owner number LAZIMA itoke .env — hakuna hardcoded fallback
+if (!process.env.OWNER_NUMBER || !/^\d{9,15}$/.test(process.env.OWNER_NUMBER.replace(/[^0-9]/g, ''))) {
+    console.error('❌ OWNER_NUMBER haijawekwa sahihi kwenye .env! Mfano: OWNER_NUMBER=255753495142');
+    process.exit(1);
+}
+
 process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ Unhandled Rejection:', reason);
 });
@@ -319,7 +325,7 @@ const log = {
 
 global.isOwner = (jid) => {
     if (!jid) return false;
-    const ownerNum = (process.env.OWNER_NUMBER || "255753495142").toString().trim();
+    const ownerNum = process.env.OWNER_NUMBER.toString().trim();
     const normalize = (str) => String(str).split(':')[0].replace(/@lid|@s.whatsapp.net/, '').replace(/[^0-9]/g, '');
     const senderClean = normalize(jid);
     const ownerClean = normalize(ownerNum);
@@ -606,7 +612,7 @@ async function startBot() {
                 updateBanner('restarts', bannerState.restarts + 1);
 
                 resolveOwnerLid(global.sock);
-                global.owner = process.env.OWNER_NUMBER || "255753495142";
+                global.owner = process.env.OWNER_NUMBER;
 
                 measurePing().then(ms => {
                     updateBanner('ping', ms);
@@ -635,7 +641,7 @@ async function startBot() {
 
                 try {
                     if (sendStartupMsg) {
-                        const ownerJid = (global.owner || '255753495142').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                        const ownerJid = global.owner.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
                         await global.sock.sendMessage(ownerJid, { text: '✅ *Bot iko active*' });
                         log.success('Ujumbe wa "Bot iko active" umetumwa kwa mmiliki');
                     }
