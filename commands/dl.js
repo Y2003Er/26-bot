@@ -2,16 +2,14 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
-import puppeteer from 'puppeteer';
-import { Config } from '../lib/handler.js';
 
-const MAX_SIZE = 100 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT = 5 * 60 * 1000;
+const MAX_SIZE = 100 * 1024 * 1024; // 100MB
+const DOWNLOAD_TIMEOUT = 5 * 60 * 1000; // dakika 5
 
 export default {
     name: 'dl',
     alias: ['download'],
-    desc: 'Pakua file yoyote. Sasa inavunja 5modapk pia',
+    desc: 'Pakua file yoyote. Inasaidia MediaFire na Direct Link',
     category: 'tools',
     use: '.dl <link>',
     async execute(sock, msg, args) {
@@ -20,12 +18,11 @@ export default {
             reply: async (txt) => await sock.sendMessage(msg.key.remoteJid, { text: txt }, { quoted: msg })
         };
 
-        if (!args[0]) return m.reply('❌ Weka link ya kupakua');
+        if (!args[0]) return m.reply('❌ Weka link ya kupakua\n*Mfano:* `.dl https://mediafire.com/...`');
 
         let url = args[0];
         const downloadsDir = path.resolve('./downloads');
         let filePath = null;
-        let browser = null;
 
         try {
             await m.reply('⏳ *Inachanganua link...*');
@@ -34,44 +31,39 @@ export default {
             let downloadUrl = url;
             let fileName = `file_${Date.now()}.bin`;
 
-            // KAMA NI 5MODAPK / GETMODSAPK - TUMIA PUPPETEER
+            // 1. KAMA NI 5MODAPK / GETMODSAPK - TUMIA AXIOS TU
             if (url.includes('5modapk.com') || url.includes('getmodsapk.com')) {
-                await m.reply('🤖 *Nimegundua 5modapk. Ninafungua browser...*');
+                await m.reply('⚠️ *5modapk inahitaji puppeteer*\nNajaribu kuvunja kwa axios... Ikiishindwa tumia link nyingine');
 
-                browser = await puppeteer.launch({
-                    headless: 'new',
-                    args: ['--no-sandbox', '--disable-setuid-sandbox']
+                const { data } = await axios.get(url, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' },
+                    timeout: 30000
                 });
-                const page = await browser.newPage();
-                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
+                const $ = cheerio.load(data);
 
-                await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-                await m.reply('⏳ *Inasubiri matangazo...*');
-                await new Promise(r => setTimeout(r, 5000)); // Subiri sekunde 5 za ad
+                // Tafuta button ya download
+                downloadUrl = $('a.btn-download, a#downloadButton, a[href*=".apk"]').first().attr('href');
+                if (!downloadUrl) throw new Error('Sikupata link ya download. Tovuti imezuia bot.');
 
-                // Bonyeza button ya Download
-                const downloadBtn = await page.$('a.btn, a#downloadButton, a[href*=".apk"]');
-                if (!downloadBtn) throw new Error('Sikupata button ya Download kwenye ukurasa');
-
-                await m.reply('🖱️ *Inabonyeza Download...*');
-                const [response] = await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'networkidle2' }),
-                    downloadBtn.click()
-                ]);
-
-                downloadUrl = page.url();
+                if (!downloadUrl.startsWith('http')) downloadUrl = new URL(downloadUrl, url).href;
                 fileName = downloadUrl.split('/').pop().split('?')[0];
                 fileName = fileName.replace(/[/\\?%*:|"<>]/g, '_');
-                await m.reply(`📎 *Link halisi:* ${downloadUrl}`);
             }
 
-            // KAMA NI MEDIAFIRE
-            if (url.includes('mediafire.com')) {
+            // 2. KAMA NI MEDIAFIRE
+            else if (url.includes('mediafire.com')) {
                 await m.reply('📎 *Nimegundua MediaFire. Ninavunja link...*');
                 const { data } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
                 const $ = cheerio.load(data);
                 downloadUrl = $('a#downloadButton').attr('href');
                 fileName = $('div.filename').text().trim() || fileName;
+                if (!downloadUrl) throw new Error('Link ya MediaFire imeexpire');
+            }
+
+            // 3. KAMA NI DIRECT LINK
+            else {
+                fileName = url.split('/').pop().split('?')[0] || fileName;
+                fileName = fileName.replace(/[/\\?%*:|"<>]/g, '_');
             }
 
             filePath = path.join(downloadsDir, fileName);
@@ -82,7 +74,8 @@ export default {
                 method: 'GET',
                 responseType: 'stream',
                 timeout: DOWNLOAD_TIMEOUT,
-                headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.google.com/' }
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.google.com/' },
+                maxContentLength: MAX_SIZE
             });
 
             const writer = fs.createWriteStream(filePath);
@@ -91,6 +84,11 @@ export default {
 
             const stats = fs.statSync(filePath);
             const fileSize = (stats.size / 1024 / 1024).toFixed(2);
+
+            if(stats.size > MAX_SIZE) {
+                fs.unlinkSync(filePath);
+                return m.reply(`❌ File ni kubwa sana: ${fileSize} MB. Max ni 100MB`)
+            }
 
             await m.reply(`✅ *Imeisha!* ${fileSize} MB\n📤 Inatuma...`);
 
@@ -102,9 +100,8 @@ export default {
 
         } catch (e) {
             console.error('[dl] Error:', e);
-            await m.reply(`❌ *Imeshindwa*\nSababu: ${e.message}`);
+            await m.reply(`❌ *Imeshindwa*\nSababu: ${e.message}\n\n*Note:* 5modapk bila puppeteer mara nyingi inashindwa. Tumia MediaFire au Direct link`);
         } finally {
-            if (browser) await browser.close();
             if (filePath && fs.existsSync(filePath)) {
                 try { fs.unlinkSync(filePath); } catch {}
             }
