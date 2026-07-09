@@ -22,14 +22,19 @@ import {
 } from '@whiskeysockets/baileys';
 
 import './config.js';
-import { sendStartupMsg } from './config.js';
+import { sendStartupMsg, ANTIDELETE, autoViewStatus, chatbot } from './config.js';
 import {
     loadCommands,
     handleMessage,
     setupContactListener,
     setupAntiDelete,
     groupMetaCache,
-    setupAutoStatusViewer
+    setupAutoStatusViewer,
+    setupAutoBio,
+    setupWelcome,
+    setupAntiTag,
+    setupAntiCall,
+    setupAntiTemu
 } from './lib/handler.js';
 import {
     initializeDatabase,
@@ -536,6 +541,8 @@ async function startBot() {
             shouldSyncHistory: () => false,
             markOnlineOnConnect: true,
             emitOwnEvents: false,
+            // ✅ Baileys v7 rc13: epuka rate-limit/ban kwa kutumia cached group metadata
+            cachedGroupMetadata: async (jid) => groupMetaCache.get(jid),
         });
 
         global.sockInstance = global.sock;
@@ -609,9 +616,14 @@ async function startBot() {
                     global.sock.groupFetchAllParticipating().then(groups => {
                         updateBanner('groups', Object.keys(groups).length);
                     }),
-                    Promise.resolve(setupAntiDelete(global.sock)),
-                    Promise.resolve(setupAutoStatusViewer(global.sock)),
+                    ANTIDELETE ? Promise.resolve(setupAntiDelete(global.sock)) : Promise.resolve(),
+                    autoViewStatus ? Promise.resolve(setupAutoStatusViewer(global.sock)) : Promise.resolve(),
                     Promise.resolve(initGroupProtection(global.sock, logger)),
+                    Promise.resolve(setupAutoBio(global.sock)),
+                    Promise.resolve(setupWelcome(global.sock)),
+                    Promise.resolve(setupAntiTag(global.sock)),
+                    Promise.resolve(setupAntiCall(global.sock)),
+                    Promise.resolve(setupAntiTemu(global.sock)),
                 ]);
 
                 startHealthCheck();
@@ -697,7 +709,8 @@ async function startBot() {
             const isMentioned = textRaw.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
-            if (isMentioned && !msg.key.fromMe) {
+            // ✅ CHATBOT — kama false, mention haita-trigger AI auto-reply
+            if (chatbot && isMentioned && !msg.key.fromMe) {
                 if (!aiCache.has(sender)) {
                     aiCache.set(sender, true);
                     if (!textRaw.startsWith(global.prefix)) {
