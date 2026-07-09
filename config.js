@@ -6,10 +6,7 @@ dotenv.config();
 
 const toBool = (value) => value === "true";
 
-// ========== EXPORTS PEKE YAKE — L-7: Futa global assignments ==========
-// Global assignments zilirudiarudia exports bila faida —
-// chanzo cha ukweli sasa ni exports peke yake.
-// Code inayohitaji values hizi itumie import badala ya global.
+// ========== EXPORTS PEKE YAKE ==========
 export const owner = process.env.OWNER_NUMBER;
 export const nomerowner = process.env.OWNER_NUMBERS;
 export const menu_image = process.env.MENU_IMAGE;
@@ -33,14 +30,12 @@ export const welcome = toBool(process.env.WELCOME);
 export const anticall = toBool(process.env.ANTI_CALL);
 export const autobio = toBool(process.env.AUTO_BIO);
 export const prefix = process.env.PREFIX;
+export const textmaker = toBool(process.env.TEXTMAKER); // <-- MPYA HII
 
 // ✅ Kudhibiti ujumbe wa "Bot iko active" unaotumwa kwa owner bot inapowasha
-// Weka SEND_STARTUP_MSG=true kwenye .env ukitaka kuurudisha
 export const sendStartupMsg = toBool(process.env.SEND_STARTUP_MSG);
 
 // ✅ FIX M-7: watchFile inafanya kazi tu kwenye development
-// Kwenye Railway (production), config haibadiliki — watcher haina faida
-// lakini inatumia OS polling resources bure
 if (process.env.NODE_ENV !== 'production') {
     const configPath = new URL(import.meta.url).pathname;
     fs.watchFile(configPath, () => {
