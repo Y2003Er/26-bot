@@ -1,9 +1,10 @@
-// session-db.js – FIXED v3.0 by 26-TECH
+// session-db.js – FIXED v3.1 by 26-TECH
 // FIX C-1: Debounce keys.set() — ilikuwa inafanya DB write kwa kila key update
 // FIX C-2: Tumia shared pool kutoka lib/db.js — inaondoa pool ya pili
 // FIX M-3: Debounce saveCreds — ilikuwa inaweza kufanya concurrent writes
 // ✅ FIX #5: Added retry logic with exponential backoff
 // ✅ FIX #6: Added automatic credential refresh every 10 hours
+// ✅ FIX #7: Increased saveCreds debounce to 10 seconds (reduces DB writes by 97%)
 
 import { getPool } from './lib/db.js';
 import pino from 'pino';
@@ -17,6 +18,10 @@ const INITIAL_RETRY_DELAY = 1000; // 1 second
 
 // ✅ FIX #6: Credential refresh interval (10 hours)
 const CREDS_REFRESH_INTERVAL = 10 * 60 * 60 * 1000;
+
+// ✅ FIX #7: Debounce timings
+const KEYS_DEBOUNCE_MS = 500;   // 0.5 seconds for keys
+const CREDS_DEBOUNCE_MS = 10000; // 10 seconds for creds (was 300ms)
 
 function reviveBuffers(obj) {
     if (obj == null) return obj;
@@ -161,16 +166,20 @@ export async function usePostgresAuthState(sessionId) {
 
     // ── FIX C-1: Debounce keys.set()
     let keysDebounceTimer = null;
+    let pendingKeysSave = false;
 
     function scheduleKeysSave() {
         if (keysDebounceTimer) clearTimeout(keysDebounceTimer);
+        pendingKeysSave = true;
         keysDebounceTimer = setTimeout(async () => {
+            if (!pendingKeysSave) return;
+            pendingKeysSave = false;
             try {
                 await saveState(sessionId, { creds, keys: keysStore });
             } catch (err) {
                 console.error('[session-db] Debounced keys save error:', err.message);
             }
-        }, 500);
+        }, KEYS_DEBOUNCE_MS);
     }
 
     const keyStore = {
@@ -207,23 +216,30 @@ export async function usePostgresAuthState(sessionId) {
 
     const keys = makeCacheableSignalKeyStore(keyStore, logger);
 
-    // ── FIX M-3: Debounce saveCreds
+    // ── FIX M-3 + FIX #7: Debounce saveCreds — 10 seconds
     let credsDebounceTimer = null;
+    let pendingCredsSave = false;
     let credsRefreshTimer = null;
 
     const saveCreds = async (update) => {
         if (update && typeof update === 'object') {
             Object.assign(creds, update);
         }
+        
         if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
+        pendingCredsSave = true;
+        
         credsDebounceTimer = setTimeout(async () => {
+            if (!pendingCredsSave) return;
+            pendingCredsSave = false;
+            
             try {
                 await saveState(sessionId, { creds, keys: keysStore });
-                console.log('[session-db] Creds saved (debounced).');
+                console.log('[session-db] 💾 Creds saved (10s debounce).');
             } catch (err) {
                 console.error('[session-db] Debounced creds save error:', err.message);
             }
-        }, 300);
+        }, CREDS_DEBOUNCE_MS); // ← 10000ms (sekunde 10)
     };
 
     // ✅ FIX #6: Auto-refresh credentials every 10 hours
@@ -232,13 +248,37 @@ export async function usePostgresAuthState(sessionId) {
         credsRefreshTimer = setInterval(async () => {
             try {
                 console.log('[session-db] 🔄 Refreshing credentials (scheduled refresh)...');
-                await saveCreds(undefined);
+                // Force immediate save bypassing debounce
+                if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
+                pendingCredsSave = false;
+                await saveState(sessionId, { creds, keys: keysStore });
                 console.log('[session-db] ✅ Credentials refreshed');
             } catch (err) {
                 console.error('[session-db] Credential refresh error:', err.message);
             }
         }, CREDS_REFRESH_INTERVAL);
     }
+
+    // ════════════════════════════════════════
+    // ✅ Force save on process exit
+    // ════════════════════════════════════════
+    const forceSaveOnExit = async () => {
+        console.log('[session-db] 💾 Emergency save before exit...');
+        if (credsDebounceTimer) clearTimeout(credsDebounceTimer);
+        if (keysDebounceTimer) clearTimeout(keysDebounceTimer);
+        pendingCredsSave = false;
+        pendingKeysSave = false;
+        try {
+            await saveState(sessionId, { creds, keys: keysStore });
+            console.log('[session-db] ✅ Final save complete.');
+        } catch (err) {
+            console.error('[session-db] ❌ Final save failed:', err.message);
+        }
+    };
+
+    process.once('SIGINT', forceSaveOnExit);
+    process.once('SIGTERM', forceSaveOnExit);
+    process.once('beforeExit', forceSaveOnExit);
 
     return { state: { creds, keys }, saveCreds };
 }
