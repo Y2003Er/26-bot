@@ -1,13 +1,12 @@
 /**
  * commands/eval.js
  * ─────────────────────────────────────────────────────────────
- * PRO GRADE EVAL v3.6 — ULTIMATE FIXED (All 7 final fixes)
+ * PRO GRADE EVAL v4.0 — NO HARDCODE + ENV ONLY
  * ─────────────────────────────────────────────────────────────
- * 🔴 FIXED: railwayLogs GraphQL schema (2026), addToHistory table creation,
- *    isOwner multi-owner support, $clear DB delete, media captions,
- *    killProcess 9/15 signals, multi-statement SQL protection,
- *    ReDoS protection improved
- * 🔧 RAILWAY: Changed endpoint to backboard.railway.com + Project-Access-Token
+ * ✅ FIXED: Removed all hardcoded values (numbers, tokens)
+ * ✅ FIXED: isOwner checks ONLY from .env (OWNER_NUMBER/OWNER_NUMBERS/SUDO_USERS)
+ * ✅ FIXED: Prefix dynamic from config.js (no fallback hardcode)
+ * ✅ FIXED: Help text uses dynamic prefix
  * 🔧 ASSETS: imagePath → ../assets/bot_image.jpg
  * 🔧 CONFIRM: 1 = confirm, 0 = cancel
  * ════════════════════════════════════════════════════════════════
@@ -22,6 +21,7 @@ import crypto from 'crypto';
 import zlib from 'zlib';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { prefix as configuredPrefix } from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -46,6 +46,9 @@ try {
 const execAsync = promisify(exec);
 const BOT_START_TIME = new Date();
 
+/* ── DYNAMIC PREFIX ── */
+const getPrefix = () => global.prefix || configuredPrefix || '.';
+
 /* ──────────────── Database table creation ──────────────── */
 async function ensureEvalHistoryTable() {
     if (!global.dbPool) return;
@@ -66,43 +69,79 @@ async function ensureEvalHistoryTable() {
 // Call it once on module load
 ensureEvalHistoryTable();
 
-/* ──────────────── Owner check (fixed #3) ──────────────── */
-function getOwnersList() {
-    const rawKeys = [
+/* ──────────────── Owner check (ENV ONLY - NO HARDCODE) ──────────────── */
+function getOwnersFromEnv() {
+    const owners = [];
+    
+    // Collect from ALL possible env vars (NO fallback defaults)
+    const envSources = [
         process.env.OWNER_NUMBER,
         process.env.OWNER_NUMBERS,
-        process.env.PHONE_NUMBER,
         process.env.SUDO_USERS,
     ];
-    const all = rawKeys
-        .filter(Boolean)
-        .flatMap(val => val.split(',').map(num => num.trim().replace(/[^0-9]/g, '')))
-        .filter(num => num.length > 0)
-        .map(num => num + '@s.whatsapp.net');
-    return [...new Set(all)];
+    
+    for (const source of envSources) {
+        if (source && typeof source === 'string' && source.trim()) {
+            const numbers = source.split(',').map(num => {
+                return num.trim()
+                    .replace(/[^0-9]/g, '')   // Strip all non-digits
+                    .replace(/^0+/, '');       // Remove leading zeros
+            }).filter(num => num.length >= 9);  // Valid phone number length
+            
+            owners.push(...numbers);
+        }
+    }
+    
+    // Runtime additional owners (set via eval, not hardcoded)
+    if (global.additionalOwners && Array.isArray(global.additionalOwners)) {
+        const runtimeOwners = global.additionalOwners.map(n => 
+            String(n).replace(/[^0-9]/g, '')
+        ).filter(num => num.length >= 9);
+        owners.push(...runtimeOwners);
+    }
+    
+    // Remove duplicates
+    const unique = [...new Set(owners)];
+    
+    if (unique.length === 0) {
+        console.warn('⚠️ [eval] HAKUNA OWNER NUMBER! Weka OWNER_NUMBER kwenye .env');
+    }
+    
+    return unique.map(num => `${num}@s.whatsapp.net`);
 }
 
 function isOwner(msg, sock) {
     if (!msg || !sock) return false;
+    
     const isGroup = msg.key.remoteJid?.endsWith('@g.us');
     let senderJid = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
     if (!senderJid) return false;
+    
+    // Normalize JID for comparison
     const normalize = (jid) => {
         if (!jid) return '';
-        return String(jid).split(':')[0].replace(/@lid|@s\.whatsapp\.net/g, '').replace(/[^0-9]/g, '');
+        return String(jid)
+            .split(':')[0]
+            .replace(/@lid|@s\.whatsapp\.net|@g\.us/g, '')
+            .replace(/[^0-9]/g, '');
     };
+    
     const senderClean = normalize(senderJid);
-    const owners = getOwnersList();
+    
+    // Check against env owners
+    const owners = getOwnersFromEnv();
     if (owners.some(o => normalize(o) === senderClean)) return true;
-    if (senderJid.endsWith('@lid') || senderJid.includes('@lid')) {
-        const senderLidClean = normalize(senderJid);
-        const ownerLid = (process.env.OWNER_LID || '').toString().trim();
-        if (ownerLid && normalize(ownerLid) === senderLidClean) return true;
-        if (sock?.user?.lid && normalize(sock.user.lid) === senderLidClean) return true;
-        if (global.ownerLid && normalize(global.ownerLid) === senderLidClean) return true;
-    }
+    
+    // Check if message is from the bot itself (self-bot)
     if (msg.key.fromMe === true) return true;
+    
+    // Check LID-based owner
+    const ownerLid = process.env.OWNER_LID;
+    if (ownerLid && normalize(ownerLid) === senderClean) return true;
+    
+    // Check runtime whitelist
     if (global.evalWhitelist?.has(senderJid)) return true;
+    
     return false;
 }
 
@@ -146,6 +185,8 @@ if (!global.evalVars)              global.evalVars              = new Map();
 if (!global.evalScheduledJobs)     global.evalScheduledJobs     = new Map();
 if (!global.evalReminders)         global.evalReminders         = new Map();
 if (!global.evalWatchers)          global.evalWatchers          = new Map();
+
+// Encryption key
 if (process.env.EVAL_ENCRYPT_KEY) {
     const key = Buffer.from(process.env.EVAL_ENCRYPT_KEY, 'hex');
     if (key.length === 32) {
@@ -223,7 +264,7 @@ function getContactsList() {
     return list;
 }
 const getMainOwnerJid = () => {
-    const owners = getOwnersList();
+    const owners = getOwnersFromEnv();
     return owners[0] || null;
 };
 
@@ -295,7 +336,8 @@ function registerConfirm(from, description, action, timeoutMs = 30000) {
     if (existing) clearTimeout(existing.timeoutId);
     const timeoutId = setTimeout(() => global.evalPendingConfirm.delete(from), timeoutMs);
     global.evalPendingConfirm.set(from, { description, action, timeoutId });
-    return `⚠️ *Thibitisho Inahitajika*\n\n*Hatua:* ${description}\n\n▸ \`.eval 1\` kuthibitisha\n▸ \`.eval 0\` kughairi\n\n_(Itatoweka baada ya sekunde 30)_`;
+    const pfx = getPrefix();
+    return `⚠️ *Thibitisho Inahitajika*\n\n*Hatua:* ${description}\n\n▸ \`${pfx}eval 1\` kuthibitisha\n▸ \`${pfx}eval 0\` kughairi\n\n_(Itatoweka baada ya sekunde 30)_`;
 }
 
 async function executeConfirm(from) {
@@ -345,7 +387,7 @@ function getUptime() {
 }
 
 function killProcess(pid, signal = 'SIGTERM') {
-    if (!pid) return '❓ Format: $kill <pid> [signal]';
+    if (!pid) return `❓ Format: ${getPrefix()}eval $kill <pid> [signal]`;
     const pidNum = parseInt(pid);
     if (isNaN(pidNum)) return `❌ PID si nambari: ${pid}`;
     if ([1, process.pid].includes(pidNum)) return `🛡️ PID ${pidNum} imezuiwa`;
@@ -371,7 +413,7 @@ async function manageCron(subcommand, args, sock, from) {
     if (sub === 'start') {
         const parts = (args || '').trim().split(/\s+/);
         const name = parts[0], secs = parseInt(parts[1]), desc = parts.slice(2).join(' ') || 'Hakuna maelezo';
-        if (!name || isNaN(secs) || secs < 10) return '❓ $cron start <name> <secs≥10> [desc]';
+        if (!name || isNaN(secs) || secs < 10) return `❓ ${getPrefix()}eval $cron start <name> <secs≥10> [desc]`;
         if (global.evalCronJobs.has(name)) return `❌ Cron *${name}* tayari ipo`;
         const intervalMs = secs * 1000;
         const interval = setInterval(async () => {
@@ -387,7 +429,7 @@ async function manageCron(subcommand, args, sock, from) {
     }
     if (sub === 'stop') {
         const name = (args || '').trim();
-        if (!name) return '❓ $cron stop <name>';
+        if (!name) return `❓ ${getPrefix()}eval $cron stop <name>`;
         const job = global.evalCronJobs.get(name);
         if (!job) return `❌ Cron *${name}* haipatikani`;
         clearInterval(job.interval);
@@ -401,13 +443,14 @@ async function manageCron(subcommand, args, sock, from) {
         global.evalCronJobs.clear();
         return `✅ Cron jobs zote ${count} zimesimamishwa`;
     }
-    return '❓ $cron list|start|stop|stopall';
+    return `❓ ${getPrefix()}eval $cron list|start|stop|stopall`;
 }
 
 function manageCache(target) {
     const t = (target || '').toLowerCase().trim();
+    const pfx = getPrefix();
     if (!t || t === 'help') {
-        return `*📦 CACHE INFO*\n\nMessages: ${global.messageCache?.size||0}\nContacts: ${global.contactCache?.size||0}\nHistory: ${evalHistory.length}\n\n▸ \`$cache clear messages|contacts|history|all\``;
+        return `*📦 CACHE INFO*\n\nMessages: ${global.messageCache?.size||0}\nContacts: ${global.contactCache?.size||0}\nHistory: ${evalHistory.length}\n\n▸ \`${pfx}eval $cache clear messages|contacts|history|all\``;
     }
     const action = t.replace(/^clear\s+/, '');
     if (action === 'messages') { const c = global.messageCache?.size||0; global.messageCache?.clear?.(); return `✅ Message cache imefutwa (${c})`; }
@@ -422,7 +465,7 @@ function manageCache(target) {
 }
 
 async function manageBlock(sock, subcommand) {
-    if ((subcommand||'list').toLowerCase() !== 'list') return '❓ $block list';
+    if ((subcommand||'list').toLowerCase() !== 'list') return `❓ ${getPrefix()}eval $block list`;
     try {
         const list = await sock.fetchBlocklist();
         if (!list?.length) return '📭 Hakuna nambari zilizobaniwa';
@@ -433,9 +476,10 @@ async function manageBlock(sock, subcommand) {
 async function manageGroups(sock, subcommand, args) {
     const sub = (subcommand||'').toLowerCase().trim();
     const parts = (args||'').trim().split(/\s+/);
+    const pfx = getPrefix();
     if (sub === 'info') {
         const query = parts.join(' ').trim();
-        if (!query) return '❓ $groups info <jid/jina>';
+        if (!query) return `❓ ${pfx}eval $groups info <jid/jina>`;
         try {
             const all = await sock.groupFetchAllParticipating();
             const group = Object.values(all).find(g => g.id===query || g.id.startsWith(query) || g.subject?.toLowerCase().includes(query.toLowerCase()));
@@ -445,14 +489,14 @@ async function manageGroups(sock, subcommand, args) {
         } catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'leave') {
-        const jid = parts[0]; if (!jid) return '❓ $groups leave <groupJid>';
+        const jid = parts[0]; if (!jid) return `❓ ${pfx}eval $groups leave <groupJid>`;
         try { await sock.groupLeave(jid.endsWith('@g.us')?jid:`${jid}@g.us`); return '✅ Bot ametoka'; }
         catch (e) { return `❌ ${e.message}`; }
     }
     for (const sub2 of ['kick','promote','demote','add']) {
         if (sub === sub2) {
             const [gJid, mJid] = parts;
-            if (!gJid||!mJid) return `❓ $groups ${sub2} <groupJid> <number>`;
+            if (!gJid||!mJid) return `❓ ${pfx}eval $groups ${sub2} <groupJid> <number>`;
             const gid  = gJid.endsWith('@g.us')?gJid:`${gJid}@g.us`;
             const mjid = mJid.includes('@')?mJid:`${mJid.replace(/[^0-9]/g,'')}@s.whatsapp.net`;
             const actionMap = {kick:'remove',promote:'promote',demote:'demote',add:'add'};
@@ -461,24 +505,26 @@ async function manageGroups(sock, subcommand, args) {
             catch (e) { return `❌ ${e.message}`; }
         }
     }
-    return '❓ $groups info|leave|kick|promote|demote|add';
+    return `❓ ${pfx}eval $groups info|leave|kick|promote|demote|add`;
 }
 
 async function manageMsg(sock, from, subcommand, args) {
     const sub = (subcommand||'').toLowerCase().trim();
+    const pfx = getPrefix();
     if (sub === 'delete') {
         const parts = (args||'').trim().split(/\s+/);
         let targetJid = from, msgId = parts[0];
         if (parts.length > 1) { targetJid = parts[0].includes('@')?parts[0]:`${parts[0].replace(/[^0-9]/g,'')}@s.whatsapp.net`; msgId = parts[1]; }
-        if (!msgId) return '❓ $msg delete <messageId>';
+        if (!msgId) return `❓ ${pfx}eval $msg delete <messageId>`;
         try { await sock.sendMessage(targetJid,{delete:{remoteJid:targetJid,fromMe:true,id:msgId}}); return `✅ Ujumbe ${msgId} umefutwa`; }
         catch (e) { return `❌ ${e.message}`; }
     }
-    return '❓ $msg delete <messageId>';
+    return `❓ ${pfx}eval $msg delete <messageId>`;
 }
 
 async function getProfile(sock, from, number) {
-    if (!number) return '❓ $profile <number>';
+    const pfx = getPrefix();
+    if (!number) return `❓ ${pfx}eval $profile <number>`;
     const clean = number.replace(/[^0-9]/g,''), jid = `${clean}@s.whatsapp.net`;
     try {
         let ppUrl=null, status=null, exists=false;
@@ -499,17 +545,20 @@ async function getProfile(sock, from, number) {
 }
 
 async function setBotName(sock, name) {
-    if (!name) return '❓ $setname <jina>';
+    const pfx = getPrefix();
+    if (!name) return `❓ ${pfx}eval $setname <jina>`;
     try { await sock.updateProfileName(name); return `✅ Jina: *${name}*`; } catch (e) { return `❌ ${e.message}`; }
 }
 
 async function setBotStatus(sock, status) {
-    if (!status) return '❓ $setstatus <text>';
+    const pfx = getPrefix();
+    if (!status) return `❓ ${pfx}eval $setstatus <text>`;
     try { await sock.updateProfileStatus(status); return `✅ Status: _${status}_`; } catch (e) { return `❌ ${e.message}`; }
 }
 
 function manageWhitelist(subcommand, number) {
     const sub = (subcommand||'list').toLowerCase().trim();
+    const pfx = getPrefix();
     if (sub === 'list') {
         if (!global.evalWhitelist.size) return '📭 Whitelist haina nambari';
         return `*✅ Whitelist (${global.evalWhitelist.size}):*\n\n${[...global.evalWhitelist].map((j,i)=>`${i+1}. *+${j.split('@')[0]}*`).join('\n')}`;
@@ -521,29 +570,30 @@ function manageWhitelist(subcommand, number) {
         global.evalWhitelist.delete(j); return `✅ +${c} ameondolewa`;
     }
     if (sub === 'clear') { const c=global.evalWhitelist.size; global.evalWhitelist.clear(); return `✅ Whitelist imefutwa (${c})`; }
-    return '❓ $whitelist list|add|remove|clear';
+    return `❓ ${pfx}eval $whitelist list|add|remove|clear`;
 }
 
 function manageRatelimit(subcommand, args) {
     const sub = (subcommand||'list').toLowerCase().trim();
     const parts = (args||'').trim().split(/\s+/);
+    const pfx = getPrefix();
     if (sub === 'list') {
         if (!global.evalRateLimits.size) return '📭 Hakuna rate limits';
         return `*⚡ RATE LIMITS:*\n\n${[...global.evalRateLimits.entries()].map(([cmd,cfg])=>`• *${cmd}:* ${cfg.maxCalls} calls/${cfg.windowMs/1000}s`).join('\n')}`;
     }
     if (sub === 'set') {
         const [cmd,max,secs]=parts;
-        if (!cmd||!max||!secs) return '❓ $ratelimit set <cmd> <max> <secs>';
+        if (!cmd||!max||!secs) return `❓ ${pfx}eval $ratelimit set <cmd> <max> <secs>`;
         global.evalRateLimits.set(cmd,{maxCalls:parseInt(max),windowMs:parseInt(secs)*1000});
         return `✅ Rate limit: *${cmd}* max ${max}/${secs}s`;
     }
     if (sub === 'remove') {
-        const cmd=parts[0]; if (!cmd) return '❓ $ratelimit remove <cmd>';
+        const cmd=parts[0]; if (!cmd) return `❓ ${pfx}eval $ratelimit remove <cmd>`;
         if (!global.evalRateLimits.has(cmd)) return `❌ ${cmd} haipatikani`;
         global.evalRateLimits.delete(cmd); return `✅ Rate limit ya ${cmd} imeondolewa`;
     }
     if (sub === 'clear') { const c=global.evalRateLimits.size; global.evalRateLimits.clear(); global.evalRateLimitCounters.clear(); return `✅ Rate limits zote ${c} zimefutwa`; }
-    return '❓ $ratelimit list|set|remove|clear';
+    return `❓ ${pfx}eval $ratelimit list|set|remove|clear`;
 }
 
 /* ── Database ── */
@@ -618,6 +668,7 @@ async function dbExtended(subcommand, query) {
     const pool = global.dbPool;
     if (!pool) return '❌ Database haipatikani';
     const sub = (subcommand||'').toLowerCase().trim();
+    const pfx = getPrefix();
     try {
         if (sub === 'tables') {
             const result = await pool.query(`SELECT tablename, pg_size_pretty(pg_total_relation_size(tablename::regclass)) as size FROM pg_tables WHERE schemaname='public' ORDER BY pg_total_relation_size(tablename::regclass) DESC`);
@@ -630,7 +681,7 @@ async function dbExtended(subcommand, query) {
             return `*💾 DB SIZE*\n\nDatabase: *${r.db_name}*\nSize: *${r.db_size}*`;
         }
         if (sub === 'explain') {
-            if (!query) return '❓ $db explain <SQL>';
+            if (!query) return `❓ ${pfx}eval $db explain <SQL>`;
             let cleanQuery = query.replace(/^\s*EXPLAIN(\s+ANALYZE)?\s*/i, '').trim();
             if (/;\s*$/.test(cleanQuery) || /;\s*(DROP|TRUNCATE|DELETE)/i.test(cleanQuery)) {
                 return '🛡️ Multi-statement au destructive query imezuiwa kwa usalama';
@@ -644,13 +695,14 @@ async function dbExtended(subcommand, query) {
             return `*🔌 DB CONNECTIONS*\n\nTotal: ${r.total}\nActive: ${r.active}`;
         }
     } catch (e) { return `❌ ${e.message}`; }
-    return '❓ $db tables|size|explain <SQL>|connections';
+    return `❓ ${pfx}eval $db tables|size|explain <SQL>|connections`;
 }
 
 /* ── File management ── */
 async function manageFile(sock, from, subcommand, args) {
     const sub = (subcommand||'').toLowerCase().trim();
     const parts = (args||'').trim();
+    const pfx = getPrefix();
     if (sub === 'ls') {
         const dir = parts||process.cwd();
         try {
@@ -666,7 +718,7 @@ async function manageFile(sock, from, subcommand, args) {
         } catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'read') {
-        if (!parts) return '❓ $file read <path>';
+        if (!parts) return `❓ ${pfx}eval $file read <path>`;
         try {
             const resolved = path.resolve(parts);
             if (resolved.endsWith('.env')) {
@@ -680,13 +732,13 @@ async function manageFile(sock, from, subcommand, args) {
         } catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'write') {
-        const idx=parts.indexOf(' '); if (idx===-1) return '❓ $file write <path> <content>';
+        const idx=parts.indexOf(' '); if (idx===-1) return `❓ ${pfx}eval $file write <path> <content>`;
         const filepath=parts.slice(0,idx).trim(), content=parts.slice(idx+1);
         try { fs.mkdirSync(path.dirname(filepath),{recursive:true}); fs.writeFileSync(filepath,content,'utf8'); return `✅ Imeandikwa: ${filepath} (${formatBytes(fs.statSync(filepath).size)})`; }
         catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'delete') {
-        if (!parts) return '❓ $file delete <path>';
+        if (!parts) return `❓ ${pfx}eval $file delete <path>`;
         const resolved = path.resolve(parts);
         const DANGER_PREFIXES = ['/etc','/var','/usr','/bin','/sbin','/proc','/sys','/dev'];
         const isDangerous = resolved === '/'
@@ -704,14 +756,14 @@ async function manageFile(sock, from, subcommand, args) {
         } catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'stat') {
-        if (!parts) return '❓ $file stat <path>';
+        if (!parts) return `❓ ${pfx}eval $file stat <path>`;
         try {
             const stat=fs.statSync(parts), isDir=stat.isDirectory();
             return `*📊 ${path.basename(parts)}*\n\nAina: ${isDir?'Folder📁':'File📄'}\nUkubwa: ${formatBytes(stat.size)}\nMode: ${(stat.mode&0o777).toString(8)}\nIlipind: ${stat.mtime.toLocaleString('sw-TZ')}`;
         } catch (e) { return `❌ ${e.message}`; }
     }
     if (sub === 'send') {
-        if (!parts) return '❓ $file send <path>';
+        if (!parts) return `❓ ${pfx}eval $file send <path>`;
         try {
             const stat=fs.statSync(parts);
             if (stat.size>50*1024*1024) return `❌ File kubwa sana. Max:50MB`;
@@ -719,11 +771,12 @@ async function manageFile(sock, from, subcommand, args) {
             return '';
         } catch (e) { return `❌ ${e.message}`; }
     }
-    return '❓ $file ls|read|write|delete|stat|send';
+    return `❓ ${pfx}eval $file ls|read|write|delete|stat|send`;
 }
 
 async function nodeInfo(subcommand) {
     const sub = (subcommand||'info').toLowerCase().trim();
+    const pfx = getPrefix();
     if (sub === 'info') {
         const mem=process.memoryUsage(), cpu=process.cpuUsage();
         return `*🟢 NODE.JS*\n\nVersion: ${process.version}\nPlatform: ${process.platform} (${process.arch})\nPID: ${process.pid}\nCWD: ${process.cwd()}\n\n*Memory:*\n  Heap Used: ${formatBytes(mem.heapUsed)}\n  Heap Total: ${formatBytes(mem.heapTotal)}\n  RSS: ${formatBytes(mem.rss)}\n\n*CPU:*\n  User: ${(cpu.user/1000).toFixed(1)}ms\n  System: ${(cpu.system/1000).toFixed(1)}ms`;
@@ -732,12 +785,13 @@ async function nodeInfo(subcommand) {
     if (sub === 'argv')    return `*⌨️ ARGV:*\n\`\`\`\n${process.argv.map((a,i)=>`${i}: ${a}`).join('\n')}\n\`\`\``;
     if (sub === 'flags')   { const f=process.execArgv; return f.length?`*🏴 FLAGS:*\n${f.map(f=>`• ${f}`).join('\n')}`:'📭 Hakuna flags'; }
     if (sub === 'loaded')  { const {output}=await runTerminal('ls node_modules|head -30 2>/dev/null'); return output?.length>5?`*📦 Modules:*\n\`\`\`\n${output}\n\`\`\``:`*📦 Versions:*\n${Object.entries(process.versions).map(([k,v])=>`• ${k}: ${v}`).join('\n')}`; }
-    return '❓ $node info|modules|argv|flags|loaded';
+    return `❓ ${pfx}eval $node info|modules|argv|flags|loaded`;
 }
 
 /* ── Bot state ── */
 async function getBotState(sock, query) {
     const q = (query||'').toLowerCase().trim();
+    const pfx = getPrefix();
     if (!q||q==='all') {
         const groups = await Promise.race([
             sock.groupFetchAllParticipating(),
@@ -781,27 +835,29 @@ async function getBotState(sock, query) {
     if (q==='socket'||q==='ws') { const ws=sock.ws,state=ws?.readyState; return `*🔌 WEBSOCKET*\n\nState: ${['CONNECTING','OPEN','CLOSING','CLOSED'][state]||'UNKNOWN'} (${state})\nBuffered: ${ws?.bufferedAmount||0} bytes`; }
     if (q==='disk') { const {output}=await runTerminal('df -h /'); return `*💿 DISK*\n\n\`\`\`\n${output}\n\`\`\``; }
     if (q==='net') { const ifaces=os.networkInterfaces(); let out='*🌐 NETWORK*\n\n'; for (const [name,addrs] of Object.entries(ifaces)) { const ipv4=addrs?.find(a=>a.family==='IPv4'); if (ipv4) out+=`• *${name}:* ${ipv4.address}\n`; } return out; }
-    return '❓ Chaguzi: all|groups|commands|memory|cache|env|socket|disk|net';
+    return `❓ ${pfx}eval $state all|groups|commands|memory|cache|env|socket|disk|net`;
 }
 
 async function manageAI(subcommand, target) {
     const pool=global.dbPool; if (!pool) return '❌ Database haipatikani';
     const sub=(subcommand||'').toLowerCase().trim();
+    const pfx = getPrefix();
     if (sub==='clear'&&target) { const c=target.replace(/[^0-9]/g,''), jid=`${c}@s.whatsapp.net`; try { await pool.query('DELETE FROM ai_memory WHERE user_id=$1',[jid]); return `✅ AI memory ya +${c} imefutwa`; } catch(e){return `❌ ${e.message}`;} }
     if (sub==='clearall') { try { const r=await pool.query('DELETE FROM ai_memory'); return `✅ AI memory yote imefutwa (${r.rowCount})`; } catch(e){return `❌ ${e.message}`;} }
     if (sub==='list') { try { const r=await pool.query('SELECT user_id,jsonb_array_length(history) as msgs FROM ai_memory ORDER BY msgs DESC LIMIT 20'); if(!r.rows.length)return '📭 Hakuna'; return `*🧠 AI Memory:*\n\n${r.rows.map(r=>`• ${r.user_id.split('@')[0]} — ${r.msgs} msgs`).join('\n')}`; } catch(e){return `❌ ${e.message}`;} }
     if (sub==='stats') { try { const r=await pool.query('SELECT COUNT(*) as users,SUM(jsonb_array_length(history)) as total_msgs FROM ai_memory'); return `*🧠 AI Stats*\n\nUsers: ${r.rows[0].users}\nTotal msgs: ${r.rows[0].total_msgs}`; } catch(e){return `❌ ${e.message}`;} }
-    return '❓ $ai list|stats|clear <num>|clearall';
+    return `❓ ${pfx}eval $ai list|stats|clear <num>|clearall`;
 }
 
 async function manageSessions(subcommand) {
     const pool=global.dbPool; if (!pool) return '❌ Database haipatikani';
     const sub=(subcommand||'list').toLowerCase().trim();
+    const pfx = getPrefix();
     try {
         if (sub==='list') { const r=await pool.query('SELECT session_id,updated_at FROM wa_sessions ORDER BY updated_at DESC'); if(!r.rows.length)return '📭 Hakuna'; return `*🔐 Sessions (${r.rows.length}):*\n\n${r.rows.map(r=>`• *${r.session_id}* — ${new Date(r.updated_at).toLocaleString('sw-TZ')}`).join('\n')}`; }
         if (sub==='count') { const r=await pool.query('SELECT COUNT(*) as count FROM wa_sessions'); return `🔐 Sessions: ${r.rows[0].count}`; }
     } catch(e){return `❌ ${e.message}`;}
-    return '❓ $sessions list|count';
+    return `❓ ${pfx}eval $sessions list|count`;
 }
 
 function runGC() {
@@ -812,7 +868,7 @@ function runGC() {
 
 /* ── $perf ── */
 async function runPerf(code, context) {
-    if (!code) return '❓ $perf <js code>';
+    if (!code) return `❓ ${getPrefix()}eval $perf <js code>`;
     if (!isSafe(code)) return '🛡️ Code imezuiwa kwa usalama';
     const iterations = 100;
     const totalTimeout = 10000;
@@ -835,21 +891,23 @@ async function runPerf(code, context) {
 
 function manageEnv(action, key, value) {
     const act=(action||'').toLowerCase();
-    if (act==='get') { if (!key) return '❓ $env get <KEY>'; const sens=['KEY','SECRET','PASSWORD','TOKEN','DATABASE_URL']; const val=process.env[key]; if (!val) return `❌ ${key} haipatikani`; return `🔐 *${key}:*\n${sens.some(s=>key.toUpperCase().includes(s))?'[HIDDEN]':val}`; }
-    if (act==='set') { if (!key||!value) return '❓ $env set <KEY> <value>'; process.env[key]=value; return `✅ ENV ${key} imewekwa (runtime tu)`; }
+    const pfx = getPrefix();
+    if (act==='get') { if (!key) return `❓ ${pfx}eval $env get <KEY>`; const sens=['KEY','SECRET','PASSWORD','TOKEN','DATABASE_URL']; const val=process.env[key]; if (!val) return `❌ ${key} haipatikani`; return `🔐 *${key}:*\n${sens.some(s=>key.toUpperCase().includes(s))?'[HIDDEN]':val}`; }
+    if (act==='set') { if (!key||!value) return `❓ ${pfx}eval $env set <KEY> <value>`; process.env[key]=value; return `✅ ENV ${key} imewekwa (runtime tu)`; }
     if (act==='list') return `*🔐 ENV KEYS:*\n\n${Object.keys(process.env).filter(k=>!['PATH','HOME','USER','SHELL','TERM','LANG','PWD','OLDPWD'].includes(k)).sort().map(k=>`• ${k}`).join('\n')}`;
-    return '❓ $env list|get|set';
+    return `❓ ${pfx}eval $env list|get|set`;
 }
 
 async function sendMessage(sock, input) {
+    const pfx = getPrefix();
     const parts=input.trim().split(/\s+/), target=parts[0], text=parts.slice(1).join(' ');
-    if (!target||!text) return '❓ $send <number> <ujumbe>';
+    if (!target||!text) return `❓ ${pfx}eval $send <number> <ujumbe>`;
     const jid=target.includes('@')?target:`${target.replace(/[^0-9]/g,'')}@s.whatsapp.net`;
     try { await sock.sendMessage(jid,{text}); return `✅ Imetumwa kwa ${jid}`; } catch(e){return `❌ ${e.message}`;}
 }
 
 async function quickBroadcast(sock, text) {
-    if (!text) return '❓ $broadcast <ujumbe>';
+    if (!text) return `❓ ${getPrefix()}eval $broadcast <ujumbe>`;
     let groups; try { groups=await sock.groupFetchAllParticipating(); } catch(e){return `❌ ${e.message}`;}
     const ids=Object.keys(groups || {});
     if (ids.length === 0) return '❌ Hakuna groups za kutuma.';
@@ -859,16 +917,20 @@ async function quickBroadcast(sock, text) {
 }
 
 async function banNumber(sock, number, unban=false) {
-    if (!number) return `❓ $${unban?'unban':'ban'} <number>`;
+    const pfx = getPrefix();
+    if (!number) return `❓ ${pfx}eval $${unban?'unban':'ban'} <number>`;
     const clean=number.replace(/[^0-9]/g,''), jid=`${clean}@s.whatsapp.net`;
     try { await sock.updateBlockStatus(jid,unban?'unblock':'block'); return `✅ +${clean} ${unban?'ameunblockiwa':'amebaniwa'}`; }
     catch(e){return `❌ ${e.message}`;}
 }
 
 async function pingTarget(sock, target) {
+    const pfx = getPrefix();
     if (!target) {
         const start=Date.now();
-        try { await sock.sendPresenceUpdate('available',getMainOwnerJid()); return `🏓 *Ping*\nLatency: ${Date.now()-start}ms\nOnline ✅`; }
+        const ownerJid = getMainOwnerJid();
+        if (!ownerJid) return `⚠️ HAKUNA OWNER — weka OWNER_NUMBER kwenye .env\n❓ ${pfx}eval $ping <number>`;
+        try { await sock.sendPresenceUpdate('available', ownerJid); return `🏓 *Ping*\nLatency: ${Date.now()-start}ms\nOnline ✅`; }
         catch(e){return `❌ ${e.message}`;}
     }
     const clean=target.replace(/[^0-9]/g,''), jid=target.includes('@g.us')?target:`${clean}@s.whatsapp.net`;
@@ -931,7 +993,7 @@ async function updateBot(sock, from) {
     return '❓ Weka RAILWAY_TOKEN au RENDER_DEPLOY_HOOK';
 }
 
-/* ── railwayLogs (fixed #1 - 2026 GraphQL schema + .com + Project-Access-Token) ── */
+/* ── railwayLogs ── */
 async function railwayLogs(lines = 50) {
     if (!process.env.RAILWAY_SERVICE_ID) {
         return '⚠️ Haiko Railway environment\nTumia `$logs` kwa logs za kawaida';
@@ -1048,26 +1110,30 @@ function exportHistory() {
 }
 
 async function generateInvite(sock, groupJid) {
-    if (!groupJid) return '❓ $invite <groupJid>';
+    const pfx = getPrefix();
+    if (!groupJid) return `❓ ${pfx}eval $invite <groupJid>`;
     try { const jid = groupJid.includes('@g.us') ? groupJid : `${groupJid}@g.us`; const code = await sock.groupInviteCode(jid); return `🔗 *Invite Link:*\nhttps://chat.whatsapp.com/${code}`; } catch (e) { return `❌ ${e.message}`; }
 }
 
 async function viewStory(sock, target) {
-    if (!target) return '❓ $story <number>';
+    const pfx = getPrefix();
+    if (!target) return `❓ ${pfx}eval $story <number>`;
     const clean = target.replace(/[^0-9]/g, ''), jid = `${clean}@s.whatsapp.net`;
     try { const stories = await sock.fetchStatus(jid); if (!stories || !stories.length) return '📭 Hakuna stories'; return `📖 *Stories za +${clean}:*\n\n${Array.isArray(stories) ? stories.map((s, i) => `${i + 1}. ${s.status || s}`).join('\n') : stories.status || 'Content imeonekana'}`; } catch (e) { return `❌ ${e.message}`; }
 }
 
 async function reactToMessage(sock, from, args) {
+    const pfx = getPrefix();
     const parts = (args || '').trim().split(/\s+/);
-    if (parts.length < 2) return '❓ $react <emoji> <messageId> [jid]';
+    if (parts.length < 2) return `❓ ${pfx}eval $react <emoji> <messageId> [jid]`;
     const emoji = parts[0], msgId = parts[1], targetJid = parts[2] || from;
     try { await sock.sendMessage(targetJid, { react: { text: emoji, key: { remoteJid: targetJid, fromMe: true, id: msgId } } }); return '✅ Reaction imetumwa'; } catch (e) { return `❌ ${e.message}`; }
 }
 
 async function forwardMessage(sock, from, args) {
+    const pfx = getPrefix();
     const parts = (args || '').trim().split(/\s+/);
-    if (parts.length < 2) return '❓ $forward <messageId> <targetJid>';
+    if (parts.length < 2) return `❓ ${pfx}eval $forward <messageId> <targetJid>`;
     const msgId = parts[0], target = parts[1].includes('@') ? parts[1] : `${parts[1].replace(/[^0-9]/g, '')}@s.whatsapp.net`;
     try { await sock.sendMessage(target, { forward: { key: { remoteJid: from, id: msgId, fromMe: true } } }); return '✅ Ujumbe umepelekwa'; } catch (e) { return `❌ ${e.message}`; }
 }
@@ -1104,11 +1170,12 @@ async function fullBackup(sock, from) {
 }
 
 async function hotReload(sock, from, specific) {
-    return '⚠️ Hotreload not supported in ES modules.\nUse `.eval $restart` to reload commands.';
+    return '⚠️ Hotreload not supported in ES modules.\nUse `$restart` to reload commands.';
 }
 
 /* ── $watch ── */
 async function watchFile(filePath, action, sock, from) {
+    const pfx = getPrefix();
     if (!filePath || filePath === 'list') {
         if (!global.evalWatchers.size) return '📭 Hakuna file watchers';
         let out = `*👁️ WATCHERS (${global.evalWatchers.size}):*\n\n`;
@@ -1130,12 +1197,13 @@ async function watchFile(filePath, action, sock, from) {
         try { await sock.sendMessage(from, { text: `👁️ *File Change #${changes}*\n\`${filePath}\`\nEvent: ${eventType}\n_${new Date().toLocaleTimeString('sw-TZ')}_` }); } catch {}
     });
     global.evalWatchers.set(filePath, { watcher, changes, startedAt: new Date() });
-    return `✅ *Inaangalia:* \`${filePath}\`\nSimamisha: \`$watch ${filePath} stop\``;
+    return `✅ *Inaangalia:* \`${filePath}\`\nSimamisha: \`${pfx}eval $watch ${filePath} stop\``;
 }
 
 /* ── $net ── */
 async function testNet(url) {
-    if (!url) return '❓ $net <url>\nMfano: $net https://google.com';
+    const pfx = getPrefix();
+    if (!url) return `❓ ${pfx}eval $net <url>\nMfano: ${pfx}eval $net https://google.com`;
     const target = url.startsWith('http') ? url : `https://${url}`;
     const start = Date.now();
     let timer = null;
@@ -1182,6 +1250,7 @@ async function speedTest() {
 /* ── $docker ── */
 async function dockerInfo(subcommand) {
     const sub = (subcommand || 'info').toLowerCase().trim();
+    const pfx = getPrefix();
     const isDocker = fs.existsSync('/.dockerenv') || (fs.existsSync('/proc/1/cgroup') && fs.readFileSync('/proc/1/cgroup', 'utf8').includes('docker'));
     if (sub === 'info') {
         const { output: dockerV } = await runTerminal('docker --version 2>/dev/null||echo "Docker haipatikani"');
@@ -1191,12 +1260,13 @@ async function dockerInfo(subcommand) {
     if (sub === 'ps') { const { output } = await runTerminal('docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}" 2>/dev/null'); return `*🐳 Docker Containers:*\n\`\`\`\n${output || 'Hakuna'}\n\`\`\``; }
     if (sub === 'stats') { const { output } = await runTerminal('docker stats --no-stream --format "{{.Name}}: CPU {{.CPUPerc}}, MEM {{.MemUsage}}" 2>/dev/null'); return `*🐳 Docker Stats:*\n\`\`\`\n${output || 'Hakuna'}\n\`\`\``; }
     if (sub === 'logs') { const { output } = await runTerminal('docker logs $(docker ps -q|head -1) --tail 20 2>/dev/null'); return `*🐳 Container Logs:*\n\`\`\`\n${truncate(output || 'Hakuna', 2000)}\n\`\`\``; }
-    return '❓ $docker info|ps|stats|logs';
+    return `❓ ${pfx}eval $docker info|ps|stats|logs`;
 }
 
 /* ── $memory ── */
 async function memoryDump(sock, from, subcommand) {
     const sub = (subcommand || 'info').toLowerCase().trim();
+    const pfx = getPrefix();
     if (sub === 'info') {
         const mem = process.memoryUsage(),
             sys = { total: os.totalmem(), free: os.freemem() };
@@ -1215,11 +1285,12 @@ async function memoryDump(sock, from, subcommand) {
         }
         return '';
     }
-    return '❓ $memory info|dump';
+    return `❓ ${pfx}eval $memory info|dump`;
 }
 
 /* ── $schedule ── */
 async function scheduleCode(timeStr, code, name, sock, from) {
+    const pfx = getPrefix();
     if (!timeStr) {
         if (!global.evalScheduledJobs.size) return '📭 Hakuna kazi zilizopangwa';
         let out = `*📅 SCHEDULED (${global.evalScheduledJobs.size}):*\n\n`;
@@ -1260,6 +1331,7 @@ async function scheduleCode(timeStr, code, name, sock, from) {
 
 /* ── $remind ── */
 async function setReminder(timeStr, message, sock, from) {
+    const pfx = getPrefix();
     if (!timeStr) {
         if (!global.evalReminders.size) return '📭 Hakuna vikumbusho';
         let out = `*⏰ REMINDERS (${global.evalReminders.size}):*\n\n`;
@@ -1276,7 +1348,7 @@ async function setReminder(timeStr, message, sock, from) {
             target = message;
         }
         const r = global.evalReminders.get(target);
-        if (!r) return `❌ Reminder haipatikani. Tumia \`$remind list\` kuona IDs.`;
+        if (!r) return `❌ Reminder haipatikani. Tumia \`${pfx}eval $remind list\` kuona IDs.`;
         clearTimeout(r.timeoutId);
         global.evalReminders.delete(target);
         return `✅ Reminder *${target}* imeghairiwa`;
@@ -1295,7 +1367,8 @@ async function setReminder(timeStr, message, sock, from) {
 
 /* ── $webhook ── */
 async function sendWebhook(url, data) {
-    if (!url) return '❓ $webhook <url> [json_data]';
+    const pfx = getPrefix();
+    if (!url) return `❓ ${pfx}eval $webhook <url> [json_data]`;
     let payload;
     if (data) {
         try { payload = JSON.parse(data); } catch { payload = { message: data }; }
@@ -1316,17 +1389,18 @@ async function sendWebhook(url, data) {
 
 /* ── $encrypt / $decrypt ── */
 function encryptText(text) {
-    if (!text) return '❓ $encrypt <text>';
+    const pfx = getPrefix();
+    if (!text) return `❓ ${pfx}eval $encrypt <text>`;
     try {
         const iv = crypto.randomBytes(16),
             cipher = crypto.createCipheriv('aes-256-cbc', global.evalEncryptKey, iv);
         const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
         const result = `${iv.toString('hex')}:${encrypted.toString('hex')}`;
-        return `*🔐 ENCRYPTED*\n\nOriginal: ${text.slice(0, 50)}\n\n\`\`\`\n${result}\n\`\`\`\n\n_Decrypt: \`$decrypt ${result}\`_`;
+        return `*🔐 ENCRYPTED*\n\nOriginal: ${text.slice(0, 50)}\n\n\`\`\`\n${result}\n\`\`\`\n\n_Decrypt: \`${pfx}eval $decrypt ${result}\`_`;
     } catch (e) { return `❌ ${e.message}`; }
 }
 function decryptText(text) {
-    if (!text) return '❓ $decrypt <encrypted>';
+    if (!text) return `❓ ${getPrefix()}eval $decrypt <encrypted>`;
     try {
         const parts = text.split(':');
         if (parts.length < 2) return '❌ Format si sahihi';
@@ -1338,7 +1412,8 @@ function decryptText(text) {
 }
 
 async function generateQR(text, sock, from) {
-    if (!text) return '❓ $qr <text>';
+    const pfx = getPrefix();
+    if (!text) return `❓ ${pfx}eval $qr <text>`;
     try {
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(text)}`;
         await sock.sendMessage(from, { image: { url: qrUrl }, caption: `📱 *QR Code*\n_${text.slice(0, 100)}_` });
@@ -1347,7 +1422,8 @@ async function generateQR(text, sock, from) {
 }
 
 async function diffFiles(file1, file2) {
-    if (!file1 || !file2) return '❓ $diff <file1> <file2>';
+    const pfx = getPrefix();
+    if (!file1 || !file2) return `❓ ${pfx}eval $diff <file1> <file2>`;
     if (!fs.existsSync(file1)) return `❌ File haipatikani: ${file1}`;
     if (!fs.existsSync(file2)) return `❌ File haipatikani: ${file2}`;
     try {
@@ -1358,7 +1434,8 @@ async function diffFiles(file1, file2) {
 }
 
 async function zipFile(filePath, outputPath) {
-    if (!filePath) return '❓ $zip <file> [output.gz]';
+    const pfx = getPrefix();
+    if (!filePath) return `❓ ${pfx}eval $zip <file> [output.gz]`;
     if (!fs.existsSync(filePath)) return `❌ File haipatikani: ${filePath}`;
     const dest = outputPath || `${filePath}.gz`;
     try {
@@ -1378,7 +1455,8 @@ async function zipFile(filePath, outputPath) {
     } catch (e) { return `❌ ${e.message}`; }
 }
 async function unzipFile(filePath, outputPath) {
-    if (!filePath) return '❓ $unzip <file.gz> [output]';
+    const pfx = getPrefix();
+    if (!filePath) return `❓ ${pfx}eval $unzip <file.gz> [output]`;
     if (!fs.existsSync(filePath)) return `❌ File haipatikani: ${filePath}`;
     const dest = outputPath || filePath.replace(/\.gz$/, '') || `${filePath}.out`;
     try {
@@ -1397,7 +1475,8 @@ async function unzipFile(filePath, outputPath) {
 }
 
 function base64Tool(action, input) {
-    if (!action || !input) return '❓ $base64 encode|decode <text>';
+    const pfx = getPrefix();
+    if (!action || !input) return `❓ ${pfx}eval $base64 encode|decode <text>`;
     const act = action.toLowerCase();
     try {
         if (act === 'encode') return `*🔢 BASE64 ENCODED*\n\`\`\`\n${Buffer.from(input, 'utf8').toString('base64')}\n\`\`\``;
@@ -1407,11 +1486,12 @@ function base64Tool(action, input) {
 }
 
 function hashText(algorithm, text) {
+    const pfx = getPrefix();
     if (!text && algorithm && !['md5', 'sha1', 'sha256', 'sha512'].includes(algorithm.toLowerCase())) {
         text = algorithm;
         algorithm = null;
     }
-    if (!text) return '❓ $hash [algo] <text>';
+    if (!text) return `❓ ${pfx}eval $hash [algo] <text>`;
     try {
         if (algorithm) {
             const algMap = { md5: 'md5', sha1: 'sha1', sha256: 'sha256', sha512: 'sha512' };
@@ -1425,7 +1505,8 @@ function hashText(algorithm, text) {
 
 /* ── $regex (ReDoS protection) ── */
 function testRegex(input) {
-    if (!input) return '❓ $regex <pattern> [flags] <text>\nMfano: $regex \\d+ g "hello 123 world 456"';
+    const pfx = getPrefix();
+    if (!input) return `❓ ${pfx}eval $regex <pattern> [flags] <text>\nMfano: ${pfx}eval $regex \\d+ g "hello 123 world 456"`;
     let pattern, flags = '',
         text;
     const fullRegex = input.match(/^\/(.+?)\/([gimsuy]*)\s+([\s\S]+)$/);
@@ -1469,7 +1550,8 @@ function testRegex(input) {
 
 /* ── $json ── */
 function jsonTool(action, input) {
-    if (!action || !input) return '❓ $json format|minify|validate <json>';
+    const pfx = getPrefix();
+    if (!action || !input) return `❓ ${pfx}eval $json format|minify|validate <json>`;
     try {
         const parsed = JSON.parse(input);
         if (action === 'format' || action === 'pretty') return `*📋 JSON FORMATTED*\n\`\`\`json\n${truncate(JSON.stringify(parsed, null, 2), 2500)}\n\`\`\``;
@@ -1481,7 +1563,8 @@ function jsonTool(action, input) {
 
 /* ── $csv ── */
 function csvRead(filePath, rows = 20) {
-    if (!filePath) return '❓ $csv read <filepath> [rows]';
+    const pfx = getPrefix();
+    if (!filePath) return `❓ ${pfx}eval $csv read <filepath> [rows]`;
     if (!fs.existsSync(filePath)) return `❌ File haipatikani: ${filePath}`;
     try {
         const text = fs.readFileSync(filePath, 'utf8').trim();
@@ -1521,7 +1604,8 @@ function csvRead(filePath, rows = 20) {
 
 /* ── $http ── */
 async function httpRequest(method, url, bodyStr) {
-    if (!method || !url) return '❓ *$http matumizi:*\n▸ `$http GET <url>`\n▸ `$http POST <url> <json>`\n▸ `$http PUT <url> <json>`\n▸ `$http DELETE <url>`';
+    const pfx = getPrefix();
+    if (!method || !url) return `❓ *${pfx}eval $http matumizi:*\n▸ \`${pfx}eval $http GET <url>\`\n▸ \`${pfx}eval $http POST <url> <json>\`\n▸ \`${pfx}eval $http PUT <url> <json>\`\n▸ \`${pfx}eval $http DELETE <url>\``;
     const target = url.startsWith('http') ? url : `https://${url}`;
     const reqOpts = { method: method.toUpperCase(), headers: { 'Content-Type': 'application/json', 'User-Agent': '26-Tech-Bot/3.2' } };
     if (bodyStr && ['POST', 'PUT', 'PATCH'].includes(reqOpts.method)) { try { reqOpts.body = JSON.stringify(JSON.parse(bodyStr)); } catch { reqOpts.body = bodyStr; } }
@@ -1546,14 +1630,17 @@ async function httpRequest(method, url, bodyStr) {
 
 /* ── $notify ── */
 async function selfNotify(sock, message) {
-    if (!message) return '❓ $notify <ujumbe>';
+    const pfx = getPrefix();
+    if (!message) return `❓ ${pfx}eval $notify <ujumbe>`;
     const ownerJid = getMainOwnerJid();
+    if (!ownerJid) return '❌ HAKUNA OWNER NUMBER! Weka OWNER_NUMBER kwenye .env kwanza.';
     try { await sock.sendMessage(ownerJid, { text: `🔔 *NOTIFICATION*\n\n${message}\n\n_${new Date().toLocaleString('sw-TZ')}_` }); return '✅ Notification imetumwa'; } catch (e) { return `❌ ${e.message}`; }
 }
 
 /* ── $eval all ── */
 async function evalAll(code, sock, from, context) {
-    if (!code) return '❓ $eval all <code>';
+    const pfx = getPrefix();
+    if (!code) return `❓ ${pfx}eval $eval all <code>`;
     let result;
     try { result = await runEval(`return (${code})`, context); } catch (e1) { try { result = await runEval(code, context); } catch (e2) { return `❌ ${e2.message}`; } }
     const output = formatOutput(result);
@@ -1569,29 +1656,31 @@ async function evalAll(code, sock, from, context) {
 }
 
 /* ════════════════════════════════════════════════
-   HELP
+   HELP (DYNAMIC PREFIX)
    ════════════════════════════════════════════════ */
 function getHelp() {
+    const pfx = getPrefix();
     return (
-        '*⚡ 26-TECH PRO EVAL v3.6 FIXED*\n\n' +
-        '*📝 JS Eval:*\n▸ `.eval <code>`\n▸ `.eval $perf <code>`\n▸ `.eval $eval all <code>`\n\n' +
-        '*💻 Terminal:*\n▸ `.eval $ <cmd>`\n▸ `.eval $logs`\n▸ `.eval $restart`\n▸ `.eval $update`\n\n' +
-        '*📊 State:*\n▸ `.eval $state [all/groups/commands/mem/cache/env/socket/disk/net]`\n▸ `.eval $uptime`\n▸ `.eval $node [info/modules/argv/flags/loaded]`\n▸ `.eval $docker [info/ps/stats/logs]`\n▸ `.eval $memory [info/dump]`\n\n' +
-        '*🗄️ Database:*\n▸ `.eval $db <SQL>`\n▸ `.eval $db backup`\n▸ `.eval $db tables|size|explain <SQL>|connections`\n▸ `.eval $sessions [list/count]`\n\n' +
-        '*🧠 AI:*\n▸ `.eval $ai list|stats|clear <num>|clearall`\n\n' +
-        '*📡 Network:*\n▸ `.eval $ping [number]`\n▸ `.eval $net <url>`\n▸ `.eval $speed`\n▸ `.eval $http GET/POST/PUT/DELETE <url> [body]`\n▸ `.eval $webhook <url> [data]`\n▸ `.eval $send <num> <msg>`\n▸ `.eval $broadcast <msg>`\n\n' +
-        '*👥 Groups:*\n▸ `.eval $groups info|leave|kick|promote|demote|add`\n▸ `.eval $invite <groupJid>`\n\n' +
-        '*🧑 Profile:*\n▸ `.eval $profile <number>`\n▸ `.eval $setname|$setstatus <text>`\n▸ `.eval $story <number>`\n\n' +
-        '*🔧 System:*\n▸ `.eval $ban|$unban <num>`\n▸ `.eval $block list`\n▸ `.eval $kill <pid>`\n▸ `.eval $gc`\n▸ `.eval $env list|get|set`\n\n' +
-        '*🔄 Reload & Watch:*\n▸ `.eval $hotreload (disabled in ESM, use $restart)`\n▸ `.eval $watch <file>`\n▸ `.eval $watch <file> stop`\n\n' +
-        '*⏰ Scheduling:*\n▸ `.eval $cron list|start|stop|stopall`\n▸ `.eval $schedule <time> <code> [name]`\n▸ `.eval $schedule cancel <name>`\n▸ `.eval $remind <time> <msg>`\n▸ `.eval $remind cancel <id>`\n\n' +
-        '*🔐 Crypto:*\n▸ `.eval $encrypt <text>`\n▸ `.eval $decrypt <encrypted>`\n▸ `.eval $hash [algo] <text>`\n▸ `.eval $base64 encode|decode <text>`\n\n' +
-        '*🛠️ Dev Tools:*\n▸ `.eval $regex <pattern> [flags] <text>`\n▸ `.eval $json format|minify|validate <json>`\n▸ `.eval $csv read <file>`\n▸ `.eval $diff <file1> <file2>`\n▸ `.eval $zip <file>` / `$unzip <file>`\n▸ `.eval $qr <text>`\n\n' +
-        '*📁 Files:*\n▸ `.eval $file ls|read|write|delete|stat|send`\n\n' +
-        '*💬 Messages:*\n▸ `.eval $msg delete <id>`\n▸ `.eval $react <emoji> <msgId>`\n▸ `.eval $forward <msgId> <target>`\n\n' +
-        '*📦 Cache:*\n▸ `.eval $cache [clear all/messages/contacts/history]`\n\n' +
-        '*🔔 Notifications:*\n▸ `.eval $notify <msg>`\n▸ `.eval $railway logs [lines]`\n\n' +
-        '*⚡ Misc:*\n▸ `.eval $whitelist list|add|remove|clear`\n▸ `.eval $ratelimit list|set|remove|clear`\n▸ `.eval $backup`\n▸ `.eval 1` kuthibitisha / `.eval 0` kughairi\n▸ `.eval $history` / `$export` / `$clear`'
+        '*⚡ 26-TECH PRO EVAL v4.0 — ENV ONLY*\n\n' +
+        `*📝 JS Eval:*\n▸ \`${pfx}eval <code>\`\n▸ \`${pfx}eval $perf <code>\`\n▸ \`${pfx}eval $eval all <code>\`\n\n` +
+        `*💻 Terminal:*\n▸ \`${pfx}eval $ <cmd>\`\n▸ \`${pfx}eval $logs\`\n▸ \`${pfx}eval $restart\`\n▸ \`${pfx}eval $update\`\n\n` +
+        `*📊 State:*\n▸ \`${pfx}eval $state [all/groups/commands/mem/cache/env/socket/disk/net]\`\n▸ \`${pfx}eval $uptime\`\n▸ \`${pfx}eval $node [info/modules/argv/flags/loaded]\`\n▸ \`${pfx}eval $docker [info/ps/stats/logs]\`\n▸ \`${pfx}eval $memory [info/dump]\`\n\n` +
+        `*🗄️ Database:*\n▸ \`${pfx}eval $db <SQL>\`\n▸ \`${pfx}eval $db backup\`\n▸ \`${pfx}eval $db tables|size|explain <SQL>|connections\`\n▸ \`${pfx}eval $sessions [list/count]\`\n\n` +
+        `*🧠 AI:*\n▸ \`${pfx}eval $ai list|stats|clear <num>|clearall\`\n\n` +
+        `*📡 Network:*\n▸ \`${pfx}eval $ping [number]\`\n▸ \`${pfx}eval $net <url>\`\n▸ \`${pfx}eval $speed\`\n▸ \`${pfx}eval $http GET/POST/PUT/DELETE <url> [body]\`\n▸ \`${pfx}eval $webhook <url> [data]\`\n▸ \`${pfx}eval $send <num> <msg>\`\n▸ \`${pfx}eval $broadcast <msg>\`\n\n` +
+        `*👥 Groups:*\n▸ \`${pfx}eval $groups info|leave|kick|promote|demote|add\`\n▸ \`${pfx}eval $invite <groupJid>\`\n\n` +
+        `*🧑 Profile:*\n▸ \`${pfx}eval $profile <number>\`\n▸ \`${pfx}eval $setname|$setstatus <text>\`\n▸ \`${pfx}eval $story <number>\`\n\n` +
+        `*🔧 System:*\n▸ \`${pfx}eval $ban|$unban <num>\`\n▸ \`${pfx}eval $block list\`\n▸ \`${pfx}eval $kill <pid>\`\n▸ \`${pfx}eval $gc\`\n▸ \`${pfx}eval $env list|get|set\`\n\n` +
+        `*🔄 Reload & Watch:*\n▸ \`${pfx}eval $hotreload\` (disabled in ESM)\n▸ \`${pfx}eval $watch <file>\`\n▸ \`${pfx}eval $watch <file> stop\`\n\n` +
+        `*⏰ Scheduling:*\n▸ \`${pfx}eval $cron list|start|stop|stopall\`\n▸ \`${pfx}eval $schedule <time> <code> [name]\`\n▸ \`${pfx}eval $schedule cancel <name>\`\n▸ \`${pfx}eval $remind <time> <msg>\`\n▸ \`${pfx}eval $remind cancel <id>\`\n\n` +
+        `*🔐 Crypto:*\n▸ \`${pfx}eval $encrypt <text>\`\n▸ \`${pfx}eval $decrypt <encrypted>\`\n▸ \`${pfx}eval $hash [algo] <text>\`\n▸ \`${pfx}eval $base64 encode|decode <text>\`\n\n` +
+        `*🛠️ Dev Tools:*\n▸ \`${pfx}eval $regex <pattern> [flags] <text>\`\n▸ \`${pfx}eval $json format|minify|validate <json>\`\n▸ \`${pfx}eval $csv read <file>\`\n▸ \`${pfx}eval $diff <file1> <file2>\`\n▸ \`${pfx}eval $zip <file>\` / \`$unzip <file>\`\n▸ \`${pfx}eval $qr <text>\`\n\n` +
+        `*📁 Files:*\n▸ \`${pfx}eval $file ls|read|write|delete|stat|send\`\n\n` +
+        `*💬 Messages:*\n▸ \`${pfx}eval $msg delete <id>\`\n▸ \`${pfx}eval $react <emoji> <msgId>\`\n▸ \`${pfx}eval $forward <msgId> <target>\`\n\n` +
+        `*📦 Cache:*\n▸ \`${pfx}eval $cache [clear all/messages/contacts/history]\`\n\n` +
+        `*🔔 Notifications:*\n▸ \`${pfx}eval $notify <msg>\`\n▸ \`${pfx}eval $railway logs [lines]\`\n\n` +
+        `*⚡ Misc:*\n▸ \`${pfx}eval $whitelist list|add|remove|clear\`\n▸ \`${pfx}eval $ratelimit list|set|remove|clear\`\n▸ \`${pfx}eval $backup\`\n▸ \`${pfx}eval 1\` kuthibitisha / \`${pfx}eval 0\` kughairi\n▸ \`${pfx}eval $history\` / \`${pfx}eval $export\` / \`${pfx}eval $clear\`\n\n` +
+        `*🔑 OWNERS (kutoka .env):* ${getOwnersFromEnv().map(o => '+'+o.split('@')[0]).join(', ') || '❌ HAKUNA! Weka OWNER_NUMBER kwenye .env'}`
     );
 }
 
@@ -1599,7 +1688,7 @@ function getHelp() {
    EXPORTS
    ════════════════════════════════════════════════ */
 export const name        = 'eval';
-export const description = 'Ultimate Pro Eval v3.6 FIXED — assets path + 1/0 confirm';
+export const description = 'Ultimate Pro Eval v4.0 — ENV ONLY (no hardcode)';
 export const category    = 'owner';
 export const use         = '<code> | $command';
 export const alias       = ['ev', 'exec'];
@@ -1607,7 +1696,14 @@ export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
-    if (!isOwner(msg, sock)) return;
+    
+    // STRICT owner check - NO hardcode fallback
+    if (!isOwner(msg, sock)) {
+        const pfx = getPrefix();
+        return sock.sendMessage(from, { 
+            text: `🔒 *Command hii ni ya Owner pekee!*\n\nWeka namba yako kwenye .env:\n\`OWNER_NUMBER=255XXXXXXXXX\`\n\nKisha restart bot.`
+        }, { quoted: msg });
+    }
 
     const senderJid = msg.key.participant || msg.key.remoteJid;
 
@@ -1620,8 +1716,8 @@ export async function execute(sock, msg, args) {
         ''
     ).trim();
 
-    const prefix = global.prefix || '.';
-    const escapedPfx = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pfx = getPrefix();
+    const escapedPfx = pfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const evalRegex = new RegExp(`^${escapedPfx}(eval|ev|exec)\\s*`, 'i');
     if (!evalRegex.test(fullText)) {
         if (!args || args.length === 0) return;
@@ -1629,7 +1725,7 @@ export async function execute(sock, msg, args) {
 
     let text = fullText.replace(evalRegex, '').trim();
     if (!text && args?.length) text = args.join(' ').trim();
-    if (!text) return sock.sendMessage(from, { text: '❓ Write code or use `.eval $help`' });
+    if (!text) return sock.sendMessage(from, { text: `❓ Write code or use \`${pfx}eval $help\`` });
 
     const codeBlockMatch = text.match(/```(\w*)\n([\s\S]*?)```/);
     if (codeBlockMatch) text = codeBlockMatch[2].trim();
@@ -1718,7 +1814,6 @@ export async function execute(sock, msg, args) {
                 });
                 break;
 
-            // ── CONFIRMATION: 1 = confirm, 0 = cancel ──
             case '$confirm':
             case '1':
                 result = await withStatus(sock, from, msg, 'Confirm', () => executeConfirm(from)); break;
@@ -1738,7 +1833,7 @@ export async function execute(sock, msg, args) {
                 } else if (['tables', 'size', 'explain', 'connections'].includes(parts[1])) {
                     result = await withStatus(sock, from, msg, 'DB', () => dbExtended(parts[1], parts.slice(2).join(' ')));
                 } else {
-                    result = await withStatus(sock, from, msg, 'DB Query', () => { if (!rest) return '❓ $db <SQL>'; return runDB(rest); });
+                    result = await withStatus(sock, from, msg, 'DB Query', () => { if (!rest) return `❓ ${pfx}eval $db <SQL>`; return runDB(rest); });
                 }
                 break;
 
@@ -1761,14 +1856,10 @@ export async function execute(sock, msg, args) {
                     const c = evalHistory.length;
                     evalHistory.length = 0;
                     if (global.dbPool) {
-                        try {
-                            await global.dbPool.query('DELETE FROM eval_history');
-                        } catch (e) {
-                            console.error('Clear DB error:', e.message);
-                        }
+                        try { await global.dbPool.query('DELETE FROM eval_history'); } catch (e) { console.error('Clear DB error:', e.message); }
                     }
                     global.evalExecLog = [];
-                    return `✅ Cleared ${c} entries from memory and database.`;
+                    return `✅ Cleared ${c} entries.`;
                 });
                 break;
 
@@ -1798,28 +1889,20 @@ export async function execute(sock, msg, args) {
                 if (parts[2] === 'stop') {
                     result = await withStatus(sock, from, msg, 'Watch Stop', () => watchFile(parts[1], 'stop', sock, from));
                 } else if (parts[1] === 'stop') {
-                    return sock.sendMessage(from, { text: '❓ Usage: $watch <file> stop' }, { quoted: msg });
+                    return sock.sendMessage(from, { text: `❓ Usage: ${pfx}eval $watch <file> stop` }, { quoted: msg });
                 } else {
                     result = await withStatus(sock, from, msg, 'Watch', () => watchFile(parts[1] || 'list', null, sock, from));
                 }
                 break;
 
-            case '$net':
-                result = await withStatus(sock, from, msg, 'Net Test', () => testNet(parts[1]));
-                break;
-            case '$speed':
-                result = await withStatus(sock, from, msg, 'Speed', () => speedTest());
-                break;
-            case '$docker':
-                result = await withStatus(sock, from, msg, 'Docker', () => dockerInfo(parts[1]));
-                break;
-            case '$memory':
-                result = await withStatus(sock, from, msg, 'Memory', () => memoryDump(sock, from, parts[1]));
-                break;
+            case '$net': result = await withStatus(sock, from, msg, 'Net Test', () => testNet(parts[1])); break;
+            case '$speed': result = await withStatus(sock, from, msg, 'Speed', () => speedTest()); break;
+            case '$docker': result = await withStatus(sock, from, msg, 'Docker', () => dockerInfo(parts[1])); break;
+            case '$memory': result = await withStatus(sock, from, msg, 'Memory', () => memoryDump(sock, from, parts[1])); break;
 
             case '$schedule':
                 if (parts[1] === 'cancel') {
-                    if (!parts[2]) return sock.sendMessage(from, { text: '❓ $schedule cancel <name>' }, { quoted: msg });
+                    if (!parts[2]) return sock.sendMessage(from, { text: `❓ ${pfx}eval $schedule cancel <name>` }, { quoted: msg });
                     result = await withStatus(sock, from, msg, 'Schedule Cancel', () => scheduleCode('cancel', parts.slice(2).join(' '), null, sock, from));
                 } else if (!parts[1] || parts[1] === 'list') {
                     result = await withStatus(sock, from, msg, 'Schedule List', () => scheduleCode(null, null, null, sock, from));
@@ -1836,7 +1919,7 @@ export async function execute(sock, msg, args) {
 
             case '$remind':
                 if (parts[1] === 'cancel') {
-                    if (!parts[2]) return sock.sendMessage(from, { text: '❓ $remind cancel <id>' }, { quoted: msg });
+                    if (!parts[2]) return sock.sendMessage(from, { text: `❓ ${pfx}eval $remind cancel <id>` }, { quoted: msg });
                     result = await withStatus(sock, from, msg, 'Remind Cancel', () => setReminder('cancel', parts.slice(2).join(' '), sock, from));
                 } else if (!parts[1] || parts[1] === 'list') {
                     result = await withStatus(sock, from, msg, 'Remind List', () => setReminder(null, null, sock, from));
@@ -1845,30 +1928,14 @@ export async function execute(sock, msg, args) {
                 }
                 break;
 
-            case '$webhook':
-                result = await withStatus(sock, from, msg, 'Webhook', () => sendWebhook(parts[1], parts.slice(2).join(' ') || null));
-                break;
-            case '$encrypt':
-                result = await withStatus(sock, from, msg, 'Encrypt', () => encryptText(rest));
-                break;
-            case '$decrypt':
-                result = await withStatus(sock, from, msg, 'Decrypt', () => decryptText(rest));
-                break;
-            case '$qr':
-                result = await withStatus(sock, from, msg, 'QR', () => generateQR(rest, sock, from));
-                break;
-            case '$diff':
-                result = await withStatus(sock, from, msg, 'Diff', () => diffFiles(parts[1], parts[2]));
-                break;
-            case '$zip':
-                result = await withStatus(sock, from, msg, 'Zip', () => zipFile(parts[1], parts[2]));
-                break;
-            case '$unzip':
-                result = await withStatus(sock, from, msg, 'Unzip', () => unzipFile(parts[1], parts[2]));
-                break;
-            case '$base64':
-                result = await withStatus(sock, from, msg, 'Base64', () => base64Tool(parts[1], parts.slice(2).join(' ')));
-                break;
+            case '$webhook': result = await withStatus(sock, from, msg, 'Webhook', () => sendWebhook(parts[1], parts.slice(2).join(' ') || null)); break;
+            case '$encrypt': result = await withStatus(sock, from, msg, 'Encrypt', () => encryptText(rest)); break;
+            case '$decrypt': result = await withStatus(sock, from, msg, 'Decrypt', () => decryptText(rest)); break;
+            case '$qr': result = await withStatus(sock, from, msg, 'QR', () => generateQR(rest, sock, from)); break;
+            case '$diff': result = await withStatus(sock, from, msg, 'Diff', () => diffFiles(parts[1], parts[2])); break;
+            case '$zip': result = await withStatus(sock, from, msg, 'Zip', () => zipFile(parts[1], parts[2])); break;
+            case '$unzip': result = await withStatus(sock, from, msg, 'Unzip', () => unzipFile(parts[1], parts[2])); break;
+            case '$base64': result = await withStatus(sock, from, msg, 'Base64', () => base64Tool(parts[1], parts.slice(2).join(' '))); break;
             case '$hash':
                 result = await withStatus(sock, from, msg, 'Hash', () => {
                     const knownAlgos = ['md5', 'sha1', 'sha256', 'sha512'];
@@ -1876,30 +1943,20 @@ export async function execute(sock, msg, args) {
                     return hashText(null, rest);
                 });
                 break;
-            case '$regex':
-                result = await withStatus(sock, from, msg, 'Regex', () => testRegex(rest));
-                break;
-            case '$json':
-                result = await withStatus(sock, from, msg, 'JSON', () => jsonTool(parts[1], parts.slice(2).join(' ')));
-                break;
-            case '$csv':
-                result = await withStatus(sock, from, msg, 'CSV', () => { if (parts[1] === 'read') return csvRead(parts[2], parts[3]); return '❓ $csv read <file> [rows]'; });
-                break;
-            case '$http':
-                result = await withStatus(sock, from, msg, 'HTTP', () => httpRequest(parts[1], parts[2], parts.slice(3).join(' ') || null));
-                break;
+            case '$regex': result = await withStatus(sock, from, msg, 'Regex', () => testRegex(rest)); break;
+            case '$json': result = await withStatus(sock, from, msg, 'JSON', () => jsonTool(parts[1], parts.slice(2).join(' '))); break;
+            case '$csv': result = await withStatus(sock, from, msg, 'CSV', () => { if (parts[1] === 'read') return csvRead(parts[2], parts[3]); return `❓ ${pfx}eval $csv read <file> [rows]`; }); break;
+            case '$http': result = await withStatus(sock, from, msg, 'HTTP', () => httpRequest(parts[1], parts[2], parts.slice(3).join(' ') || null)); break;
 
             case '$railway':
                 if (parts[1] === 'logs') {
                     result = await withStatus(sock, from, msg, 'Railway Logs', () => railwayLogs(parts[2] ? parseInt(parts[2]) : 50));
                 } else {
-                    result = '❓ $railway logs [lines]';
+                    result = `❓ ${pfx}eval $railway logs [lines]`;
                 }
                 break;
 
-            case '$notify':
-                result = await withStatus(sock, from, msg, 'Notify', () => selfNotify(sock, rest));
-                break;
+            case '$notify': result = await withStatus(sock, from, msg, 'Notify', () => selfNotify(sock, rest)); break;
 
             case '$eval':
                 if (parts[1] === 'all') {
@@ -1907,7 +1964,7 @@ export async function execute(sock, msg, args) {
                         return await withStatus(sock, from, msg, 'Eval All', () => evalAll(parts.slice(2).join(' '), sock, from, { sock, msg, from }));
                     });
                 } else {
-                    result = '❓ $eval all <code>';
+                    result = `❓ ${pfx}eval $eval all <code>`;
                 }
                 break;
 
@@ -1923,7 +1980,7 @@ export async function execute(sock, msg, args) {
                     global.evalVars.clear();
                     result = '✅ Vigezo vyote vimefutwa.';
                 } else {
-                    result = '❓ $vars list|get|set|clear';
+                    result = `❓ ${pfx}eval $vars list|get|set|clear`;
                 }
                 break;
 
@@ -1931,8 +1988,7 @@ export async function execute(sock, msg, args) {
                 const helpText = getHelp();
                 const procMsg = await sock.sendMessage(from, { text: '⏳ *Processing:* _Help_...' }, { quoted: msg });
                 try {
-                    // ── FIXED: assets folder path ──
-                   const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
+                    const imagePath = path.join(__dirname, '../assets/bot_image.jpg');
                     if (fs.existsSync(imagePath)) {
                         await sock.sendMessage(from, { image: fs.readFileSync(imagePath), caption: helpText, mentions: [msg.key.participant || msg.key.remoteJid] }, { quoted: msg });
                     } else {
@@ -1947,7 +2003,7 @@ export async function execute(sock, msg, args) {
                 if (text.startsWith('$') && !reserved.some(r => cmd === r)) {
                     const terminalCmd = text.slice(1).trim();
                     if (!terminalCmd) {
-                        return sock.sendMessage(from, { text: '❓ $ <terminal command>' }, { quoted: msg });
+                        return sock.sendMessage(from, { text: `❓ ${pfx}eval $ <terminal command>` }, { quoted: msg });
                     }
                     if (!isSafe(terminalCmd)) {
                         return sock.sendMessage(from, { text: '❌ Amri hii imezuiwa kwa usalama.' });
