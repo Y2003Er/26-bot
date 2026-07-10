@@ -1,12 +1,15 @@
 /**
  * commands/eval.js
  * ─────────────────────────────────────────────────────────────
- * PRO GRADE EVAL v4.0 — NO HARDCODE + ENV ONLY
+ * PRO GRADE EVAL v4.1 — NO HARDCODE + ENV ONLY + AUTO-RETURN
  * ─────────────────────────────────────────────────────────────
  * ✅ FIXED: Removed all hardcoded values (numbers, tokens)
  * ✅ FIXED: isOwner checks ONLY from .env (OWNER_NUMBER/OWNER_NUMBERS/SUDO_USERS)
  * ✅ FIXED: Prefix dynamic from config.js (no fallback hardcode)
  * ✅ FIXED: Help text uses dynamic prefix
+ * ✅ FIXED (v4.1): runEval now auto-returns the last bare-expression
+ *    statement in multi-statement code (like Node REPL), instead of
+ *    silently falling back to no-return and printing `undefined`.
  * 🔧 ASSETS: imagePath → ../assets/bot_image.jpg
  * 🔧 CONFIRM: 1 = confirm, 0 = cancel
  * ════════════════════════════════════════════════════════════════
@@ -278,6 +281,51 @@ async function runTerminal(command, cwd = process.cwd()) {
     });
 }
 
+/* ── Auto-return helper: finds the last top-level statement and wraps it
+   in `return (...)` if it's a bare expression, so multi-statement eval
+   code behaves like Node REPL's implicit completion value. ── */
+function autoReturnLastStatement(code) {
+    const src = code;
+    let depth = 0;
+    let inStr = null;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let lastTopLevelBoundary = 0;
+
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        const prev = src[i - 1];
+
+        if (inLineComment) { if (c === '\n') inLineComment = false; continue; }
+        if (inBlockComment) { if (prev === '*' && c === '/') inBlockComment = false; continue; }
+        if (inStr) {
+            if (c === '\\') { i++; continue; }
+            if (c === inStr) inStr = null;
+            continue;
+        }
+        if (c === '"' || c === "'" || c === '`') { inStr = c; continue; }
+        if (c === '/' && src[i + 1] === '/') { inLineComment = true; continue; }
+        if (c === '/' && src[i + 1] === '*') { inBlockComment = true; continue; }
+        if ('([{'.includes(c)) { depth++; continue; }
+        if (')]}'.includes(c)) {
+            depth--;
+            if (depth === 0 && c === '}') lastTopLevelBoundary = i + 1;
+            continue;
+        }
+        if (c === ';' && depth === 0) lastTopLevelBoundary = i + 1;
+    }
+
+    const before = src.slice(0, lastTopLevelBoundary);
+    let last = src.slice(lastTopLevelBoundary).trim();
+    if (!last) return src; // hakuna cha ku-auto-return
+
+    const bareStatementBlacklist = /^(const|let|var|function|async\s+function|class|if|for|while|do|switch|try|return|throw|import|export|break|continue|debugger|\/\/|\/\*|\{)\b/;
+    if (bareStatementBlacklist.test(last)) return src;
+
+    last = last.replace(/;\s*$/, '');
+    return `${before}\nreturn (${last});`;
+}
+
 /* ── JS Eval ── */
 async function runEval(code, context) {
     const { sock, msg, from } = context;
@@ -288,10 +336,20 @@ async function runEval(code, context) {
         `const store = global;\n${src}`
     );
 
-    let fn;
-    try {
-        fn = buildFn(`return (${code})`);
-    } catch {
+    const tryBuild = (src) => {
+        try { return buildFn(src); } catch { return null; }
+    };
+
+    // 1) Single-expression code: wrap whole thing in return(...)
+    let fn = tryBuild(`return (${code})`);
+
+    // 2) Multi-statement code: auto-return only the last bare-expression statement
+    if (!fn) {
+        fn = tryBuild(autoReturnLastStatement(code));
+    }
+
+    // 3) Last resort: run as-is (no implicit return)
+    if (!fn) {
         fn = buildFn(code);
     }
 
@@ -1661,7 +1719,7 @@ async function evalAll(code, sock, from, context) {
 function getHelp() {
     const pfx = getPrefix();
     return (
-        '*⚡ 26-TECH PRO EVAL v4.0 — ENV ONLY*\n\n' +
+        '*⚡ 26-TECH PRO EVAL v4.1 — ENV ONLY*\n\n' +
         `*📝 JS Eval:*\n▸ \`${pfx}eval <code>\`\n▸ \`${pfx}eval $perf <code>\`\n▸ \`${pfx}eval $eval all <code>\`\n\n` +
         `*💻 Terminal:*\n▸ \`${pfx}eval $ <cmd>\`\n▸ \`${pfx}eval $logs\`\n▸ \`${pfx}eval $restart\`\n▸ \`${pfx}eval $update\`\n\n` +
         `*📊 State:*\n▸ \`${pfx}eval $state [all/groups/commands/mem/cache/env/socket/disk/net]\`\n▸ \`${pfx}eval $uptime\`\n▸ \`${pfx}eval $node [info/modules/argv/flags/loaded]\`\n▸ \`${pfx}eval $docker [info/ps/stats/logs]\`\n▸ \`${pfx}eval $memory [info/dump]\`\n\n` +
@@ -1688,7 +1746,7 @@ function getHelp() {
    EXPORTS
    ════════════════════════════════════════════════ */
 export const name        = 'eval';
-export const description = 'Ultimate Pro Eval v4.0 — ENV ONLY (no hardcode)';
+export const description = 'Ultimate Pro Eval v4.1 — ENV ONLY (no hardcode) + auto-return';
 export const category    = 'owner';
 export const use         = '<code> | $command';
 export const alias       = ['ev', 'exec'];
