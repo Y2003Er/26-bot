@@ -473,7 +473,7 @@ function startKeepalive() {
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
         }
-    }, 2 * 60 * 1000); // 2 minutes instead of 4
+    }, 90 * 1000); // 
 }
 
 // ✅ FIX E-1: PROPER SOCKET CLEANUP — Ondoa listeners kabla ya kufa
