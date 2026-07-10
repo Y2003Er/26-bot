@@ -106,7 +106,7 @@ const C = {
     green: '\x1b[32m', greenBright: '\x1b[92m',
     yellow: '\x1b[33m', yellowBright: '\x1b[93m',
     red: '\x1b[31m', redBright: '\x1b[91m',
-    gray: '\x1b[90m', white: '\x1b[97m',  // ✅ FIX L-1: 'w' → 'm'
+    gray: '\x1b[90m', white: '\x1b[97m',
     blue: '\x1b[34m', blueBright: '\x1b[94m',
     magenta: '\x1b[35m', magentaBright: '\x1b[95m',
 };
@@ -414,22 +414,18 @@ function startCacheCleanup() {
     }, 10 * 60 * 1000);
 }
 
-// ✅ FIX M-3: AGGRESSIVE KEEP-ALIVE - Tuma presence updates every 90 seconds
-// to prevent cloud provider idle timeouts
 function startAggressiveKeepalive() {
     if (aggressiveKeepaliveTimer) clearInterval(aggressiveKeepaliveTimer);
     aggressiveKeepaliveTimer = setInterval(async () => {
         try {
             if (global.sock?.ws?.readyState === 1) {
-                // Send availability to wake up idle connections
                 await global.sock.sendPresenceUpdate('available');
-                // Send a dummy ping message to keep WebSocket active
                 try {
                     await global.sock.sendPresenceUpdate('typing');
                     await new Promise(r => setTimeout(r, 500));
                     await global.sock.sendPresenceUpdate('paused');
                 } catch (e) {
-                    // Silently fail - these are optional pings
+                    // Silently fail
                 }
                 lastEventTime = Date.now();
                 log.info(`🔄 Aggressive keepalive → presence update sent`);
@@ -437,7 +433,7 @@ function startAggressiveKeepalive() {
         } catch (e) {
             log.warn(`Aggressive keepalive error: ${e.message}`);
         }
-    }, 90 * 1000); // 90 seconds - more aggressive than standard 2min
+    }, 90 * 1000);
 }
 
 function startHealthCheck() {
@@ -446,8 +442,6 @@ function startHealthCheck() {
         const ws = global.sock?.ws?.readyState;
         const idleTime = Date.now() - lastEventTime;
 
-        // ✅ FIX M-1: Punguza kutoka 600000 (10min) → 180000 (3min)
-        // More aggressive idle detection
         if (ws === 2 || ws === 3 || idleTime > 180000) {
             log.warn(`⚠️ Health Check: Dead connection detected. WS:${ws}, Idle:${Math.floor(idleTime / 1000)}s — inarestart...`);
             clearBackgroundTimers();
@@ -456,7 +450,7 @@ function startHealthCheck() {
             try { global.sock?.ws?.close(); } catch {}
             setTimeout(startBot, 5000);
         }
-    }, 60 * 1000); // Check every 60 seconds instead of 120
+    }, 60 * 1000);
 }
 
 function startKeepalive() {
@@ -464,7 +458,6 @@ function startKeepalive() {
     keepaliveTimer = setInterval(async () => {
         try {
             if (global.sock?.ws?.readyState === 1) {
-                // ✅ FIX M-2: Tuma 'available' mara moja tu, ondoa 'unavailable'
                 await global.sock.sendPresenceUpdate('available');
                 lastEventTime = Date.now();
                 const ping = await measurePing();
@@ -473,10 +466,9 @@ function startKeepalive() {
         } catch (e) {
             log.warn(`Keepalive imeshindwa: ${e.message}`);
         }
-    }, 90 * 1000); // 
+    }, 90 * 1000);
 }
 
-// ✅ FIX E-1: PROPER SOCKET CLEANUP — Ondoa listeners kabla ya kufa
 async function cleanupOldSocket(oldSock) {
     if (!oldSock) return;
     try {
@@ -496,7 +488,6 @@ async function cleanupOldSocket(oldSock) {
     } catch (e) {
         log.warn(`Socket cleanup error: ${e.message}`);
     }
-    // ✅ FIX E-2: Longer wait time (5s instead of 2s) para matigichukuzwe migrations
     await new Promise(resolve => setTimeout(resolve, 5000));
 }
 
@@ -531,7 +522,6 @@ async function startBot() {
 
         const msgRetryCounterCache = new NodeCache();
 
-        // ✅ FIX E-1: PROPER CLEANUP before creating new socket
         if (global.sock) {
             await cleanupOldSocket(global.sock);
             global.sock = null;
@@ -552,13 +542,11 @@ async function startBot() {
             shouldSyncHistory: () => false,
             markOnlineOnConnect: true,
             emitOwnEvents: false,
-            // ✅ Baileys v7 rc13: epuka rate-limit/ban kwa kutumia cached group metadata
             cachedGroupMetadata: async (jid) => groupMetaCache.get(jid),
         });
 
         global.sockInstance = global.sock;
 
-        // ✅ FIX C-8: Unganisha listeners mbili za creds.update kuwa moja
         let preKeyCount = 0;
         global.sock.ev.on('creds.update', async (update) => {
             try {
@@ -661,16 +649,18 @@ async function startBot() {
                 bootLock = false;
             }
 
+            // ✅ FIX: Added detailed logging for disconnect reason
             if (connection === 'close') {
                 clearOpenTimer();
                 clearBackgroundTimers();
                 const code = lastDisconnect?.error?.output?.statusCode;
+                const reason = lastDisconnect?.error?.message || 'Haijulikani';
                 isConnecting = false;
                 bootLock = false;
                 updateBanner('connection', 'OFFLINE');
                 updateBanner('ping', '—');
 
-                log.error(`Muunganiko Umevunjika → [${code ?? '?'}]`);
+                log.error(`Muunganiko Umevunjika → [${code ?? '?'}] Sababu: ${reason}`);
 
                 if (code === 440) {
                     consecutiveConflicts++;
@@ -720,7 +710,6 @@ async function startBot() {
             const isMentioned = textRaw.toLowerCase().includes('26-tech') ||
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.includes(botNumber);
 
-            // ✅ CHATBOT — kama false, mention haita-trigger AI auto-reply
             if (chatbot && isMentioned && !msg.key.fromMe) {
                 if (!aiCache.has(sender)) {
                     aiCache.set(sender, true);
