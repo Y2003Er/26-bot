@@ -1,15 +1,20 @@
 /**
  * commands/help.js
  * Orodha ya commands zote — 26-𝐓𝐄𝐂𝐇
- * Styles za textmaker zinajipanga kama commands nyingine (│ ➜ .stylename)
+ * Styles za textmaker zinajipanga kama commands nyingine (│ ➜ prefix + stylename)
+ * ✅ FIXED: Dynamic prefix — siyo hardcoded '.'
  */
 
 import fs   from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { prefix as configuredPrefix } from '../config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
+
+// ✅ Dynamic prefix helper
+const getPrefix = () => global.prefix || configuredPrefix || '.';
 
 export const name        = 'help';
 export const description = 'Orodha ya commands zote';
@@ -20,7 +25,7 @@ export const adminOnly   = false;
 
 export async function execute(sock, msg, args) {
   const from    = msg.key.remoteJid;
-  const pfx     = global.prefix || '.';
+  const pfx     = getPrefix();
   const allCmds = global.allCommands || new Map();
 
   const sender     = msg.key.participant || msg.key.remoteJid || '';
@@ -28,7 +33,10 @@ export async function execute(sock, msg, args) {
 
   // ── 1. Kama ametoa jina la command maalum ──
   if (args[0]?.trim()) {
-    const target = args[0].toLowerCase().trim().replace(/^\./, '');
+    // ✅ FIXED: Tumia dynamic prefix regex badala ya hardcoded /^\./
+    const escapedPfx = pfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefixRegex = new RegExp(`^${escapedPfx}`, 'i');
+    const target = args[0].toLowerCase().trim().replace(prefixRegex, '');
     const cmd    = allCmds.get(target);
 
     if (!cmd) {
@@ -65,7 +73,7 @@ export async function execute(sock, msg, args) {
     }
   }
 
-  // ── 3. Ongeza textmaker styles kama commands za kawaida (│ ➜ .stylename) ──
+  // ── 3. Ongeza textmaker styles kama commands za kawaida ──
   try {
     const textmakerPath = path.join(__dirname, 'textmaker.js');
     if (fs.existsSync(textmakerPath)) {
