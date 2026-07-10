@@ -164,10 +164,14 @@ function getUptime() {
 
 function getRAM() {
     const mem = process.memoryUsage();
-    const used = mem.heapUsed / 1024 / 1024;
-    const total = v8.getHeapStatistics().heap_size_limit / 1024 / 1024;
-    const pct = (used / total) * 100;
-    return { used: used.toFixed(1), total: total.toFixed(1), pct: pct.toFixed(0) };
+    const used = mem.heapUsed / 1048576;
+    const total = v8.getHeapStatistics().heap_size_limit / 1048576;
+    const pct = Math.round((used / total) * 100);
+    return { 
+        used: parseFloat(used.toFixed(1)), 
+        total: parseFloat(total.toFixed(1)), 
+        pct: pct 
+    };
 }
 
 function getCPU() {
