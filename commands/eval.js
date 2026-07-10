@@ -10,6 +10,7 @@
  * ✅ FIXED (v4.1): runEval now auto-returns the last bare-expression
  *    statement in multi-statement code (like Node REPL), instead of
  *    silently falling back to no-return and printing `undefined`.
+ * ✅ FIXED: Skips null/undefined results, uses util.inspect for objects
  * 🔧 ASSETS: imagePath → ../assets/bot_image.jpg
  * 🔧 CONFIRM: 1 = confirm, 0 = cancel
  * ════════════════════════════════════════════════════════════════
@@ -69,14 +70,12 @@ async function ensureEvalHistoryTable() {
         console.error('ensureEvalHistoryTable error:', e.message);
     }
 }
-// Call it once on module load
 ensureEvalHistoryTable();
 
 /* ──────────────── Owner check (ENV ONLY - NO HARDCODE) ──────────────── */
 function getOwnersFromEnv() {
     const owners = [];
     
-    // Collect from ALL possible env vars (NO fallback defaults)
     const envSources = [
         process.env.OWNER_NUMBER,
         process.env.OWNER_NUMBERS,
@@ -87,15 +86,14 @@ function getOwnersFromEnv() {
         if (source && typeof source === 'string' && source.trim()) {
             const numbers = source.split(',').map(num => {
                 return num.trim()
-                    .replace(/[^0-9]/g, '')   // Strip all non-digits
-                    .replace(/^0+/, '');       // Remove leading zeros
-            }).filter(num => num.length >= 9);  // Valid phone number length
+                    .replace(/[^0-9]/g, '')
+                    .replace(/^0+/, '');
+            }).filter(num => num.length >= 9);
             
             owners.push(...numbers);
         }
     }
     
-    // Runtime additional owners (set via eval, not hardcoded)
     if (global.additionalOwners && Array.isArray(global.additionalOwners)) {
         const runtimeOwners = global.additionalOwners.map(n => 
             String(n).replace(/[^0-9]/g, '')
@@ -103,7 +101,6 @@ function getOwnersFromEnv() {
         owners.push(...runtimeOwners);
     }
     
-    // Remove duplicates
     const unique = [...new Set(owners)];
     
     if (unique.length === 0) {
@@ -120,7 +117,6 @@ function isOwner(msg, sock) {
     let senderJid = isGroup ? (msg.key.participant || '') : (msg.key.remoteJid || '');
     if (!senderJid) return false;
     
-    // Normalize JID for comparison
     const normalize = (jid) => {
         if (!jid) return '';
         return String(jid)
@@ -131,24 +127,20 @@ function isOwner(msg, sock) {
     
     const senderClean = normalize(senderJid);
     
-    // Check against env owners
     const owners = getOwnersFromEnv();
     if (owners.some(o => normalize(o) === senderClean)) return true;
     
-    // Check if message is from the bot itself (self-bot)
     if (msg.key.fromMe === true) return true;
     
-    // Check LID-based owner
     const ownerLid = process.env.OWNER_LID;
     if (ownerLid && normalize(ownerLid) === senderClean) return true;
     
-    // Check runtime whitelist
     if (global.evalWhitelist?.has(senderJid)) return true;
     
     return false;
 }
 
-/* ── History (fixed #2) ── */
+/* ── History ── */
 const evalHistory = [];
 const MAX_HISTORY = 50;
 if (!global.evalExecLog) global.evalExecLog = [];
@@ -189,7 +181,6 @@ if (!global.evalScheduledJobs)     global.evalScheduledJobs     = new Map();
 if (!global.evalReminders)         global.evalReminders         = new Map();
 if (!global.evalWatchers)          global.evalWatchers          = new Map();
 
-// Encryption key
 if (process.env.EVAL_ENCRYPT_KEY) {
     const key = Buffer.from(process.env.EVAL_ENCRYPT_KEY, 'hex');
     if (key.length === 32) {
@@ -281,9 +272,7 @@ async function runTerminal(command, cwd = process.cwd()) {
     });
 }
 
-/* ── Auto-return helper: finds the last top-level statement and wraps it
-   in `return (...)` if it's a bare expression, so multi-statement eval
-   code behaves like Node REPL's implicit completion value. ── */
+/* ── Auto-return helper ── */
 function autoReturnLastStatement(code) {
     const src = code;
     let depth = 0;
@@ -317,7 +306,7 @@ function autoReturnLastStatement(code) {
 
     const before = src.slice(0, lastTopLevelBoundary);
     let last = src.slice(lastTopLevelBoundary).trim();
-    if (!last) return src; // hakuna cha ku-auto-return
+    if (!last) return src;
 
     const bareStatementBlacklist = /^(const|let|var|function|async\s+function|class|if|for|while|do|switch|try|return|throw|import|export|break|continue|debugger|\/\/|\/\*|\{)\b/;
     if (bareStatementBlacklist.test(last)) return src;
@@ -340,15 +329,12 @@ async function runEval(code, context) {
         try { return buildFn(src); } catch { return null; }
     };
 
-    // 1) Single-expression code: wrap whole thing in return(...)
     let fn = tryBuild(`return (${code})`);
 
-    // 2) Multi-statement code: auto-return only the last bare-expression statement
     if (!fn) {
         fn = tryBuild(autoReturnLastStatement(code));
     }
 
-    // 3) Last resort: run as-is (no implicit return)
     if (!fn) {
         fn = buildFn(code);
     }
@@ -1755,7 +1741,6 @@ export const adminOnly   = false;
 export async function execute(sock, msg, args) {
     const from = msg.key.remoteJid;
     
-    // STRICT owner check - NO hardcode fallback
     if (!isOwner(msg, sock)) {
         const pfx = getPrefix();
         return sock.sendMessage(from, { 
@@ -1793,7 +1778,6 @@ export async function execute(sock, msg, args) {
     const cmd = parts[0].toLowerCase();
     const rest = parts.slice(1).join(' ');
 
-    // Rate-limit per command per user
     if (global.evalRateLimits.has(cmd)) {
         const limit = global.evalRateLimits.get(cmd);
         const key = `${cmd}:${senderJid}`;
@@ -2078,8 +2062,17 @@ export async function execute(sock, msg, args) {
                 if (!isSafe(text)) return sock.sendMessage(from, { text: '❌ Code imezuiwa kwa usalama' });
                 result = await withStatus(sock, from, msg, 'JS Eval', async () => {
                     const output = await runEval(text, { sock, msg, from });
+                    
+                    if (output == null) {
+                        return null;
+                    }
+                    
                     const time = Date.now() - startTime;
-                    const finalResult = `✅ *Eval* (${time}ms)\n\`\`\`\n${truncate(formatOutput(output))}\n\`\`\``;
+                    const formatted = typeof output === 'string' 
+                        ? output 
+                        : util.inspect(output, { depth: 4, colors: false, breakLength: 80 });
+                    
+                    const finalResult = `✅ *Eval* (${time}ms)\n\`\`\`\n${truncate(formatted)}\n\`\`\``;
                     addToHistory('eval', text, finalResult, time);
                     return finalResult;
                 });
