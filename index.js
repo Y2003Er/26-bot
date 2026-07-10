@@ -161,12 +161,16 @@ function getUptime() {
     return `${s}s`;
 }
 
-function getRAM() {
+Function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
-    const total = 512
+    
+    // Chukua limit halisi ya Node
+    const v8 = require('v8');
+    const total = v8.getHeapStatistics().heap_size_limit / 1024 / 1024;
+    
     const pct = (used / total) * 100;
-    return { used: used.toFixed(1), total: total.toFixed(1), pct };
+    return { used: used.toFixed(1), total: total.toFixed(1), pct: pct.toFixed(0) };
 }
 
 function getCPU() {
