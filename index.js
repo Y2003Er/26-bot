@@ -1,5 +1,6 @@
 // index.js - FIXED v4.5.0 by 26-TECH (Comprehensive Stability)
 import dotenv from 'dotenv';
+import v8 from 'v8';
 dotenv.config();
 
 // ✅ Owner number LAZIMA itoke .env — hakuna hardcoded fallback
@@ -164,11 +165,7 @@ function getUptime() {
 function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
-    
-    // Chukua limit halisi ya Node
-    const v8 = require('v8');
     const total = v8.getHeapStatistics().heap_size_limit / 1024 / 1024;
-    
     const pct = (used / total) * 100;
     return { used: used.toFixed(1), total: total.toFixed(1), pct: pct.toFixed(0) };
 }
