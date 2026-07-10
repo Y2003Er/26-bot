@@ -164,7 +164,7 @@ function getUptime() {
 function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
-    const total = mem.heapTotal / 1024 / 1024;
+    const total = 512
     const pct = (used / total) * 100;
     return { used: used.toFixed(1), total: total.toFixed(1), pct };
 }
