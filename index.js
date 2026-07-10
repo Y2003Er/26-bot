@@ -161,7 +161,7 @@ function getUptime() {
     return `${s}s`;
 }
 
-Function getRAM() {
+function getRAM() {
     const mem = process.memoryUsage();
     const used = mem.heapUsed / 1024 / 1024;
     
