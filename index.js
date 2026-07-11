@@ -534,7 +534,7 @@ async function startBot() {
             printQRInTerminal: false,
             browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 45000,
-            keepAliveIntervalMs: 30000,
+            keepAliveIntervalMs: 15000,
             generateHighQualityLinkPreview: false,
             retryRequestDelayMs: 2000,
             maxRetries: 5,
